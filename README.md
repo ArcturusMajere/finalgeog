@@ -74,4 +74,80 @@ This project requires the following Python libraries and tools to function prope
 ### Open the Jupyter Notebook
 Review the detailed workflow by opening the `updated_final2.ipynb` file.
 
+# Bibliography of Datasets
+
+This section lists all datasets used in the project, including their sources and descriptions.
+
+---
+
+## 1. **American Community Survey (ACS)**
+- **Source**: U.S. Census Bureau
+- **Description**: The ACS provides detailed demographic, social, economic, and housing data for U.S. counties. This project uses ACS data from 2016–2022 to analyze remote work trends, migration patterns, and wage levels.
+- **Variables Used**:
+  - `B08006_001E`: Total number of workers.
+  - `B08006_017E`: Number of remote workers.
+- **Access Method**: Retrieved using the `census` library and the Census API.
+- **Website**: [ACS Data](https://www.census.gov/programs-surveys/acs)
+
+---
+
+## 2. **TIGRIS Shapefiles**
+- **Source**: U.S. Census Bureau TIGER/Line Shapefiles
+- **Description**: Geographic boundary files used to map U.S. counties and states. These shapefiles are essential for visualizing migration and remote work patterns across geospatial regions.
+- **Access Method**: Accessed through the `pygris` library.
+- **Website**: [TIGER/Line Shapefiles](https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html)
+
+---
+
+## 3. **PyGRIS County Boundaries**
+- **Source**: Walker Data's PyGRIS Library
+- **Description**: Provides pre-processed geographic shapefiles for counties in the U.S., optimized for use in Python. Used in this project for mapping and geospatial analysis.
+- **Access Method**: Accessed via the `counties` function in the `pygris` library.
+- **Website**: [PyGRIS](https://walker-data.com/pygris/)
+
+---
+
+## 4. **State and FIPS Codes**
+- **Source**: `us` Python Library
+- **Description**: Includes metadata such as state abbreviations and Federal Information Processing Standards (FIPS) codes, which are used to link Census data with geographic regions.
+- **Access Method**: Accessed through the `us` library in Python.
+- **Website**: [US Library](https://github.com/unitedstates/python-us)
+
+---
+
+## 5. **WFH Research**
+- **Source**: Work-from-Home Research Project
+- **Description**: Data on remote work trends and their economic and societal impacts. This project leverages insights from the WFH Research team to contextualize findings on remote work migration.
+- **Access Method**: Insights and data accessed via the project website.
+- **Website**: [WFH Research](https://wfhresearch.com/project-team/)
+
+---
+
+## 6. **USDA Rural Classifications**
+- **Source**: U.S. Department of Agriculture Economic Research Service (ERS)
+- **Description**: Data and classifications for defining rural and urban areas in the United States. These classifications are critical for analyzing urban-rural migration trends and understanding economic and demographic shifts.
+- **Access Method**: Accessed via the USDA ERS website.
+- **Website**: [USDA Rural Classifications](https://www.ers.usda.gov/topics/rural-economy-population/rural-classifications)
+
+---
+
+## 7. **Interactive GIS Data Tools**
+- **Source**: Folium and Plotly Libraries
+- **Description**: Generated maps and visualizations incorporating Census and TIGRIS shapefile data. Interactive maps allow exploration of migration and remote work trends.
+- **Access Method**: Created programmatically within the Jupyter Notebook.
+- **Tools**:
+  - [Folium](https://python-visualization.github.io/folium/)
+  - [Plotly](https://plotly.com/)
+
+---
+
+## 8. **Additional Resources**
+- **Distributive Flow Maps**: Prototype tool by Esri used as a reference for designing visualizations of migration flows.
+- **Website**: [Esri Prototype Lab Distributive Flow Maps](https://community.esri.com/t5/applications-prototype-lab-blog/distributive-flow-maps-for-pro/ba-p/903862)
+
+---
+
+## Notes
+- All datasets used are publicly accessible and were processed in compliance with the terms of use specified by their respective sources.
+- For detailed information on preprocessing and integration, refer to the [Notebook](https://github.com/ArcturusMajere/finalgeog/blob/main/updated_final2.ipynb).
 
