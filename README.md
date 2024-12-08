@@ -139,11 +139,6 @@ This section lists all datasets used in the project, including their sources and
   - [Folium](https://python-visualization.github.io/folium/)
   - [Plotly](https://plotly.com/)
 
----
-
-## 8. **Additional Resources**
-- **Distributive Flow Maps**: Prototype tool by Esri used as a reference for designing visualizations of migration flows.
-- **Website**: [Esri Prototype Lab Distributive Flow Maps](https://community.esri.com/t5/applications-prototype-lab-blog/distributive-flow-maps-for-pro/ba-p/903862)
 
 ---
 
