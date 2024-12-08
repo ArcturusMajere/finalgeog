@@ -22,6 +22,11 @@ The [Notebook](https://github.com/ArcturusMajere/finalgeog/blob/main/updated_fin
 - Visualization of urban-rural migration patterns.
 - Development of the Web GIS platform.
 
+- ### 2. **PDF output**
+The [Notebook](https://github.com/ArcturusMajere/finalgeog/blob/main/final.pdf) documents the project workflow, including:
+- Static Maps only
+- functionality of animation is NULL
+
 ---
 
 
