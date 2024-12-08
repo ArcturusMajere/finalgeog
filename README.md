@@ -1,92 +1,40 @@
-Mapping Remote Work Trends in U.S. Counties: A Spatial Analysis of Remote Work Intensity (2016–2022)
+# Geostatistical Analysis and Web GIS Application for Tracking Urban-Rural Remote Work Migration Post-COVID
 
-Welcome to the repository for my final project for GEOG 593. This project focuses on mapping remote work trends across U.S. counties, using data from the American Community Survey (ACS) from 2016 to 2022. Below you'll find information about the project, installation instructions, and resources used.
+## Overview
+This project examines the impact of the COVID-19 pandemic on remote work trends and migration between urban and rural areas in the United States. Utilizing geostatistical methods and an interactive Web GIS platform, the analysis explores temporal and spatial dynamics in wage levels, occupational sector changes, and geographic migration patterns.
 
-Project Overview
+The objective is to provide actionable insights for policymakers and stakeholders addressing economic disparities and transformations in urban-rural dynamics in a post-COVID era.
 
-The analysis in this project aims to provide a spatial understanding of remote work trends across U.S. counties. The goal is to visualize normalized remote work intensity on maps, allowing users to explore how remote work has evolved over time. The project uses both static and animated visualizations to present these trends in an accessible way.
+## Key Components
+### 1. **Annotated Bibliography**
+The [Annotated Bibliography](https://github.com/ArcturusMajere/finalgeog/blob/main/appendix%20A.pdf) offers a comprehensive review of literature related to:
+- Remote work trends.
+- Urban-rural migration dynamics.
+- Wage disparities influenced by the pandemic.
 
-Features
+### 2. **Jupyter Notebook**
+The [Notebook](https://github.com/ArcturusMajere/finalgeog/blob/main/updated_final2.ipynb) documents the project workflow, including:
+- Data collection and preprocessing.
+- Temporal and spatial analysis of remote work trends.
+- Visualization of urban-rural migration patterns.
+- Development of the Web GIS platform.
 
-Interactive and static map visualizations of remote work intensity.
+## Project Highlights
+- **Data Sources**: American Community Survey (ACS) data (2016–2022) and TIGRIS shapefiles via PyGRIS.
+- **Geostatistical Analysis**: Explores wage migration and geographic shifts in remote work intensity.
+- **Web GIS**: Implements an interactive platform for visualizing remote work migration, wage disparities, and sectoral transitions using distributive flow maps.
+- **Visualization**: Combines static, animated, and interactive maps to display data insights effectively.
 
-Animated visualization showing temporal changes in remote work distribution from 2016 to 2022.
+## Table of Contents
+1. [Introduction](#introduction)
+2. [Literature Review](#literature-review)
+3. [Remote Work Trends (2016–2022)](#remote-work-trends-2016–2022)
+4. [Mapping Remote Work Trends](#mapping-remote-work-trends)
+5. [Urban-Rural Migration Analysis](#urban-rural-migration-analysis)
+6. [Web GIS Development](#web-gis-development)
+7. [Findings and Report](#findings-and-report)
 
-Mobile-friendly user experience.
-
-Data Sources
-
-Data from authoritative sources, including the American Community Survey (ACS) 5-Year Estimates, accessed through the U.S. Census Bureau API, is used for the project. The data includes remote work hours and total work hours per county from 2016 to 2022.
-
-Installation
-
-To use or modify the remote work visualization experience, you will need to have access to Python and Jupyter Notebooks. Follow these steps:
-
-Clone the repository to your local machine:
-
-git clone https://github.com/ArcturusMajere/finalgeog.git
-
-Ensure you have the required Python libraries installed. You can install them using the following command:
-
-pip install -r requirements.txt
-
-Obtain a U.S. Census API key to access ACS data.
-
-Usage
-
-Open the MappingACS.ipynb notebook in Jupyter Notebook or Jupyter Lab.
-
-Customize any parameters as needed, such as the years to analyze or the visualization settings.
-
-Run the notebook to generate both static and animated visualizations of remote work trends.
-
-For detailed usage instructions, please refer to the docs/usage.md file in the repository.
-
-Mapping Remote Work Notebook
-
-The project includes a Jupyter Notebook named MappingACS.ipynb, which provides a demonstration of mapping remote work trends across U.S. counties using Python.
-
-MappingACS.ipynb Overview
-
-The notebook uses various Python libraries to process and visualize ACS data. It includes steps for:
-
-Data Collection: Fetching data from the ACS API on remote work hours and total work hours per county, then normalizing these values to show the proportion of remote work.
-
-Geographic Mapping: Visualizing normalized remote work intensity on U.S. county maps using pygris and geopandas.
-
-Visualization Options:
-
-Static Grid: Displaying a series of annual maps in a grid format to easily compare remote work trends over the years.
-
-Animated Visualization: Creating an animation of the maps to provide a dynamic view of temporal changes in remote work distribution.
-
-This notebook serves as the core component of the project, providing insights into the spatial and temporal dynamics of remote work in the United States.
-
-Challenges & Considerations
-
-Data Compatibility: Ensuring that all data sources were properly formatted and compatible with geographic mapping tools.
-
-ACS Data Processing: Handling large datasets from ACS required careful preprocessing to ensure accuracy and efficiency in mapping.
-
-Visualization Performance: Creating smooth animations while maintaining data accuracy required optimization of map rendering and data handling.
-
-Future Enhancements
-
-Expand the analysis to include other factors that may correlate with remote work trends, such as internet access or industry composition.
-
-Improve the resolution of the geographic mapping to provide more localized insights.
-
-Add interactive components to the animations to allow users to explore specific regions in more detail.
-
-Contributing
-
-Contributions are welcome! If you find an issue or have an idea for an enhancement, feel free to open an issue or submit a pull request.
-
-License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-Contact
-
-For any questions or suggestions, please contact me at [your-email@example.com].
-
+## How to Use This Repository
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/ArcturusMajere/finalgeog.git
