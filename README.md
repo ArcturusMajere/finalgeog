@@ -1,3 +1,7 @@
+
+<a href="https://colab.research.google.com/drive/1twrwcb6CHYkFoP0g9dKTlLL0-mTFEBnY?usp=sharing" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+
 # Spatial Analysis and Web GIS Visualization of Urban-Rural Remote Work Migration Trends Pre/Post-COVID
 
 ## Overview
