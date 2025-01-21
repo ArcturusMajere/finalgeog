@@ -1,3 +1,7 @@
+# Count unique duplicates per yr_qtr before dropping duplicates
+unique_duplicates = df[df.duplicated(subset=['yr_qtr', 'ID'], keep=False)]
+unique_duplicates_count = unique_duplicates.groupby('yr_qtr')['ID'].nunique()
+
 import os
 import pandas as pd
 
