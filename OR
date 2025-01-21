@@ -29,6 +29,110 @@ all_data = pd.DataFrame()
 
 # Initialize a dictionary to store statistics
 stats = {
+    'file_name': [],
+    'yr_qtr': [],
+    'total_records': [],
+    'zero_wages': [],
+    'duplicate_ids': [],
+    'unknown_naics': []
+}
+
+# Process each file in the directory
+for filename in os.listdir(directory):
+    if filename.endswith(".csv"):
+        filepath = os.path.join(directory, filename)
+        df = pd.read_csv(filepath)
+
+        # Ensure 'naics' column is treated as numeric for comparison
+        df['naics'] = pd.to_numeric(df['naics'], errors='coerce')
+
+        # Count total records per file
+        total_records = len(df)
+
+        # Count zero wages per yr_qtr before filtering
+        df['yr_qtr'] = df['year'].astype(str) + "Q" + df['quarter'].astype(str)
+        zero_wage_counts = df[df['wage'] == 0].groupby('yr_qtr').size()
+
+        # Count NAICS as NaN (Unknown) per yr_qtr
+        unknown_naics_counts = df[df['naics'].isna()].groupby('yr_qtr').size()
+
+        # Drop rows with zero wages
+        df = df[df['wage'] > 0]
+
+        # Add the sector column
+        df['sector'] = df['naics'].apply(
+            lambda x: 'Unknown' if pd.isna(x) else ('Tourism' if is_tourism(x) else 'Non-Tourism')
+        )
+
+        # Drop the year and quarter columns
+        df.drop(columns=['year', 'quarter'], inplace=True)
+
+        # Count duplicates per yr_qtr before dropping them
+        duplicate_counts = df.duplicated(subset=['yr_qtr', 'ID']).groupby(df['yr_qtr']).sum()
+
+        # Retain the highest wage for duplicate IDs within the same yr_qtr
+        df = df.sort_values(by=['yr_qtr', 'ID', 'wage'], ascending=[True, True, False])
+        df = df.drop_duplicates(subset=['yr_qtr', 'ID'], keep='first')
+
+        # Append statistics to the stats dictionary
+        for yr_qtr in df['yr_qtr'].unique():
+            stats['file_name'].append(filename)
+            stats['yr_qtr'].append(yr_qtr)
+            stats['total_records'].append(total_records)
+            stats['zero_wages'].append(zero_wage_counts.get(yr_qtr, 0))
+            stats['duplicate_ids'].append(duplicate_counts.get(yr_qtr, 0))
+            stats['unknown_naics'].append(unknown_naics_counts.get(yr_qtr, 0))
+
+        # Append to the master DataFrame
+        all_data = pd.concat([all_data, df], ignore_index=True)
+
+# Print statistics
+stats_df = pd.DataFrame(stats)
+print("Statistics per yr_qtr:")
+print(stats_df)
+
+# Save the combined and processed DataFrame to a new CSV
+output_filepath = "processed_data.csv"
+all_data.to_csv(output_filepath, index=False)
+
+# Save the statistics to a separate CSV for reference
+stats_output_filepath = "statistics_data.csv"
+stats_df.to_csv(stats_output_filepath, index=False)
+
+print(f"Processed data saved to {output_filepath}")
+print(f"Statistics saved to {stats_output_filepath}")
+
+import os
+import pandas as pd
+
+# Define the directory containing the CSV files
+directory = "path_to_your_directory"
+
+# Define the NAICS codes for Tourism (ranges and specific codes)
+tourism_naics = [
+    (481111, 481111),  # Exact match
+    (481211, 481211),  # Exact match
+    (487110, 487990),  # Range
+    (532111, 532111),  # Exact match
+    (561510, 561599),  # Range
+    (713110, 713930),  # Range
+    (713990, 713990),  # Exact match
+    (721110, 721310),  # Range
+    (722110, 722515)   # Range
+]
+
+# Function to determine if a NAICS code belongs to the Tourism sector
+def is_tourism(naics_code):
+    for start, end in tourism_naics:
+        if start <= naics_code <= end:
+            return True
+    return False
+
+# Initialize an empty DataFrame to hold all data
+all_data = pd.DataFrame()
+
+# Initialize a dictionary to store statistics
+stats = {
     'yr_qtr': [],
     'zero_wages': [],
     'duplicate_ids': [],
