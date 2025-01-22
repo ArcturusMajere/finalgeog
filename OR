@@ -1,3 +1,12 @@
+dfs_by_yr_qtr = {key: df[df['yr_qtr'] == key] for key in df['yr_qtr'].unique()}
+
+# Access each DataFrame
+for yr_qtr, df_part in dfs_by_yr_qtr.items():
+    print(f"DataFrame for {yr_qtr}:")
+    print(df_part)
+    print("\n")
+
+
 # Count unique duplicates per yr_qtr before dropping duplicates
 unique_duplicates = df[df.duplicated(subset=['yr_qtr', 'ID'], keep=False)]
 unique_duplicates_count = unique_duplicates.groupby('yr_qtr')['ID'].nunique()
