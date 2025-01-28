@@ -1,3 +1,19 @@
+import pandas as pd
+
+# Sample DataFrame
+data = {
+    'ID': [1, 2, 2, 3, 4, 4],
+    'wage': [50000, 60000, 65000, 70000, 45000, 47000]
+}
+df = pd.DataFrame(data)
+
+# Group by ID and keep the row with the maximum wage for each group
+result_df = df.loc[df.groupby('ID')['wage'].idxmax()]
+
+# Reset index if necessary
+result_df = result_df.reset_index(drop=True)
+
+print(result_df)
 
 
 def subset_and_order_duplicates(df, id_column, wage_column):
