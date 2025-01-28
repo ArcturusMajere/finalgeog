@@ -1,0 +1,25 @@
+
+
+def subset_and_order_duplicates(df, id_column, wage_column):
+    """
+    Subsets all rows with duplicate IDs and orders them by ID and Wage in descending order.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame.
+    id_column (str): The column name representing IDs.
+    wage_column (str): The column name representing wages.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing duplicate IDs and their wages, sorted by ID and Wage in descending order.
+    """
+    # Identify duplicate IDs
+    duplicate_ids = df[id_column].duplicated(keep=False)
+    
+    # Subset rows with duplicate IDs
+    duplicates_df = df[duplicate_ids]
+    
+    # Sort by ID and Wage in descending order
+    sorted_duplicates_df = duplicates_df.sort_values(by=[id_column, wage_column], ascending=[False, False])
+    
+    return sorted_duplicates_df
+
