@@ -1,36 +1,22 @@
-SELECT * 
-FROM your_table 
-WHERE id IN ('id1', 'id2', 'id3', 'id4');
+import pandas as pd
 
-import oracledb
+# Sample DataFrame
+df = pd.DataFrame({'id': ['A', 'B', 'A', 'C', 'B', 'B', 'D', 'E', 'E', 'E']})
 
-# Oracle connection
-conn = oracledb.connect(user="your_user", password="your_password", dsn="your_dsn")
-cursor = conn.cursor()
+# Count occurrences of each ID
+duplicate_counts = df['id'].value_counts().reset_index()
 
-# List of IDs to search for
-id_list = ['id1', 'id2', 'id3', 'id4']
+# Rename columns
+duplicate_counts.columns = ['id', 'count']
 
-# Create placeholders dynamically based on the list size
-placeholders = ', '.join([':{}'.format(i) for i in range(len(id_list))])
+# Filter only IDs that appear more than once
+duplicate_counts = duplicate_counts[duplicate_counts['count'] > 1]
 
-# SQL Query with IN Clause
-query = f"""
-SELECT * 
-FROM your_table 
-WHERE id IN ({placeholders})
-"""
+# Display results
+print(duplicate_counts)
+duplicates = df.groupby('id').size().reset_index(name='count')
 
-# Execute the query with the ID list values
-cursor.execute(query, dict(enumerate(id_list)))
+# Filter IDs that appear more than once
+duplicates = duplicates[duplicates['count'] > 1]
 
-# Fetch results
-results = cursor.fetchall()
-
-# Print results
-for row in results:
-    print(row)
-
-# Close connection
-cursor.close()
-conn.close()
+print(duplicates)
