@@ -1,44 +1,32 @@
-import pandas as pd
+import oracledb
 
-# Sample DataFrame with state, year, qtr, and ui
-df = pd.DataFrame({
-    'state': ['NY', 'CA', 'TX'],
-    'year': [2020, 2021, 2022],
-    'qtr': [1, 2, 3],
-    'ui': [101, 202, 303]  # Unique identifiers
-})
+# Oracle connection
+conn = oracledb.connect(user="your_user", password="your_password", dsn="your_dsn")
+cursor = conn.cursor()
 
-# Example DOM function returning a DataFrame
-def DOM(state, yr, qtr):
-    """Simulating the DOM function returning multiple records per (state, year, qtr)."""
-    data = {
-        'ui': [101, 102, 202, 303, 404],  # Some match `df['ui']`, some don't
-        'sector': ['A', 'B', 'C', 'D', 'E'],
-        'state': [state] * 5,
-        'year': [yr] * 5,
-        'qtr': [qtr] * 5
-    }
-    return pd.DataFrame(data)
+# List of IDs to search for
+id_list = ['id1', 'id2', 'id3', 'id4']
 
-# Initialize an empty list to collect results
-result_list = []
+# Create placeholders dynamically based on the list size
+placeholders = ', '.join([':{}'.format(i) for i in range(len(id_list))])
 
-# Iterate over each row in df
-for _, row in df.iterrows():
-    state, year, qtr, ui = row['state'], row['year'], row['qtr'], row['ui']
-    
-    # Call DOM function
-    dom_df = DOM(state, year, qtr)
-    
-    # Filter results to keep only matching 'ui'
-    filtered_df = dom_df[dom_df['ui'] == ui]
-    
-    # Append results
-    result_list.append(filtered_df)
+# SQL Query with IN Clause
+query = f"""
+SELECT * 
+FROM your_table 
+WHERE id IN ({placeholders})
+"""
 
-# Concatenate all results
-final_df = pd.concat(result_list, ignore_index=True)
+# Execute the query with the ID list values
+cursor.execute(query, dict(enumerate(id_list)))
 
-# Display final output
-import ace_tools as tools
-tools.display_dataframe_to_user(name="Filtered Results", dataframe=final_df)
+# Fetch results
+results = cursor.fetchall()
+
+# Print results
+for row in results:
+    print(row)
+
+# Close connection
+cursor.close()
+conn.close()
