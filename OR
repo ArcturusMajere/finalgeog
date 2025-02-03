@@ -1,3 +1,7 @@
+SELECT * 
+FROM your_table 
+WHERE id IN ('id1', 'id2', 'id3', 'id4');
+
 import oracledb
 
 # Oracle connection
