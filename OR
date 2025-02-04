@@ -1,22 +1,18 @@
-import pandas as pd
+from sas7bdat import SAS7BDAT
 
-# Sample DataFrame
-df = pd.DataFrame({'id': ['A', 'B', 'A', 'C', 'B', 'B', 'D', 'E', 'E', 'E']})
+with SAS7BDAT("your_file.sas7bdat") as file:
+    df = file.to_data_frame()
 
-# Count occurrences of each ID
-duplicate_counts = df['id'].value_counts().reset_index()
+print(df.head())
 
-# Rename columns
-duplicate_counts.columns = ['id', 'count']
 
-# Filter only IDs that appear more than once
-duplicate_counts = duplicate_counts[duplicate_counts['count'] > 1]
+import pyreadstat
 
-# Display results
-print(duplicate_counts)
-duplicates = df.groupby('id').size().reset_index(name='count')
+# Read SAS file
+df, meta = pyreadstat.read_sas7bdat("your_file.sas7bdat")
 
-# Filter IDs that appear more than once
-duplicates = duplicates[duplicates['count'] > 1]
+# Print first few rows
+print(df.head())
 
-print(duplicates)
+# Print variable metadata (e.g., labels)
+print(meta.column_labels)
