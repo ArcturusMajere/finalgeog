@@ -1,31 +1,9 @@
-from sas7bdat import SAS7BDAT
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
-with SAS7BDAT("your_file.sas7bdat") as file:
-    df = file.to_data_frame()
+def create_pdf(filename):
+    c = canvas.Canvas(filename, pagesize=letter)
+    c.drawString(100, 750, "Hello, this is a PDF document created with Python!")
+    c.save()
 
-print(df.head())
-
-
-import pyreadstat
-
-# Read SAS file
-df, meta = pyreadstat.read_sas7bdat("your_file.sas7bdat")
-
-# Print first few rows
-print(df.head())
-
-# Print variable metadata (e.g., labels)
-print(meta.column_labels)
-
-
-import pandas as pd
-
-# Sample DataFrame
-df = pd.DataFrame({'col': ["b'example'", "b'test'", "b'hello'"]})
-
-# Remove leading 'b' and all single quotes
-df['col'] = df['col'].str.lstrip('b').str.replace("'", "", regex=True)
-
-# Display cleaned DataFrame
-print(df)
-
+create_pdf("output.pdf")
