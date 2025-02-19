@@ -1,51 +1,51 @@
 import pandas as pd
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
-from reportlab.lib.units import inch
 
-def df_to_pdf(df, filename="output.pdf"):
-    doc = SimpleDocTemplate(filename, pagesize=landscape(letter))
-    elements = []
+# Sample DataFrame to mimic the structure
+data = {
+    "ID": range(1, 28),
+    "WAGE_DIFF": [1234.567, -500.45, 789.3] * 9,
+    "COUNT_A": [10, 20, 30] * 9,
+    "WAGE_CHANGE": [5000.345, -200.22, 100.55] * 9,
+    "COUNT_B": [5, 15, 25] * 9,
+}
 
-    # Convert DataFrame to list of lists
-    data = [df.columns.tolist()] + df.values.tolist()
+# Creating DataFrame
+df = pd.DataFrame(data)
 
-    # Set column widths dynamically based on page size
-    num_cols = len(df.columns)
-    col_width = (11 * inch) / num_cols  # Adjusted for landscape letter size
-    col_widths = [col_width] * num_cols
+# Formatting function
+def format_dataframe(df):
+    formatted_df = df.copy()
+    
+    # Apply formatting
+    for col in formatted_df.columns:
+        if "WAGE" in col:
+            formatted_df[col] = formatted_df[col].apply(lambda x: f"${x:,.2f}")
+        else:
+            formatted_df[col] = formatted_df[col].astype(int)
+    
+    # Convert to HTML with styling
+    styled_html = formatted_df.style.set_properties(**{
+        'text-align': 'center'
+    }).set_table_styles([{
+        'selector': 'th, td',
+        'props': [('text-align', 'center')]
+    }]).to_html()
 
-    # Create table
-    table = Table(data, colWidths=col_widths)
+    return styled_html
 
-    # Define styles with Windows-style colors
-    style = TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.blue),  # Windows-style blue header
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),  # White text for header
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),  # Adjust font size
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.white),  # White background for data
-        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),  # Black text for data
-        ('GRID', (0, 0), (-1, -1), 1, colors.grey),  # Light grey grid lines
-    ])
-    table.setStyle(style)
+# Get formatted HTML
+html_output = format_dataframe(df)
+html_output
 
-    # Add table to elements
-    elements.append(table)
 
-    # Build PDF
-    doc.build(elements)
 
-# Example DataFrame
-df = pd.DataFrame({
-    "Name": ["Alice", "Bob", "Charlie", "David", "Eve"],
-    "Age": [25, 30, 35, 40, 45],
-    "City": ["New York", "San Francisco", "Los Angeles", "Chicago", "Houston"]
-})
+from weasyprint import HTML
 
-# Convert to PDF
-df_to_pdf(df, "styled_dataframe.pdf")
+# Define the output PDF file path
+pdf_file_path = "/mnt/data/formatted_table.pdf"
+
+# Convert HTML to PDF
+HTML(string=html_output).write_pdf(pdf_file_path)
+
+# Provide the download link
+pdf_file_path
