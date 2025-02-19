@@ -1,18 +1,17 @@
-import pandas as pd
-
-# Sample DataFrame to mimic the structure
+# Sample DataFrame with a 'state' column
 data = {
     "ID": range(1, 28),
     "WAGE_DIFF": [1234.567, -500.45, 789.3] * 9,
     "COUNT_A": [10, 20, 30] * 9,
     "WAGE_CHANGE": [5000.345, -200.22, 100.55] * 9,
     "COUNT_B": [5, 15, 25] * 9,
+    "state": ["NY", "CA", "TX"] * 9,
 }
 
 # Creating DataFrame
 df = pd.DataFrame(data)
 
-# Formatting function
+# Formatting function with 'state' column unchanged
 def format_dataframe(df):
     formatted_df = df.copy()
     
@@ -20,7 +19,7 @@ def format_dataframe(df):
     for col in formatted_df.columns:
         if "WAGE" in col:
             formatted_df[col] = formatted_df[col].apply(lambda x: f"${x:,.2f}")
-        else:
+        elif col != "state":  # Leave 'state' column unchanged
             formatted_df[col] = formatted_df[col].astype(int)
     
     # Convert to HTML with styling
@@ -35,16 +34,9 @@ def format_dataframe(df):
 
 # Get formatted HTML
 html_output = format_dataframe(df)
-html_output
 
-
-
-from weasyprint import HTML
-
-# Define the output PDF file path
-pdf_file_path = "/mnt/data/formatted_table.pdf"
-
-# Convert HTML to PDF
+# Convert HTML to PDF again
+pdf_file_path = "/mnt/data/formatted_table_with_state.pdf"
 HTML(string=html_output).write_pdf(pdf_file_path)
 
 # Provide the download link
