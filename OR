@@ -17,4 +17,35 @@ def df_to_pdf(df, filename="output.pdf"):
     col_widths = [col_width] * num_cols
 
     # Create table
-   
+    table = Table(data, colWidths=col_widths)
+
+    # Define styles with Windows-style colors
+    style = TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.blue),  # Windows-style blue header
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),  # White text for header
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),  # Adjust font size
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.white),  # White background for data
+        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),  # Black text for data
+        ('GRID', (0, 0), (-1, -1), 1, colors.grey),  # Light grey grid lines
+    ])
+    table.setStyle(style)
+
+    # Add table to elements
+    elements.append(table)
+
+    # Build PDF
+    doc.build(elements)
+
+# Example DataFrame
+df = pd.DataFrame({
+    "Name": ["Alice", "Bob", "Charlie", "David", "Eve"],
+    "Age": [25, 30, 35, 40, 45],
+    "City": ["New York", "San Francisco", "Los Angeles", "Chicago", "Houston"]
+})
+
+# Convert to PDF
+df_to_pdf(df, "styled_dataframe.pdf")
