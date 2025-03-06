@@ -1,0 +1,252 @@
+"""
+All-in-One Python Code Examples for Calculating and Visualizing Location Quotients (LQs)
+
+This script shows:
+1) A function `calculate_location_quotients()` that takes a DataFrame and computes LQs.
+2) Several example visualizations for LQ results:
+   - Heatmap (Region × Industry)
+   - Grouped Bar Chart (Regions × Industries)
+   - Choropleth Map (using GeoPandas, if you have regional geometry data)
+   - Bubble Plot
+   - Lollipop/Dot Plot
+
+Requirements:
+    pandas, numpy, matplotlib, seaborn (for heatmap), geopandas (optional for map)
+"""
+
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+# import geopandas as gpd  # Only needed if you want to do the choropleth example
+
+##############################################################################
+# 1) LOCATION QUOTIENT CALCULATION FUNCTION
+##############################################################################
+
+def calculate_location_quotients(
+    df: pd.DataFrame,
+    region_col: str = 'region',
+    industry_col: str = 'industry',
+    employment_col: str = 'employment',
+) -> pd.DataFrame:
+    """
+    Calculate Location Quotients for each (region, industry) pair in a pandas DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame with region, industry, and employment columns.
+        region_col (str): Name of the column identifying distinct regions. Default 'region'.
+        industry_col (str): Name of the column identifying distinct industries. Default 'industry'.
+        employment_col (str): Name of the column with employment counts. Default 'employment'.
+
+    Returns:
+        pd.DataFrame: The original DataFrame with added columns: 
+                      'region_total_emp', 'industry_ref_emp', and 'LQ'.
+    """
+    # 1. Compute total reference employment (denominator for entire dataset)
+    total_ref_emp = df[employment_col].sum()
+
+    # 2. Compute total employment by industry (across all regions)
+    industry_ref_emp = df.groupby(industry_col)[employment_col].sum()
+
+    # 3. Compute total employment by region (across all industries)
+    region_total_emp = df.groupby(region_col)[employment_col].sum()
+
+    # 4. Make a copy so we don't modify the original
+    result_df = df.copy()
+
+    # 5. Merge in the region_total_emp and industry_ref_emp
+    result_df = result_df.merge(
+        region_total_emp.rename('region_total_emp'), on=region_col, how='left'
+    )
+    result_df = result_df.merge(
+        industry_ref_emp.rename('industry_ref_emp'), on=industry_col, how='left'
+    )
+
+    # 6. Calculate LQ: (E_{r,i} / E_{r,total}) / (E_{all,i} / E_{all,total})
+    result_df['LQ'] = (
+        (result_df[employment_col] / result_df['region_total_emp'])
+        /
+        (result_df['industry_ref_emp'] / total_ref_emp)
+    )
+
+    return result_df
+
+##############################################################################
+# 2) SAMPLE DATA
+##############################################################################
+
+if __name__ == '__main__':
+    # Example data
+    data = {
+        'region':    ['R1','R1','R1','R2','R2','R2','R3','R3','R3'],
+        'industry':  ['A','B','C','A','B','C','A','B','C'],
+        'employment':[100, 200, 150, 400, 100,  50, 200, 300, 300],
+    }
+    df = pd.DataFrame(data)
+    print("Original Data:")
+    print(df)
+
+    # Calculate LQs
+    lq_df = calculate_location_quotients(
+        df,
+        region_col='region',
+        industry_col='industry',
+        employment_col='employment'
+    )
+    print("\nData with Location Quotients (LQ):")
+    print(lq_df)
+
+##############################################################################
+# 3) EXAMPLE VISUALIZATIONS
+#    (Feel free to comment out or adapt any you don't need.)
+##############################################################################
+
+    ########################################
+    # 3A) Heatmap (Region × Industry)
+    ########################################
+    # Pivot the data so that rows = regions, columns = industries, values = LQ
+    heatmap_data = lq_df.pivot(index='region', columns='industry', values='LQ')
+
+    plt.figure(figsize=(6, 4))
+    sns.heatmap(heatmap_data, annot=True, fmt=".2f", cmap="coolwarm")
+    plt.title("Heatmap: Location Quotients by Region and Industry")
+    plt.tight_layout()
+    plt.show()
+
+    ########################################
+    # 3B) Grouped Bar Chart
+    ########################################
+    # Pivot again for convenience
+    bar_data = lq_df.pivot(index='region', columns='industry', values='LQ')
+
+    regions = bar_data.index.tolist()
+    industries = bar_data.columns.tolist()
+    x = np.arange(len(regions))  # region positions on the x-axis
+    width = 0.8 / len(industries)  # width of each bar
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for i, ind in enumerate(industries):
+        # The bar positions for this industry
+        bar_positions = x + i*width - (0.5*width*(len(industries)-1))
+        ax.bar(bar_positions, bar_data[ind], width, label=ind)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(regions)
+    ax.set_xlabel('Region')
+    ax.set_ylabel('Location Quotient')
+    ax.set_title('Grouped Bar: LQ by Region and Industry')
+    ax.legend(title="Industry")
+    plt.tight_layout()
+    plt.show()
+
+    ########################################
+    # 3C) (Optional) Choropleth Map
+    ########################################
+    # If your regions are actual geographic areas (counties, states, etc.),
+    # you could do something like:
+    #
+    # geo_df = gpd.read_file("path_to_shapefile_or_geojson")
+    # # 'geo_df' should have a 'region' column that matches lq_df['region'].
+    # # Let's pick one industry to map:
+    # industry_of_interest = 'A'
+    # lq_industry = lq_df[lq_df['industry'] == industry_of_interest].copy()
+    # geo_lq = geo_df.merge(lq_industry, on='region', how='left')
+    #
+    # ax = geo_lq.plot(column='LQ', cmap='OrRd', legend=True, figsize=(8, 6))
+    # ax.set_title(f"Choropleth of LQ for Industry '{industry_of_interest}'")
+    # plt.show()
+
+    ########################################
+    # 3D) Bubble Plot
+    ########################################
+    # Let's pick an industry, plot region_total_emp vs. LQ, bubble size = employment
+    industry_of_interest = 'A'
+    industry_df = lq_df[lq_df['industry'] == industry_of_interest].copy()
+
+    x_vals = industry_df['region_total_emp']  # x-axis = total region employment
+    y_vals = industry_df['LQ']                # y-axis = LQ
+    bubble_size = industry_df['employment']   # bubble size = row's employment
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    # Scale bubble sizes for visibility
+    ax.scatter(x_vals, y_vals, s=bubble_size * 0.2, alpha=0.6, color='darkblue')
+
+    # Annotate with region labels
+    for i, row in industry_df.iterrows():
+        ax.text(row['region_total_emp'], row['LQ'], row['region'], fontsize=8)
+
+    ax.set_xlabel("Total Regional Employment")
+    ax.set_ylabel("Location Quotient")
+    ax.set_title(f"Bubble Plot: LQ for Industry '{industry_of_interest}'")
+    plt.tight_layout()
+    plt.show()
+
+    ########################################
+    # 3E) Lollipop/Dot Plot (single industry)
+    ########################################
+    # Sort regions by LQ for a given industry
+    industry_of_interest = 'B'
+    industry_df = lq_df[lq_df['industry'] == industry_of_interest].copy()
+    industry_df = industry_df.sort_values('LQ', ascending=False)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.hlines(y=industry_df['region'], xmin=0, xmax=industry_df['LQ'], color='gray', alpha=0.7)
+    ax.plot(industry_df['LQ'], industry_df['region'], "o", markersize=5, color='darkblue')
+
+    ax.set_xlabel("Location Quotient")
+    ax.set_ylabel("Region")
+    ax.set_title(f"Lollipop Plot: LQ for Industry '{industry_of_interest}' (Sorted)")
+    plt.gca().invert_yaxis()  # so the top region is at the top
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
+# Datasheet: `calculate_location_quotients` Function
+
+## Overview
+The `calculate_location_quotients` function computes **Location Quotients (LQ)** for each `(region, industry)` pair in a pandas DataFrame. A **Location Quotient** indicates whether a particular region’s share of an industry is larger or smaller than that industry’s share in a broader reference area.
+
+## Mathematical Formulation
+
+Let:
+- \(E_{r,i}\) = Employment in **region** \(r\) and **industry** \(i\).
+- \(E_{r,\text{total}}\) = Total employment in **region** \(r\) (summing all industries in that region).
+- \(E_{\text{all}, i}\) = Total employment in **industry** \(i\) across **all** regions in the dataset.
+- \(E_{\text{all}, \text{total}}\) = Total employment across **all** regions and **all** industries in the dataset.
+
+The **Location Quotient** for industry \(i\) in region \(r\) is calculated as:
+
+\[
+\text{LQ}_{r,i} 
+= \frac{ \dfrac{E_{r,i}}{E_{r,\text{total}}} }
+        { \dfrac{E_{\text{all},i}}{E_{\text{all},\text{total}}} }.
+\]
+
+Equivalently:
+
+\[
+\text{LQ}_{r,i} 
+= \left( \frac{E_{r,i}}{E_{r,\text{total}}} \right)
+\; \bigg/ \;
+\left( \frac{E_{\text{all},i}}{E_{\text{all},\text{total}}} \right).
+\]
+
+- **LQ > 1**: The region has a higher concentration of that industry than the overall average.  
+- **LQ < 1**: The region has a lower concentration of that industry than the overall average.  
+
+---
+
+## Function Signature
+```python
+def calculate_location_quotients(
+    df: pd.DataFrame,
+    region_col: str = 'region',
+    industry_col: str = 'industry',
+    employment_col: str = 'employment',
+) -> pd.DataFrame:
+    ...
