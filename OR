@@ -1,43 +1,101 @@
-# Sample DataFrame with a 'state' column
-data = {
-    "ID": range(1, 28),
-    "WAGE_DIFF": [1234.567, -500.45, 789.3] * 9,
-    "COUNT_A": [10, 20, 30] * 9,
-    "WAGE_CHANGE": [5000.345, -200.22, 100.55] * 9,
-    "COUNT_B": [5, 15, 25] * 9,
-    "state": ["NY", "CA", "TX"] * 9,
-}
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import matplotlib.animation as animation
+import numpy as np
 
-# Creating DataFrame
+def animate_states(df, output_filename="state_animation.gif"):
+    """
+    Animates a bubble chart of states over year_qtr.
+
+    Args:
+        df (pd.DataFrame): DataFrame with columns 'state', 'class', 'count',
+                           'median_wage', 'class_size', 'state_size', 'yr_qtr'.
+        output_filename (str, optional): Filename to save the animation.
+                                        Defaults to "state_animation.gif".
+    """
+
+    # Get the unique year_qtr values for animation frames
+    yr_qtrs = sorted(df['yr_qtr'].unique())
+
+    if not yr_qtrs:
+        print("Error: No 'yr_qtr' values found in the DataFrame.")
+        return
+
+    # Create the figure and axes
+    fig, ax = plt.subplots(figsize=(12, 8))  # Adjust figure size
+
+    # Function to update the plot for each frame
+    def update(frame):
+        ax.clear()  # Clear the previous frame
+
+        yr_qtr = yr_qtrs[frame]
+        df_frame = df[df['yr_qtr'] == yr_qtr].copy()  # Filter for the current year-quarter
+
+        # Calculate Location Quotients (handle division by zero)
+        df_frame['location_quotient_numerator'] = df_frame['count'] / df_frame['state_size']
+        df_frame['location_quotient_denominator'] = df_frame['count'].sum() / df_frame['state_size'].sum()
+
+        #Handle error with statesize being 0
+        if (df_frame['state_size'] == 0).any():
+          print(f"Warning: state_size contains zero values for {yr_qtr}.  Those rows will be excluded.")
+          df_frame = df_frame[df_frame['state_size'] != 0]
+
+        if (df_frame['count'].sum() == 0 or df_frame['state_size'].sum() == 0):
+          print(f"Warning: state_size or counts are 0 for {yr_qtr}.  Skipping frame.")
+          return ax #needed
+
+        # Scatter plot
+        scatter = ax.scatter(
+            x=df_frame['location_quotient_numerator'],
+            y=df_frame['location_quotient_denominator'],
+            s=df_frame['class_size'] * 10,
+            c=df_frame['state_size'],
+            cmap='viridis',
+            alpha=0.7
+        )
+
+        # Add state labels (optional)
+        for i, row in df_frame.iterrows():
+            ax.annotate(row['state'], (row['location_quotient_numerator'], row['location_quotient_denominator']),
+                         textcoords="offset points", xytext=(5, 5), ha='center')
+
+        # Set plot limits (dynamic)
+        ax.set_xlim(df_frame['location_quotient_numerator'].min() * 0.8, df_frame['location_quotient_numerator'].max() * 1.2)
+        ax.set_ylim(df_frame['location_quotient_denominator'].min() * 0.8, df_frame['location_quotient_denominator'].max() * 1.2)
+
+        # Add labels and title
+        ax.set_xlabel("Location Quotient (Numerator)")
+        ax.set_ylabel("Location Quotient (Denominator)")
+        ax.set_title(f"State Visualization: Class Size vs. Location Quotient ({yr_qtr})")
+        ax.grid(True)
+
+        return ax #required by FuncAnimation
+
+    # Create the animation
+    ani = animation.FuncAnimation(fig, update, frames=len(yr_qtrs), blit=False)
+
+    # Save the animation as a GIF (requires imageio)
+    try:
+        ani.save(output_filename, writer='pillow')  #Using Pillow as it is more reliable
+        print(f"Animation saved to {output_filename}")
+    except Exception as e:
+        print(f"Error saving animation: {e}")
+        print("Make sure you have 'pillow' installed (pip install pillow).")
+
+    plt.close(fig)  # Close the figure to free memory
+
+# Example usage (assuming you have a DataFrame called 'df')
+# Create sample data, ensure the date range is between 2020 to 2023
+data = {
+    'state': ['CA', 'NY', 'TX', 'FL', 'CA', 'NY', 'TX', 'FL', 'CA', 'NY', 'TX', 'FL'],
+    'class': ['A', 'B', 'A', 'C', 'B', 'C', 'A', 'B', 'A', 'B', 'A', 'C'],
+    'count': [100, 150, 200, 120, 110, 160, 210, 130, 120, 170, 220, 140],
+    'median_wage': [60000, 70000, 55000, 62000, 61000, 71000, 56000, 63000, 62000, 72000, 57000, 64000],
+    'class_size': [25, 30, 35, 28, 26, 31, 36, 29, 27, 32, 37, 30],
+    'state_size': [40000000, 20000000, 30000000, 22000000, 40000000, 20000000, 30000000, 22000000, 40000000, 20000000, 30000000, 22000000],
+    'yr_qtr': ['2020-Q1', '2020-Q1', '2020-Q1', '2020-Q1', '2021-Q2', '2021-Q2', '2021-Q2', '2021-Q2', '2022-Q3', '2022-Q3', '2022-Q3', '2022-Q3']
+}
 df = pd.DataFrame(data)
 
-# Formatting function with 'state' column unchanged
-def format_dataframe(df):
-    formatted_df = df.copy()
-    
-    # Apply formatting
-    for col in formatted_df.columns:
-        if "WAGE" in col:
-            formatted_df[col] = formatted_df[col].apply(lambda x: f"${x:,.2f}")
-        elif col != "state":  # Leave 'state' column unchanged
-            formatted_df[col] = formatted_df[col].astype(int)
-    
-    # Convert to HTML with styling
-    styled_html = formatted_df.style.set_properties(**{
-        'text-align': 'center'
-    }).set_table_styles([{
-        'selector': 'th, td',
-        'props': [('text-align', 'center')]
-    }]).to_html()
-
-    return styled_html
-
-# Get formatted HTML
-html_output = format_dataframe(df)
-
-# Convert HTML to PDF again
-pdf_file_path = "/mnt/data/formatted_table_with_state.pdf"
-HTML(string=html_output).write_pdf(pdf_file_path)
-
-# Provide the download link
-pdf_file_path
+animate_states(df, output_filename="state_animation.gif")
