@@ -21,3 +21,98 @@ fig.update_layout(
 )
 
 fig.show()
+
+
+import plotly.express as px
+
+# Entrant ratio calculation
+df_agg['entrant_ratio'] = df_agg['new_ohio_entrants'] / (df_agg['new_ohio_entrants'] + df_agg['new_adv_mfg_entrants'])
+
+# Combination 1: class vs state (LQ size, entrant_ratio color)
+fig1 = px.scatter(
+    df_agg, x='class', y='state', size='LQ', color='entrant_ratio',
+    animation_frame='yr_qtr', size_max=60, color_continuous_scale='RdBu',
+    title='Class vs. State (LQ size, Entrant Ratio color)'
+)
+fig1.show()
+
+# Combination 2: state vs class (entrant_ratio size, LQ color)
+fig2 = px.scatter(
+    df_agg, x='state', y='class', size='entrant_ratio', color='LQ',
+    animation_frame='yr_qtr', size_max=60, color_continuous_scale='Viridis',
+    title='State vs. Class (Entrant Ratio size, LQ color)'
+)
+fig2.show()
+
+# Combination 3: yr_qtr vs class (LQ size, entrant_ratio color)
+fig3 = px.scatter(
+    df_agg, x='yr_qtr', y='class', size='LQ', color='entrant_ratio',
+    animation_frame='state', size_max=60, color_continuous_scale='YlGnBu',
+    title='Quarter vs. Class (LQ size, Entrant Ratio color by State)'
+)
+fig3.show()
+
+# Combination 4: yr_qtr vs state (entrant_ratio size, LQ color)
+fig4 = px.scatter(
+    df_agg, x='yr_qtr', y='state', size='entrant_ratio', color='LQ',
+    animation_frame='class', size_max=60, color_continuous_scale='Plasma',
+    title='Quarter vs. State (Entrant Ratio size, LQ color by Class)'
+)
+fig4.show()
+
+# Combination 5: class vs entrant_ratio (LQ size, state color)
+fig5 = px.scatter(
+    df_agg, x='class', y='entrant_ratio', size='LQ', color='state',
+    animation_frame='yr_qtr', size_max=60, title='Class vs. Entrant Ratio (LQ size, State color)'
+)
+fig5.show()
+
+# Combination 6: state vs entrant_ratio (LQ size, class color)
+fig6 = px.scatter(
+    df_agg, x='state', y='entrant_ratio', size='LQ', color='class',
+    animation_frame='yr_qtr', size_max=60, title='State vs. Entrant Ratio (LQ size, Class color)'
+)
+fig6.show()
+
+
+import plotly.express as px
+
+df_agg['entrant_ratio'] = df_agg['new_ohio_entrants'] / (df_agg['new_ohio_entrants'] + df_agg['new_adv_mfg_entrants'])
+
+combos = [
+    ('class', 'state', 'yr_qtr', 'LQ', 'entrant_ratio'),
+    ('state', 'class', 'yr_qtr', 'entrant_ratio', 'LQ'),
+    ('yr_qtr', 'class', 'state', 'LQ', 'entrant_ratio'),
+    ('yr_qtr', 'state', 'class', 'entrant_ratio', 'LQ'),
+    ('class', 'entrant_ratio', 'yr_qtr', 'LQ', 'state'),
+    ('state', 'entrant_ratio', 'yr_qtr', 'LQ', 'class')
+]
+
+titles = [
+    'Class vs State over Time',
+    'State vs Class over Time',
+    'Quarter vs Class by State',
+    'Quarter vs State by Class',
+    'Class vs Entrant Ratio by State',
+    'State vs Entrant Ratio by Class'
+]
+
+colorscales = ['RdBu', 'Viridis', 'YlGnBu', 'Plasma', 'Turbo', 'Cividis']
+
+for (x, y, frame, size, color), title, cscale in zip(combos, titles, colorscales):
+    fig = px.scatter(
+        df_agg,
+        x=x, y=y,
+        animation_frame=frame,
+        size=size,
+        color=color,
+        size_max=50,
+        color_continuous_scale=cscale if df_agg[color].dtype != 'object' else None,
+        title=title,
+        labels={x: x.capitalize(), y: y.capitalize(), size: size.upper(), color: color.capitalize()}
+    )
+    fig.update_layout(
+        xaxis={'categoryorder':'total descending'},
+        yaxis={'categoryorder':'total ascending'}
+    )
+    fig.show()
