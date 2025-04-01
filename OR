@@ -1,101 +1,23 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import matplotlib.animation as animation
-import numpy as np
+import plotly.express as px
 
-def animate_states(df, output_filename="state_animation.gif"):
-    """
-    Animates a bubble chart of states over year_qtr.
+df_agg['entrant_ratio'] = df_agg['new_ohio_entrants'] / (df_agg['new_ohio_entrants'] + df_agg['new_adv_mfg_entrants'])
 
-    Args:
-        df (pd.DataFrame): DataFrame with columns 'state', 'class', 'count',
-                           'median_wage', 'class_size', 'state_size', 'yr_qtr'.
-        output_filename (str, optional): Filename to save the animation.
-                                        Defaults to "state_animation.gif".
-    """
+fig = px.scatter(
+    df_agg,
+    x='class',
+    y='state',
+    size='LQ',
+    color='entrant_ratio',
+    animation_frame='yr_qtr',
+    size_max=60,
+    color_continuous_scale='RdYlGn',
+    title='Migration into Ohio vs. Advanced Manufacturing (2020-2022)',
+    labels={'class':'Class', 'state':'State', 'LQ':'Location Quotient', 'entrant_ratio':'Ohio Entrant Ratio'}
+)
 
-    # Get the unique year_qtr values for animation frames
-    yr_qtrs = sorted(df['yr_qtr'].unique())
+fig.update_layout(
+    xaxis={'categoryorder':'total descending'},
+    yaxis={'categoryorder':'total ascending'}
+)
 
-    if not yr_qtrs:
-        print("Error: No 'yr_qtr' values found in the DataFrame.")
-        return
-
-    # Create the figure and axes
-    fig, ax = plt.subplots(figsize=(12, 8))  # Adjust figure size
-
-    # Function to update the plot for each frame
-    def update(frame):
-        ax.clear()  # Clear the previous frame
-
-        yr_qtr = yr_qtrs[frame]
-        df_frame = df[df['yr_qtr'] == yr_qtr].copy()  # Filter for the current year-quarter
-
-        # Calculate Location Quotients (handle division by zero)
-        df_frame['location_quotient_numerator'] = df_frame['count'] / df_frame['state_size']
-        df_frame['location_quotient_denominator'] = df_frame['count'].sum() / df_frame['state_size'].sum()
-
-        #Handle error with statesize being 0
-        if (df_frame['state_size'] == 0).any():
-          print(f"Warning: state_size contains zero values for {yr_qtr}.  Those rows will be excluded.")
-          df_frame = df_frame[df_frame['state_size'] != 0]
-
-        if (df_frame['count'].sum() == 0 or df_frame['state_size'].sum() == 0):
-          print(f"Warning: state_size or counts are 0 for {yr_qtr}.  Skipping frame.")
-          return ax #needed
-
-        # Scatter plot
-        scatter = ax.scatter(
-            x=df_frame['location_quotient_numerator'],
-            y=df_frame['location_quotient_denominator'],
-            s=df_frame['class_size'] * 10,
-            c=df_frame['state_size'],
-            cmap='viridis',
-            alpha=0.7
-        )
-
-        # Add state labels (optional)
-        for i, row in df_frame.iterrows():
-            ax.annotate(row['state'], (row['location_quotient_numerator'], row['location_quotient_denominator']),
-                         textcoords="offset points", xytext=(5, 5), ha='center')
-
-        # Set plot limits (dynamic)
-        ax.set_xlim(df_frame['location_quotient_numerator'].min() * 0.8, df_frame['location_quotient_numerator'].max() * 1.2)
-        ax.set_ylim(df_frame['location_quotient_denominator'].min() * 0.8, df_frame['location_quotient_denominator'].max() * 1.2)
-
-        # Add labels and title
-        ax.set_xlabel("Location Quotient (Numerator)")
-        ax.set_ylabel("Location Quotient (Denominator)")
-        ax.set_title(f"State Visualization: Class Size vs. Location Quotient ({yr_qtr})")
-        ax.grid(True)
-
-        return ax #required by FuncAnimation
-
-    # Create the animation
-    ani = animation.FuncAnimation(fig, update, frames=len(yr_qtrs), blit=False)
-
-    # Save the animation as a GIF (requires imageio)
-    try:
-        ani.save(output_filename, writer='pillow')  #Using Pillow as it is more reliable
-        print(f"Animation saved to {output_filename}")
-    except Exception as e:
-        print(f"Error saving animation: {e}")
-        print("Make sure you have 'pillow' installed (pip install pillow).")
-
-    plt.close(fig)  # Close the figure to free memory
-
-# Example usage (assuming you have a DataFrame called 'df')
-# Create sample data, ensure the date range is between 2020 to 2023
-data = {
-    'state': ['CA', 'NY', 'TX', 'FL', 'CA', 'NY', 'TX', 'FL', 'CA', 'NY', 'TX', 'FL'],
-    'class': ['A', 'B', 'A', 'C', 'B', 'C', 'A', 'B', 'A', 'B', 'A', 'C'],
-    'count': [100, 150, 200, 120, 110, 160, 210, 130, 120, 170, 220, 140],
-    'median_wage': [60000, 70000, 55000, 62000, 61000, 71000, 56000, 63000, 62000, 72000, 57000, 64000],
-    'class_size': [25, 30, 35, 28, 26, 31, 36, 29, 27, 32, 37, 30],
-    'state_size': [40000000, 20000000, 30000000, 22000000, 40000000, 20000000, 30000000, 22000000, 40000000, 20000000, 30000000, 22000000],
-    'yr_qtr': ['2020-Q1', '2020-Q1', '2020-Q1', '2020-Q1', '2021-Q2', '2021-Q2', '2021-Q2', '2021-Q2', '2022-Q3', '2022-Q3', '2022-Q3', '2022-Q3']
-}
-df = pd.DataFrame(data)
-
-animate_states(df, output_filename="state_animation.gif")
+fig.show()
