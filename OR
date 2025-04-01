@@ -1,3 +1,22 @@
+import pandas as pd
+
+def calculate_new_entrants(df, target_state='Ohio', target_class='advanced manufacturing'):
+    df_sorted = df.sort_values(['ID', 'yr_qtr'])
+    df_sorted['prev_state'] = df_sorted.groupby('ID')['state'].shift(1)
+    df_sorted['prev_class'] = df_sorted.groupby('ID')['class'].shift(1)
+
+    # Identify new entrants to Ohio
+    df_sorted['new_ohio_entrant'] = ((df_sorted['state'] == target_state) & 
+                                     (df_sorted['prev_state'] != target_state)).astype(int)
+
+    # Identify new entrants to the target class
+    df_sorted['new_class_entrant'] = ((df_sorted['class'] == target_class) & 
+                                      (df_sorted['prev_class'] != target_class)).astype(int)
+
+    return df_sorted[['ID', 'yr_qtr', 'state', 'class', 'new_ohio_entrant', 'new_class_entrant']]
+
+
+
 import plotly.express as px
 
 df_agg['entrant_ratio'] = df_agg['new_ohio_entrants'] / (df_agg['new_ohio_entrants'] + df_agg['new_adv_mfg_entrants'])
