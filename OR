@@ -1,137 +1,24 @@
-import pandas as pd
+import polars as pl
 
-def calculate_new_entrants(df, target_state='Ohio', target_class='advanced manufacturing'):
-    df_sorted = df.sort_values(['ID', 'yr_qtr'])
-    df_sorted['prev_state'] = df_sorted.groupby('ID')['state'].shift(1)
-    df_sorted['prev_class'] = df_sorted.groupby('ID')['class'].shift(1)
-
-    # Identify new entrants to Ohio
-    df_sorted['new_ohio_entrant'] = ((df_sorted['state'] == target_state) & 
-                                     (df_sorted['prev_state'] != target_state)).astype(int)
-
-    # Identify new entrants to the target class
-    df_sorted['new_class_entrant'] = ((df_sorted['class'] == target_class) & 
-                                      (df_sorted['prev_class'] != target_class)).astype(int)
-
-    return df_sorted[['ID', 'yr_qtr', 'state', 'class', 'new_ohio_entrant', 'new_class_entrant']]
-
-
-
-import plotly.express as px
-
-df_agg['entrant_ratio'] = df_agg['new_ohio_entrants'] / (df_agg['new_ohio_entrants'] + df_agg['new_adv_mfg_entrants'])
-
-fig = px.scatter(
-    df_agg,
-    x='class',
-    y='state',
-    size='LQ',
-    color='entrant_ratio',
-    animation_frame='yr_qtr',
-    size_max=60,
-    color_continuous_scale='RdYlGn',
-    title='Migration into Ohio vs. Advanced Manufacturing (2020-2022)',
-    labels={'class':'Class', 'state':'State', 'LQ':'Location Quotient', 'entrant_ratio':'Ohio Entrant Ratio'}
-)
-
-fig.update_layout(
-    xaxis={'categoryorder':'total descending'},
-    yaxis={'categoryorder':'total ascending'}
-)
-
-fig.show()
-
-
-import plotly.express as px
-
-# Entrant ratio calculation
-df_agg['entrant_ratio'] = df_agg['new_ohio_entrants'] / (df_agg['new_ohio_entrants'] + df_agg['new_adv_mfg_entrants'])
-
-# Combination 1: class vs state (LQ size, entrant_ratio color)
-fig1 = px.scatter(
-    df_agg, x='class', y='state', size='LQ', color='entrant_ratio',
-    animation_frame='yr_qtr', size_max=60, color_continuous_scale='RdBu',
-    title='Class vs. State (LQ size, Entrant Ratio color)'
-)
-fig1.show()
-
-# Combination 2: state vs class (entrant_ratio size, LQ color)
-fig2 = px.scatter(
-    df_agg, x='state', y='class', size='entrant_ratio', color='LQ',
-    animation_frame='yr_qtr', size_max=60, color_continuous_scale='Viridis',
-    title='State vs. Class (Entrant Ratio size, LQ color)'
-)
-fig2.show()
-
-# Combination 3: yr_qtr vs class (LQ size, entrant_ratio color)
-fig3 = px.scatter(
-    df_agg, x='yr_qtr', y='class', size='LQ', color='entrant_ratio',
-    animation_frame='state', size_max=60, color_continuous_scale='YlGnBu',
-    title='Quarter vs. Class (LQ size, Entrant Ratio color by State)'
-)
-fig3.show()
-
-# Combination 4: yr_qtr vs state (entrant_ratio size, LQ color)
-fig4 = px.scatter(
-    df_agg, x='yr_qtr', y='state', size='entrant_ratio', color='LQ',
-    animation_frame='class', size_max=60, color_continuous_scale='Plasma',
-    title='Quarter vs. State (Entrant Ratio size, LQ color by Class)'
-)
-fig4.show()
-
-# Combination 5: class vs entrant_ratio (LQ size, state color)
-fig5 = px.scatter(
-    df_agg, x='class', y='entrant_ratio', size='LQ', color='state',
-    animation_frame='yr_qtr', size_max=60, title='Class vs. Entrant Ratio (LQ size, State color)'
-)
-fig5.show()
-
-# Combination 6: state vs entrant_ratio (LQ size, class color)
-fig6 = px.scatter(
-    df_agg, x='state', y='entrant_ratio', size='LQ', color='class',
-    animation_frame='yr_qtr', size_max=60, title='State vs. Entrant Ratio (LQ size, Class color)'
-)
-fig6.show()
-
-
-import plotly.express as px
-
-df_agg['entrant_ratio'] = df_agg['new_ohio_entrants'] / (df_agg['new_ohio_entrants'] + df_agg['new_adv_mfg_entrants'])
-
-combos = [
-    ('class', 'state', 'yr_qtr', 'LQ', 'entrant_ratio'),
-    ('state', 'class', 'yr_qtr', 'entrant_ratio', 'LQ'),
-    ('yr_qtr', 'class', 'state', 'LQ', 'entrant_ratio'),
-    ('yr_qtr', 'state', 'class', 'entrant_ratio', 'LQ'),
-    ('class', 'entrant_ratio', 'yr_qtr', 'LQ', 'state'),
-    ('state', 'entrant_ratio', 'yr_qtr', 'LQ', 'class')
+# Define manufacturing NAICS ranges
+manufact_naics = [
+    (3241, 3241), (3251, 3254), (3259, 3259), (3271, 3271), (3279, 3279), 
+    (3311, 3311), (3312, 3312), (3315, 3315), (3319, 3319), (3331, 3333),
+    (3363, 3366), (3399, 3399), (3341, 3346), (3351, 3351), (3359, 3359),
+    (3361, 3366), (3369, 3369), (3391, 3391), (3399, 3399)
 ]
 
-titles = [
-    'Class vs State over Time',
-    'State vs Class over Time',
-    'Quarter vs Class by State',
-    'Quarter vs State by Class',
-    'Class vs Entrant Ratio by State',
-    'State vs Entrant Ratio by Class'
-]
+# Build a list of conditions for all manufacturing ranges
+def is_manufact_expr(col):
+    conditions = [((pl.col(col) >= start) & (pl.col(col) <= end)) for start, end in manufact_naics]
+    return pl.fold(acc=pl.lit(False), f=lambda acc, cond: acc | cond, exprs=conditions)
 
-colorscales = ['RdBu', 'Viridis', 'YlGnBu', 'Plasma', 'Turbo', 'Cividis']
-
-for (x, y, frame, size, color), title, cscale in zip(combos, titles, colorscales):
-    fig = px.scatter(
-        df_agg,
-        x=x, y=y,
-        animation_frame=frame,
-        size=size,
-        color=color,
-        size_max=50,
-        color_continuous_scale=cscale if df_agg[color].dtype != 'object' else None,
-        title=title,
-        labels={x: x.capitalize(), y: y.capitalize(), size: size.upper(), color: color.capitalize()}
-    )
-    fig.update_layout(
-        xaxis={'categoryorder':'total descending'},
-        yaxis={'categoryorder':'total ascending'}
-    )
-    fig.show()
+# Apply classification
+df1 = df1.with_columns([
+    pl.when(pl.col("naics4").is_null())
+      .then("Unknown")
+      .when(is_manufact_expr("naics4"))
+      .then("Advanced Manufacturing")
+      .otherwise("Non-Advanced Manufacturing")
+      .alias("class")
+])
