@@ -22,3 +22,37 @@ df1 = df1.with_columns([
       .otherwise("Non-Advanced Manufacturing")
       .alias("class")
 ])
+
+
+import polars as pl
+
+# Fake data
+df1 = pl.DataFrame({
+    "naics4": [3241, 3252, 3271, 3310, 3332, 3359, 3364, 3399, 1234, None]
+})
+
+# Define manufacturing NAICS ranges
+manufact_naics = [
+    (3241, 3241), (3251, 3254), (3259, 3259), (3271, 3271), (3279, 3279),
+    (3311, 3311), (3312, 3312), (3315, 3315), (3319, 3319), (3331, 3333),
+    (3363, 3366), (3399, 3399), (3341, 3346), (3351, 3351), (3359, 3359),
+    (3361, 3366), (3369, 3369), (3391, 3391), (3399, 3399)
+]
+
+# Create condition expressions
+conditions = [(pl.col("naics4") >= start) & (pl.col("naics4") <= end) for start, end in manufact_naics]
+
+# Combine conditions using fold
+is_manufact_expr = pl.fold(pl.lit(False), lambda acc, x: acc | x, conditions)
+
+# Add classification column
+df1 = df1.with_columns([
+    pl.when(pl.col("naics4").is_null())
+      .then(pl.lit("Unknown"))
+      .when(is_manufact_expr)
+      .then(pl.lit("Advanced Manufacturing"))
+      .otherwise(pl.lit("Non-Advanced Manufacturing"))
+      .alias("class")
+])
+
+print(df1)
