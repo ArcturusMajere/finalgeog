@@ -1,58 +1,45 @@
-import polars as pl
+import pandas as pd
 
-# Define manufacturing NAICS ranges
-manufact_naics = [
-    (3241, 3241), (3251, 3254), (3259, 3259), (3271, 3271), (3279, 3279), 
-    (3311, 3311), (3312, 3312), (3315, 3315), (3319, 3319), (3331, 3333),
-    (3363, 3366), (3399, 3399), (3341, 3346), (3351, 3351), (3359, 3359),
-    (3361, 3366), (3369, 3369), (3391, 3391), (3399, 3399)
-]
+# Mapping based on 2-digit NAICS codes
+naics2_mapping = {
+    # Goods-Producing
+    '11': ('1011 Natural Resources and Mining', '101 Goods-Producing', '10 Total, All Industries'),
+    '21': ('1011 Natural Resources and Mining', '101 Goods-Producing', '10 Total, All Industries'),
+    '23': ('1012 Construction', '101 Goods-Producing', '10 Total, All Industries'),
+    '31-33': ('1013 Manufacturing', '101 Goods-Producing', '10 Total, All Industries'),
 
-# Build a list of conditions for all manufacturing ranges
-def is_manufact_expr(col):
-    conditions = [((pl.col(col) >= start) & (pl.col(col) <= end)) for start, end in manufact_naics]
-    return pl.fold(acc=pl.lit(False), f=lambda acc, cond: acc | cond, exprs=conditions)
+    # Service-Providing
+    '42': ('1021 Trade, Transportation, and Utilities', '102 Service-Providing', '10 Total, All Industries'),
+    '44-45': ('1021 Trade, Transportation, and Utilities', '102 Service-Providing', '10 Total, All Industries'),
+    '48-49': ('1021 Trade, Transportation, and Utilities', '102 Service-Providing', '10 Total, All Industries'),
+    '22': ('1021 Trade, Transportation, and Utilities', '102 Service-Providing', '10 Total, All Industries'),
+    '51': ('1022 Information', '102 Service-Providing', '10 Total, All Industries'),
+    '52': ('1023 Financial Activities', '102 Service-Providing', '10 Total, All Industries'),
+    '53': ('1023 Financial Activities', '102 Service-Providing', '10 Total, All Industries'),
+    '54': ('1024 Professional and Business Services', '102 Service-Providing', '10 Total, All Industries'),
+    '55': ('1024 Professional and Business Services', '102 Service-Providing', '10 Total, All Industries'),
+    '56': ('1024 Professional and Business Services', '102 Service-Providing', '10 Total, All Industries'),
+    '61': ('1025 Education and Health Services', '102 Service-Providing', '10 Total, All Industries'),
+    '62': ('1025 Education and Health Services', '102 Service-Providing', '10 Total, All Industries'),
+    '71': ('1026 Leisure and Hospitality', '102 Service-Providing', '10 Total, All Industries'),
+    '72': ('1026 Leisure and Hospitality', '102 Service-Providing', '10 Total, All Industries'),
+    '81': ('1027 Other Services', '102 Service-Providing', '10 Total, All Industries'),
+    '92': ('1028 Public Administration', '102 Service-Providing', '10 Total, All Industries'),
+    '99': ('1029 Unclassified', '102 Service-Providing', '10 Total, All Industries'),
+}
 
-# Apply classification
-df1 = df1.with_columns([
-    pl.when(pl.col("naics4").is_null())
-      .then("Unknown")
-      .when(is_manufact_expr("naics4"))
-      .then("Advanced Manufacturing")
-      .otherwise("Non-Advanced Manufacturing")
-      .alias("class")
-])
+# Function to categorize NAICS2 into super-sector, domain, total
+def categorize_naics2(df, col='naics2'):
+    def lookup(code):
+        return naics2_mapping.get(code, (None, None, None))
+
+    df[['Super-Sector', 'Domain', 'Total']] = df[col].apply(lambda x: pd.Series(lookup(x)))
+    return df
 
 
-import polars as pl
-
-# Fake data
-df1 = pl.DataFrame({
-    "naics4": [3241, 3252, 3271, 3310, 3332, 3359, 3364, 3399, 1234, None]
+df = pd.DataFrame({
+    'naics2': ['42', '54', '31-33', '11', '92']
 })
 
-# Define manufacturing NAICS ranges
-manufact_naics = [
-    (3241, 3241), (3251, 3254), (3259, 3259), (3271, 3271), (3279, 3279),
-    (3311, 3311), (3312, 3312), (3315, 3315), (3319, 3319), (3331, 3333),
-    (3363, 3366), (3399, 3399), (3341, 3346), (3351, 3351), (3359, 3359),
-    (3361, 3366), (3369, 3369), (3391, 3391), (3399, 3399)
-]
-
-# Create condition expressions
-conditions = [(pl.col("naics4") >= start) & (pl.col("naics4") <= end) for start, end in manufact_naics]
-
-# Combine conditions using fold
-is_manufact_expr = pl.fold(pl.lit(False), lambda acc, x: acc | x, conditions)
-
-# Add classification column
-df1 = df1.with_columns([
-    pl.when(pl.col("naics4").is_null())
-      .then(pl.lit("Unknown"))
-      .when(is_manufact_expr)
-      .then(pl.lit("Advanced Manufacturing"))
-      .otherwise(pl.lit("Non-Advanced Manufacturing"))
-      .alias("class")
-])
-
-print(df1)
+categorized_df = categorize_naics2(df)
+print(categorized_df)
