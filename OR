@@ -1,45 +1,6 @@
 import pandas as pd
 
-# Mapping based on 2-digit NAICS codes
-naics2_mapping = {
-    # Goods-Producing
-    '11': ('1011 Natural Resources and Mining', '101 Goods-Producing', '10 Total, All Industries'),
-    '21': ('1011 Natural Resources and Mining', '101 Goods-Producing', '10 Total, All Industries'),
-    '23': ('1012 Construction', '101 Goods-Producing', '10 Total, All Industries'),
-    '31-33': ('1013 Manufacturing', '101 Goods-Producing', '10 Total, All Industries'),
+# Assuming df is your DataFrame
+df['CLASS'] = pd.cut(df['WAGE'], bins=[-float('inf'), 5000, 9000, float('inf')], labels=['low', 'middle', 'high'])
 
-    # Service-Providing
-    '42': ('1021 Trade, Transportation, and Utilities', '102 Service-Providing', '10 Total, All Industries'),
-    '44-45': ('1021 Trade, Transportation, and Utilities', '102 Service-Providing', '10 Total, All Industries'),
-    '48-49': ('1021 Trade, Transportation, and Utilities', '102 Service-Providing', '10 Total, All Industries'),
-    '22': ('1021 Trade, Transportation, and Utilities', '102 Service-Providing', '10 Total, All Industries'),
-    '51': ('1022 Information', '102 Service-Providing', '10 Total, All Industries'),
-    '52': ('1023 Financial Activities', '102 Service-Providing', '10 Total, All Industries'),
-    '53': ('1023 Financial Activities', '102 Service-Providing', '10 Total, All Industries'),
-    '54': ('1024 Professional and Business Services', '102 Service-Providing', '10 Total, All Industries'),
-    '55': ('1024 Professional and Business Services', '102 Service-Providing', '10 Total, All Industries'),
-    '56': ('1024 Professional and Business Services', '102 Service-Providing', '10 Total, All Industries'),
-    '61': ('1025 Education and Health Services', '102 Service-Providing', '10 Total, All Industries'),
-    '62': ('1025 Education and Health Services', '102 Service-Providing', '10 Total, All Industries'),
-    '71': ('1026 Leisure and Hospitality', '102 Service-Providing', '10 Total, All Industries'),
-    '72': ('1026 Leisure and Hospitality', '102 Service-Providing', '10 Total, All Industries'),
-    '81': ('1027 Other Services', '102 Service-Providing', '10 Total, All Industries'),
-    '92': ('1028 Public Administration', '102 Service-Providing', '10 Total, All Industries'),
-    '99': ('1029 Unclassified', '102 Service-Providing', '10 Total, All Industries'),
-}
-
-# Function to categorize NAICS2 into super-sector, domain, total
-def categorize_naics2(df, col='naics2'):
-    def lookup(code):
-        return naics2_mapping.get(code, (None, None, None))
-
-    df[['Super-Sector', 'Domain', 'Total']] = df[col].apply(lambda x: pd.Series(lookup(x)))
-    return df
-
-
-df = pd.DataFrame({
-    'naics2': ['42', '54', '31-33', '11', '92']
-})
-
-categorized_df = categorize_naics2(df)
-print(categorized_df)
+print(df.head())
