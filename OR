@@ -1,6 +1,33 @@
-import pandas as pd
+import plotly.express as px
 
-# Assuming df is your DataFrame
-df['CLASS'] = pd.cut(df['WAGE'], bins=[-float('inf'), 5000, 9000, float('inf')], labels=['low', 'middle', 'high'])
+wage_order = ['low', 'middle', 'high', 'top 1%']
 
-print(df.head())
+fig = px.scatter(
+    df,
+    x='original_wage_class',
+    y='current_wage_class',
+    size='count',
+    color='sector',
+    animation_frame='yr_qtr',
+    animation_group='state',
+    size_max=50,
+    category_orders={
+        'original_wage_class': wage_order,
+        'current_wage_class': wage_order
+    },
+    labels={
+        'original_wage_class': 'Original Wage Class',
+        'current_wage_class': 'Current Wage Class',
+        'count': 'Number of Employees'
+    },
+    title='Animated Wage Class Churn by Sector and State'
+)
+
+fig.update_layout(
+    xaxis_title='Original Wage Class',
+    yaxis_title='Current Wage Class',
+    transition={'duration': 500},
+    template='plotly_white'
+)
+
+fig.show()
