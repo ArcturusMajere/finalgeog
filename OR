@@ -31,3 +31,90 @@ fig.update_layout(
 )
 
 fig.show()
+
+
+#&&&&&&&&&&&&&&&&&&&
+
+
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import holoviews as hv
+
+# If using Jupyter, uncomment:
+# hv.extension('matplotlib')
+
+# Ensure wage classes are ordered correctly
+wage_order = ['low', 'middle', 'high', 'top 1%']
+
+# --------------------------
+# Plot 1: Heatmap
+# --------------------------
+pivot_df = df.pivot_table(
+    index='original_wage_class', 
+    columns='current_wage_class', 
+    values='count', 
+    aggfunc='sum',
+    fill_value=0
+).reindex(index=wage_order, columns=wage_order)
+
+plt.figure(figsize=(8, 6))
+sns.heatmap(pivot_df, annot=True, fmt='d', cmap='Blues')
+plt.title('Heatmap of Wage Class Churn')
+plt.xlabel('Current Wage Class')
+plt.ylabel('Original Wage Class')
+plt.tight_layout()
+plt.show()
+
+# --------------------------
+# Plot 2: Sankey Diagram
+# --------------------------
+labels = wage_order
+source_target_df = df.groupby(['original_wage_class', 'current_wage_class'])['count'].sum().reset_index()
+source_indices = source_target_df['original_wage_class'].map({v: i for i, v in enumerate(labels)})
+target_indices = source_target_df['current_wage_class'].map({v: i+len(labels) for i, v in enumerate(labels)})
+
+fig_sankey = go.Figure(go.Sankey(
+    node={"label": labels + labels, "color": ["#a6cee3"]*4 + ["#1f78b4"]*4},
+    link={
+        "source": source_indices,
+        "target": target_indices,
+        "value": source_target_df['count']
+    }
+))
+fig_sankey.update_layout(title_text="Sankey Diagram of Wage Class Churn", font_size=10)
+fig_sankey.show()
+
+# --------------------------
+# Plot 3: Stacked Bar Plot Over Time
+# --------------------------
+quarterly_pivot = df.groupby(['yr_qtr', 'current_wage_class'])['count'].sum().unstack().reindex(columns=wage_order)
+
+quarterly_pivot.plot(kind='bar', stacked=True, figsize=(10, 7), colormap='Set2')
+plt.title('Stacked Bar Plot of Current Wage Class Distribution Over Time')
+plt.xlabel('Year-Quarter')
+plt.ylabel('Number of Employees')
+plt.legend(title='Current Wage Class')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# --------------------------
+# Plot 4: Chord Diagram (using Holoviews)
+# --------------------------
+chord_df = df.groupby(['original_wage_class', 'current_wage_class'])['count'].sum().reset_index()
+chord = hv.Chord(chord_df).select(value=(1, None))
+
+chord.opts(
+    cmap='Category20',
+    edge_cmap='Category20',
+    labels='index',
+    node_color='index',
+    edge_color='original_wage_class',
+    width=600,
+    height=600,
+    title="Chord Diagram of Wage Class Churn"
+)
+
+hv.output(chord)
