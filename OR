@@ -1,120 +1,41 @@
-import plotly.express as px
-
-wage_order = ['low', 'middle', 'high', 'top 1%']
-
-fig = px.scatter(
-    df,
-    x='original_wage_class',
-    y='current_wage_class',
-    size='count',
-    color='sector',
-    animation_frame='yr_qtr',
-    animation_group='state',
-    size_max=50,
-    category_orders={
-        'original_wage_class': wage_order,
-        'current_wage_class': wage_order
-    },
-    labels={
-        'original_wage_class': 'Original Wage Class',
-        'current_wage_class': 'Current Wage Class',
-        'count': 'Number of Employees'
-    },
-    title='Animated Wage Class Churn by Sector and State'
-)
-
-fig.update_layout(
-    xaxis_title='Original Wage Class',
-    yaxis_title='Current Wage Class',
-    transition={'duration': 500},
-    template='plotly_white'
-)
-
-fig.show()
-
-
-#&&&&&&&&&&&&&&&&&&&
-
-
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-import plotly.graph_objects as go
-import holoviews as hv
 
-# If using Jupyter, uncomment:
-# hv.extension('matplotlib')
+def cohort_tracking(df, cohort_period='2020_1'):
+    # Extract original cohort IDs and their classes from cohort_period
+    cohort_df = df[df['yr_qtr'] == cohort_period][['ID', 'class']].drop_duplicates()
 
-# Ensure wage classes are ordered correctly
-wage_order = ['low', 'middle', 'high', 'top 1%']
+    # Classes in cohort
+    classes = cohort_df['class'].unique()
 
-# --------------------------
-# Plot 1: Heatmap
-# --------------------------
-pivot_df = df.pivot_table(
-    index='original_wage_class', 
-    columns='current_wage_class', 
-    values='count', 
-    aggfunc='sum',
-    fill_value=0
-).reindex(index=wage_order, columns=wage_order)
+    # Initialize results storage
+    results = []
 
-plt.figure(figsize=(8, 6))
-sns.heatmap(pivot_df, annot=True, fmt='d', cmap='Blues')
-plt.title('Heatmap of Wage Class Churn')
-plt.xlabel('Current Wage Class')
-plt.ylabel('Original Wage Class')
-plt.tight_layout()
-plt.show()
+    # IDs in original cohort
+    cohort_ids = set(cohort_df['ID'])
 
-# --------------------------
-# Plot 2: Sankey Diagram
-# --------------------------
-labels = wage_order
-source_target_df = df.groupby(['original_wage_class', 'current_wage_class'])['count'].sum().reset_index()
-source_indices = source_target_df['original_wage_class'].map({v: i for i, v in enumerate(labels)})
-target_indices = source_target_df['current_wage_class'].map({v: i+len(labels) for i, v in enumerate(labels)})
+    # Iterate over all unique quarters
+    for period in sorted(df['yr_qtr'].unique()):
+        period_df = df[df['yr_qtr'] == period]
 
-fig_sankey = go.Figure(go.Sankey(
-    node={"label": labels + labels, "color": ["#a6cee3"]*4 + ["#1f78b4"]*4},
-    link={
-        "source": source_indices,
-        "target": target_indices,
-        "value": source_target_df['count']
-    }
-))
-fig_sankey.update_layout(title_text="Sankey Diagram of Wage Class Churn", font_size=10)
-fig_sankey.show()
+        found_counts = period_df[period_df['ID'].isin(cohort_ids)].groupby('class')['ID'].nunique()
+        found_counts = found_counts.reindex(classes, fill_value=0)
 
-# --------------------------
-# Plot 3: Stacked Bar Plot Over Time
-# --------------------------
-quarterly_pivot = df.groupby(['yr_qtr', 'current_wage_class'])['count'].sum().unstack().reindex(columns=wage_order)
+        # Unfound IDs are cohort IDs not in this period
+        found_ids = set(period_df['ID']).intersection(cohort_ids)
+        unfound_ids = cohort_ids - found_ids
+        unfound_counts = cohort_df[cohort_df['ID'].isin(unfound_ids)].groupby('class')['ID'].nunique()
+        unfound_counts = unfound_counts.reindex(classes, fill_value=0)
 
-quarterly_pivot.plot(kind='bar', stacked=True, figsize=(10, 7), colormap='Set2')
-plt.title('Stacked Bar Plot of Current Wage Class Distribution Over Time')
-plt.xlabel('Year-Quarter')
-plt.ylabel('Number of Employees')
-plt.legend(title='Current Wage Class')
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.show()
+        # Record results for each class
+        for cls in classes:
+            results.append({
+                'yr_qtr': period,
+                'class': cls,
+                'found_count': found_counts[cls],
+                'unfound_count': unfound_counts[cls]
+            })
 
-# --------------------------
-# Plot 4: Chord Diagram (using Holoviews)
-# --------------------------
-chord_df = df.groupby(['original_wage_class', 'current_wage_class'])['count'].sum().reset_index()
-chord = hv.Chord(chord_df).select(value=(1, None))
+    return pd.DataFrame(results)
 
-chord.opts(
-    cmap='Category20',
-    edge_cmap='Category20',
-    labels='index',
-    node_color='index',
-    edge_color='original_wage_class',
-    width=600,
-    height=600,
-    title="Chord Diagram of Wage Class Churn"
-)
-
-hv.output(chord)
+# Example usage:
+# result_df = cohort_tracking(your_df)
