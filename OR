@@ -39,3 +39,59 @@ def cohort_tracking(df, cohort_period='2020_1'):
 
 # Example usage:
 # result_df = cohort_tracking(your_df)
+#*****************************************
+
+import pandas as pd
+
+def sector_class_changes(df):
+    # Sort by ID and yr_qtr to track class changes over time
+    df_sorted = df.sort_values(['ID', 'yr_qtr'])
+    
+    # Determine if class changed for each ID between quarters
+    df_sorted['prev_class'] = df_sorted.groupby('ID')['class'].shift()
+    df_sorted['class_changed'] = (df_sorted['class'] != df_sorted['prev_class']) & (df_sorted['prev_class'].notna())
+    
+    # Count class changes by sector
+    sector_changes = df_sorted[df_sorted['class_changed']].groupby('sector')['class_changed'].count().reset_index()
+    sector_changes.rename(columns={'class_changed': 'num_class_changes'}, inplace=True)
+    
+    # Rank sectors by the most class changes
+    sector_changes = sector_changes.sort_values('num_class_changes', ascending=False).reset_index(drop=True)
+    
+    return sector_changes
+
+# Example usage:
+# changes_df = sector_class_changes(your_df)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+
+def track_sector_state_movement(df, sector_code='6244'):
+    # Filter to rows where the sector is 6244
+    sector_df = df[df['sector'] == sector_code].copy()
+
+    # Get all unique IDs ever associated with 6244
+    ids_in_6244 = sector_df['ID'].unique()
+
+    # Get full history of these IDs (in all sectors and states)
+    id_history = df[df['ID'].isin(ids_in_6244)].sort_values(['ID', 'yr_qtr'])
+
+    # Identify state transitions
+    id_history['prev_state'] = id_history.groupby('ID')['state'].shift()
+    id_history['prev_sector'] = id_history.groupby('ID')['sector'].shift()
+
+    # We only want where sector changed from 6244 to something else
+    moved_from_6244 = id_history[
+        (id_history['prev_sector'] == sector_code) &
+        (id_history['sector'] != sector_code)
+    ]
+
+    # Count destination states
+    state_moves = moved_from_6244.groupby('state')['ID'].nunique().reset_index()
+    state_moves.rename(columns={'ID': 'num_moved_from_6244'}, inplace=True)
+    state_moves = state_moves.sort_values('num_moved_from_6244', ascending=False)
+
+    return state_moves
+
+# Example usage:
+# state_movements = track_sector_state_movement(your_df)
