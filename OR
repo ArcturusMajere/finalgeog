@@ -95,3 +95,31 @@ def track_sector_state_movement(df, sector_code='6244'):
 
 # Example usage:
 # state_movements = track_sector_state_movement(your_df)
+&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+
+def track_sector_transitions_from(df, origin_sector='6244'):
+    # Filter to only IDs ever in sector 6244
+    ids_in_6244 = df[df['sector'] == origin_sector]['ID'].unique()
+
+    # Get full history of these IDs
+    id_history = df[df['ID'].isin(ids_in_6244)].sort_values(['ID', 'yr_qtr'])
+
+    # Track previous sector
+    id_history['prev_sector'] = id_history.groupby('ID')['sector'].shift()
+
+    # Filter where someone transitioned from 6244 to a new sector
+    transitions = id_history[
+        (id_history['prev_sector'] == origin_sector) &
+        (id_history['sector'] != origin_sector)
+    ]
+
+    # Count transitions to each new sector
+    sector_transitions = transitions.groupby('sector')['ID'].nunique().reset_index()
+    sector_transitions.rename(columns={'ID': f'num_from_{origin_sector}'}, inplace=True)
+    sector_transitions = sector_transitions.sort_values(f'num_from_{origin_sector}', ascending=False)
+
+    return sector_transitions
+
+# Example usage:
+# sector_movers = track_sector_transitions_from(your_df)
+
