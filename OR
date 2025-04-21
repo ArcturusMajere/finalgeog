@@ -37,3 +37,21 @@ mismatch_summary.sort_values(by='percent_mismatch', ascending=False, inplace=Tru
 
 # Show the summary
 import ace_tools as tools; tools.display_dataframe_to_user(name="Mismatch Summary", dataframe=mismatch_summary)
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load the mismatch summary file just created
+mismatch_summary = pd.read_csv('/mnt/data/file-EavHHTRooVcfY49t7Dkh92')  # Replace with real df if already available
+
+# Plotting percent mismatch by year and FIPS
+plt.figure(figsize=(14, 8))
+sns.barplot(data=mismatch_summary, x='year', y='percent_mismatch', hue='fips')
+plt.title('Percent of NAICS6 Prefix ≠ NAICS2 by Year and State (FIPS)')
+plt.xlabel('Year')
+plt.ylabel('Percent Mismatch')
+plt.legend(title='State FIPS', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.show()
