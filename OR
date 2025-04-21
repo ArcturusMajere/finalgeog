@@ -1,125 +1,39 @@
-import pandas as pd
+# List of all 2-digit FIPS codes (exclude territories if needed)
+fips_list = [f"{i:02d}" for i in range(1, 57)]
 
-def cohort_tracking(df, cohort_period='2020_1'):
-    # Extract original cohort IDs and their classes from cohort_period
-    cohort_df = df[df['yr_qtr'] == cohort_period][['ID', 'class']].drop_duplicates()
+results = []
 
-    # Classes in cohort
-    classes = cohort_df['class'].unique()
+for year in range(2020, 2025):
+    for fips in fips_list:
+        try:
+            # Load data for specific year and state FIPS
+            D = DOM2(year, fips)
 
-    # Initialize results storage
-    results = []
+            # Format columns as strings
+            D['naics6'] = D['naics6'].astype(str).str.zfill(6)
+            D['naics2'] = D['naics2'].astype(str).str.zfill(2)
+            D['naics6_prefix'] = D['naics6'].str[:2]
 
-    # IDs in original cohort
-    cohort_ids = set(cohort_df['ID'])
+            # Find mismatches
+            mismatch_count = (D['naics6_prefix'] != D['naics2']).sum()
+            total_count = len(D)
 
-    # Iterate over all unique quarters
-    for period in sorted(df['yr_qtr'].unique()):
-        period_df = df[df['yr_qtr'] == period]
-
-        found_counts = period_df[period_df['ID'].isin(cohort_ids)].groupby('class')['ID'].nunique()
-        found_counts = found_counts.reindex(classes, fill_value=0)
-
-        # Unfound IDs are cohort IDs not in this period
-        found_ids = set(period_df['ID']).intersection(cohort_ids)
-        unfound_ids = cohort_ids - found_ids
-        unfound_counts = cohort_df[cohort_df['ID'].isin(unfound_ids)].groupby('class')['ID'].nunique()
-        unfound_counts = unfound_counts.reindex(classes, fill_value=0)
-
-        # Record results for each class
-        for cls in classes:
+            # Save result
             results.append({
-                'yr_qtr': period,
-                'class': cls,
-                'found_count': found_counts[cls],
-                'unfound_count': unfound_counts[cls]
+                'year': year,
+                'fips': fips,
+                'mismatches': mismatch_count,
+                'total': total_count,
+                'percent_mismatch': round(100 * mismatch_count / total_count, 2) if total_count else 0
             })
 
-    return pd.DataFrame(results)
+        except Exception as e:
+            print(f"Error with year {year}, fips {fips}: {e}")
 
-# Example usage:
-# result_df = cohort_tracking(your_df)
-#*****************************************
-
+# Convert to DataFrame
 import pandas as pd
+mismatch_summary = pd.DataFrame(results)
+mismatch_summary.sort_values(by='percent_mismatch', ascending=False, inplace=True)
 
-def sector_class_changes(df):
-    # Sort by ID and yr_qtr to track class changes over time
-    df_sorted = df.sort_values(['ID', 'yr_qtr'])
-    
-    # Determine if class changed for each ID between quarters
-    df_sorted['prev_class'] = df_sorted.groupby('ID')['class'].shift()
-    df_sorted['class_changed'] = (df_sorted['class'] != df_sorted['prev_class']) & (df_sorted['prev_class'].notna())
-    
-    # Count class changes by sector
-    sector_changes = df_sorted[df_sorted['class_changed']].groupby('sector')['class_changed'].count().reset_index()
-    sector_changes.rename(columns={'class_changed': 'num_class_changes'}, inplace=True)
-    
-    # Rank sectors by the most class changes
-    sector_changes = sector_changes.sort_values('num_class_changes', ascending=False).reset_index(drop=True)
-    
-    return sector_changes
-
-# Example usage:
-# changes_df = sector_class_changes(your_df)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-
-
-def track_sector_state_movement(df, sector_code='6244'):
-    # Filter to rows where the sector is 6244
-    sector_df = df[df['sector'] == sector_code].copy()
-
-    # Get all unique IDs ever associated with 6244
-    ids_in_6244 = sector_df['ID'].unique()
-
-    # Get full history of these IDs (in all sectors and states)
-    id_history = df[df['ID'].isin(ids_in_6244)].sort_values(['ID', 'yr_qtr'])
-
-    # Identify state transitions
-    id_history['prev_state'] = id_history.groupby('ID')['state'].shift()
-    id_history['prev_sector'] = id_history.groupby('ID')['sector'].shift()
-
-    # We only want where sector changed from 6244 to something else
-    moved_from_6244 = id_history[
-        (id_history['prev_sector'] == sector_code) &
-        (id_history['sector'] != sector_code)
-    ]
-
-    # Count destination states
-    state_moves = moved_from_6244.groupby('state')['ID'].nunique().reset_index()
-    state_moves.rename(columns={'ID': 'num_moved_from_6244'}, inplace=True)
-    state_moves = state_moves.sort_values('num_moved_from_6244', ascending=False)
-
-    return state_moves
-
-# Example usage:
-# state_movements = track_sector_state_movement(your_df)
-&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-
-def track_sector_transitions_from(df, origin_sector='6244'):
-    # Filter to only IDs ever in sector 6244
-    ids_in_6244 = df[df['sector'] == origin_sector]['ID'].unique()
-
-    # Get full history of these IDs
-    id_history = df[df['ID'].isin(ids_in_6244)].sort_values(['ID', 'yr_qtr'])
-
-    # Track previous sector
-    id_history['prev_sector'] = id_history.groupby('ID')['sector'].shift()
-
-    # Filter where someone transitioned from 6244 to a new sector
-    transitions = id_history[
-        (id_history['prev_sector'] == origin_sector) &
-        (id_history['sector'] != origin_sector)
-    ]
-
-    # Count transitions to each new sector
-    sector_transitions = transitions.groupby('sector')['ID'].nunique().reset_index()
-    sector_transitions.rename(columns={'ID': f'num_from_{origin_sector}'}, inplace=True)
-    sector_transitions = sector_transitions.sort_values(f'num_from_{origin_sector}', ascending=False)
-
-    return sector_transitions
-
-# Example usage:
-# sector_movers = track_sector_transitions_from(your_df)
-
+# Show the summary
+import ace_tools as tools; tools.display_dataframe_to_user(name="Mismatch Summary", dataframe=mismatch_summary)
