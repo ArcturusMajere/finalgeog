@@ -1,57 +1,158 @@
-# List of all 2-digit FIPS codes (exclude territories if needed)
-fips_list = [f"{i:02d}" for i in range(1, 57)]
+import pandas as pd
+import us
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Build all (year, fips) combinations
+year_range = range(2020, 2025)
+fips_year_pairs = [(year, state.fips) for state in us.states.STATES if state.fips is not None for year in year_range]
+
+# Worker function
+def process_pair(year_fips):
+    year, fips = year_fips
+    try:
+        D = DOM2(year, fips)
+        D['naics6'] = D['naics6'].astype(str).str.zfill(6)
+        D['naics2'] = D['naics2'].astype(str).str.zfill(2)
+        D['naics6_prefix'] = D['naics6'].str[:2]
+
+        mismatches = (D['naics6_prefix'] != D['naics2']).sum()
+        total = len(D)
+        percent = round(100 * mismatches / total, 2) if total else 0
+
+        return {
+            'year': year,
+            'fips': fips,
+            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
+            'mismatches': mismatches,
+            'total': total,
+            'percent_mismatch': percent
+        }
+    except Exception as e:
+        return {
+            'year': year,
+            'fips': fips,
+            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
+            'mismatches': 0,
+            'total': 0,
+            'percent_mismatch': 0,
+            'error': str(e)
+        }
+
+# Run multithreaded collection
 results = []
+with ThreadPoolExecutor(max_workers=10) as executor:
+    futures = [executor.submit(process_pair, pair) for pair in fips_year_pairs]
+    for future in as_completed(futures):
+        results.append(future.result())
 
-for year in range(2020, 2025):
-    for fips in fips_list:
-        try:
-            # Load data for specific year and state FIPS
-            D = DOM2(year, fips)
+# Create DataFrame
+df_results = pd.DataFrame(results)
+df_results = df_results[['year', 'state', 'fips', 'mismatches', 'total', 'percent_mismatch']]
+df_results.sort_values(by=['year', 'state'], inplace=True)
 
-            # Format columns as strings
-            D['naics6'] = D['naics6'].astype(str).str.zfill(6)
-            D['naics2'] = D['naics2'].astype(str).str.zfill(2)
-            D['naics6_prefix'] = D['naics6'].str[:2]
+# Save interactive HTML using DataTables
+html_template = """
+<html>
+<head>
+    <title>NAICS Mismatch Summary</title>
+    <link rel="stylesheet"
+          href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
+    <script src="https://code.jquery.com/jquery-3.5.1.js"></script>
+    <script
+      src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script>
+    $(document).ready(function() {
+        $('#results').DataTable();
+    });
+    </script>
+</head>
+<body>
+<h2>NAICS Prefix Mismatch Summary</h2>
+{table}
+</body>
+</html>
+"""
 
-            # Find mismatches
-            mismatch_count = (D['naics6_prefix'] != D['naics2']).sum()
-            total_count = len(D)
+table_html = df_results.to_html(index=False, classes='display', table_id='results')
+with open("naics_mismatch_summary.html", "w") as f:
+    f.write(html_template.format(table=table_html))
 
-            # Save result
-            results.append({
-                'year': year,
-                'fips': fips,
-                'mismatches': mismatch_count,
-                'total': total_count,
-                'percent_mismatch': round(100 * mismatch_count / total_count, 2) if total_count else 0
-            })
+print("✅ Interactive HTML written to 'naics_mismatch_summary.html'")
 
-        except Exception as e:
-            print(f"Error with year {year}, fips {fips}: {e}")
 
-# Convert to DataFrame
+
+
+###
 import pandas as pd
-mismatch_summary = pd.DataFrame(results)
-mismatch_summary.sort_values(by='percent_mismatch', ascending=False, inplace=True)
+import us
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dash import Dash, dash_table, html
+import dash_bootstrap_components as dbc
 
-# Show the summary
-import ace_tools as tools; tools.display_dataframe_to_user(name="Mismatch Summary", dataframe=mismatch_summary)
+# Build all (year, fips) combinations
+year_range = range(2020, 2025)
+fips_year_pairs = [(year, state.fips) for state in us.states.STATES if state.fips is not None for year in year_range]
 
+# Worker function
+def process_pair(year_fips):
+    year, fips = year_fips
+    try:
+        D = DOM2(year, fips)
+        D['naics6'] = D['naics6'].astype(str).str.zfill(6)
+        D['naics2'] = D['naics2'].astype(str).str.zfill(2)
+        D['naics6_prefix'] = D['naics6'].str[:2]
 
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+        mismatches = (D['naics6_prefix'] != D['naics2']).sum()
+        total = len(D)
+        percent = round(100 * mismatches / total, 2) if total else 0
 
-# Load the mismatch summary file just created
-mismatch_summary = pd.read_csv('/mnt/data/file-EavHHTRooVcfY49t7Dkh92')  # Replace with real df if already available
+        return {
+            'year': year,
+            'fips': fips,
+            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
+            'mismatches': mismatches,
+            'total': total,
+            'percent_mismatch': percent
+        }
+    except Exception as e:
+        return {
+            'year': year,
+            'fips': fips,
+            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
+            'mismatches': 0,
+            'total': 0,
+            'percent_mismatch': 0,
+            'error': str(e)
+        }
 
-# Plotting percent mismatch by year and FIPS
-plt.figure(figsize=(14, 8))
-sns.barplot(data=mismatch_summary, x='year', y='percent_mismatch', hue='fips')
-plt.title('Percent of NAICS6 Prefix ≠ NAICS2 by Year and State (FIPS)')
-plt.xlabel('Year')
-plt.ylabel('Percent Mismatch')
-plt.legend(title='State FIPS', bbox_to_anchor=(1.05, 1), loc='upper left')
-plt.tight_layout()
-plt.show()
+# Run multithreaded data collection
+results = []
+with ThreadPoolExecutor(max_workers=10) as executor:
+    futures = [executor.submit(process_pair, pair) for pair in fips_year_pairs]
+    for future in as_completed(futures):
+        results.append(future.result())
+
+# DataFrame for Dash
+df_results = pd.DataFrame(results)
+df_results = df_results[['year', 'state', 'fips', 'mismatches', 'total', 'percent_mismatch']]
+df_results.sort_values(by=['year', 'state'], inplace=True)
+
+# Dash app
+app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+
+app.layout = dbc.Container([
+    html.H2("NAICS Prefix Mismatch Summary (2020–2024)", className="mt-4"),
+    dash_table.DataTable(
+        data=df_results.to_dict('records'),
+        columns=[{"name": i, "id": i} for i in df_results.columns],
+        page_size=20,
+        filter_action="native",
+        sort_action="native",
+        style_table={'overflowX': 'auto'},
+        style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold'},
+        style_cell={'padding': '6px', 'textAlign': 'left'},
+    )
+], fluid=True)
+
+if __name__ == '__main__':
+    app.run_server(debug=True)
