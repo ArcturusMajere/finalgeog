@@ -1,4 +1,45 @@
 import pandas as pd
+import plotly.express as px
+import plotly.io as pio
+
+# Example DataFrame — replace this with your actual df_results
+# Columns: ['year', 'state', 'percent_mismatch']
+# df_results = ...
+
+# Step 1: Create the stacked bar plot
+fig = px.bar(
+    df_results,
+    x='year',
+    y='percent_mismatch',
+    color='state',
+    title='Stacked Barplot of NAICS6 Prefix Mismatch by Year (State as Stack)',
+    labels={'percent_mismatch': '% Mismatch', 'year': 'Year'},
+    text_auto='.2s'
+)
+
+fig.update_layout(
+    barmode='stack',
+    xaxis=dict(type='category'),
+    legend_title='State',
+    template='plotly_white'
+)
+
+# Step 2: Export interactive HTML
+fig.write_html("naics_stacked_mismatch.html")
+
+# Step 3: Export as static PNG (requires kaleido)
+fig.write_image("naics_stacked_mismatch.png")
+
+# Optional Step 4: Export as animated GIF (requires kaleido and imageio)
+# For animated GIF you'd need an animation (e.g., animation_frame='year'), not this static stack
+# But here's the structure if you wanted it:
+# fig.write_image("naics_stacked_mismatch.gif", format="gif")
+
+print("✅ Exported as: HTML, PNG (and optionally GIF)")
+
+
+
+import pandas as pd
 import us
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
