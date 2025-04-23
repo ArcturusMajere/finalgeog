@@ -1,3 +1,39 @@
+def count_ui_naics2_assignments(df):
+    """
+    For each yr_qtr and state, count UIs that are assigned:
+    - Only one unique naics2 (single-establishment UIs)
+    - More than one naics2 (multi-establishment UIs)
+
+    Parameters:
+        df (DataFrame): Must contain ['yr_qtr', 'state', 'UI', 'naics2']
+
+    Returns:
+        summary_df: DataFrame with ['yr_qtr', 'state', 'single_ui_count', 'multi_ui_count']
+    """
+    df = df.copy()
+    df['naics2'] = df['naics2'].astype(str)
+
+    group = df.groupby(['yr_qtr', 'state', 'UI'])['naics2'].nunique().reset_index()
+    group['ui_type'] = group['naics2'].apply(lambda x: 'single' if x == 1 else 'multi')
+
+    summary = (
+        group.groupby(['yr_qtr', 'state', 'ui_type'])['UI']
+        .nunique()
+        .unstack(fill_value=0)
+        .reset_index()
+        .rename(columns={'single': 'single_ui_count', 'multi': 'multi_ui_count'})
+    )
+
+    # Ensure both columns exist
+    if 'single_ui_count' not in summary.columns:
+        summary['single_ui_count'] = 0
+    if 'multi_ui_count' not in summary.columns:
+        summary['multi_ui_count'] = 0
+
+    return summary
+
+
+#%%%%%%%%%%%%%%
 def matches_naics2(naics6_int, naics2_str):
     """Return True if naics6 prefix matches naics2 (handles ranges like '31-33')"""
     prefix = int(str(naics6_int).zfill(6)[:2])
