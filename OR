@@ -1,4 +1,47 @@
-import us
+import plotly.express as px
 
-def abbrevs_to_fips(abbrev_list):
-    return [us.states.lookup(abbr).fips for abbr in abbrev_list if us.states.lookup(abbr)]
+def visualize_ui_naics_summary(df):
+    """
+    Create a faceted stacked bar chart of single vs multi UI counts over yr_qtr,
+    faceted by state (rows) and naics_level (columns).
+
+    Parameters:
+        df: DataFrame from count_ui_naics_multi_by_level()
+    """
+    # Reshape to long format for stacking
+    df_long = df.melt(
+        id_vars=['yr_qtr', 'state', 'naics_level'],
+        value_vars=['single_ui_count', 'multi_ui_count'],
+        var_name='ui_type',
+        value_name='count'
+    )
+
+    # Clean up ui_type labels
+    df_long['ui_type'] = df_long['ui_type'].str.replace('_ui_count', '').str.capitalize()
+
+    # Sort yr_qtr for proper x-axis ordering
+    df_long = df_long.sort_values(by='yr_qtr')
+
+    # Plot
+    fig = px.bar(
+        df_long,
+        x='yr_qtr',
+        y='count',
+        color='ui_type',
+        barmode='stack',
+        facet_col='naics_level',
+        facet_row='state',
+        title="Single vs Multi UI Establishments by NAICS Level, State, and Quarter",
+        labels={'count': 'UI Count', 'yr_qtr': 'Year-Quarter', 'ui_type': 'UI Type'},
+        height=800
+    )
+
+    fig.update_layout(
+        template='plotly_white',
+        showlegend=True,
+        margin=dict(l=20, r=20, t=50, b=20),
+    )
+    fig.update_xaxes(matches=None, showticklabels=True)
+    fig.update_yaxes(matches=None)
+
+    fig.show()
