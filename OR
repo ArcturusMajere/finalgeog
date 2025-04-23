@@ -1,47 +1,81 @@
-import plotly.express as px
+import pandas as pd
+import us
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def visualize_ui_naics_summary(df):
+def count_ui_naics_multi_by_level():
     """
-    Create a faceted stacked bar chart of single vs multi UI counts over yr_qtr,
-    faceted by state (rows) and naics_level (columns).
+    For each yr_qtr, state, and NAICS level (2 to 6), count:
+    - UIs with only one unique NAICS (single)
+    - UIs with multiple NAICS (multi)
+    - Compute % breakdown
 
-    Parameters:
-        df: DataFrame from count_ui_naics_multi_by_level()
+    Returns a DataFrame:
+    ['yr_qtr', 'state', 'naics_level', 'single_ui_count', 'multi_ui_count', 'total_ui', 'pct_single', 'pct_multi']
     """
-    # Reshape to long format for stacking
-    df_long = df.melt(
-        id_vars=['yr_qtr', 'state', 'naics_level'],
-        value_vars=['single_ui_count', 'multi_ui_count'],
-        var_name='ui_type',
-        value_name='count'
+
+    def process_dom(year, fips):
+        try:
+            df = DOM2(year, fips)
+            df = df[['yr_qtr', 'state', 'UI', 'naics2', 'naics3', 'naics4', 'naics5', 'naics6']].dropna()
+            df = df.astype({lvl: str for lvl in ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']})
+
+            summaries = []
+
+            for level in ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']:
+                grouped = df.groupby(['yr_qtr', 'state', 'UI'])[level].nunique().reset_index()
+                grouped['ui_type'] = grouped[level].apply(lambda x: 'single' if x == 1 else 'multi')
+
+                summary = (
+                    grouped.groupby(['yr_qtr', 'state', 'ui_type'])['UI']
+                    .nunique()
+                    .unstack(fill_value=0)
+                    .reset_index()
+                    .rename(columns={'single': 'single_ui_count', 'multi': 'multi_ui_count'})
+                )
+
+                summary['naics_level'] = level
+                summary['single_ui_count'] = summary.get('single_ui_count', 0)
+                summary['multi_ui_count'] = summary.get('multi_ui_count', 0)
+                summary['total_ui'] = summary['single_ui_count'] + summary['multi_ui_count']
+                summary['pct_single'] = 100 * summary['single_ui_count'] / summary['total_ui']
+                summary['pct_multi'] = 100 * summary['multi_ui_count'] / summary['total_ui']
+
+                summaries.append(summary)
+
+            return pd.concat(summaries, ignore_index=True)
+
+        except Exception as e:
+            print(f"Error processing year={year}, fips={fips}: {e}")
+            return pd.DataFrame(columns=[
+                'yr_qtr', 'state', 'single_ui_count', 'multi_ui_count',
+                'total_ui', 'pct_single', 'pct_multi', 'naics_level'
+            ])
+
+    # Build jobs
+    year_range = range(2020, 2025)
+    fips_list = [state.fips for state in us.states.STATES if state.fips is not None]
+    jobs = [(year, fips) for year in year_range for fips in fips_list]
+
+    # Multithreaded execution
+    all_results = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(process_dom, year, fips) for year, fips in jobs]
+        for future in as_completed(futures):
+            result = future.result()
+            if not result.empty:
+                all_results.append(result)
+
+    # Combine and group totals
+    final_df = pd.concat(all_results, ignore_index=True)
+    final_df = (
+        final_df.groupby(['yr_qtr', 'state', 'naics_level'], as_index=False)
+        .agg({
+            'single_ui_count': 'sum',
+            'multi_ui_count': 'sum',
+            'total_ui': 'sum'
+        })
     )
+    final_df['pct_single'] = 100 * final_df['single_ui_count'] / final_df['total_ui']
+    final_df['pct_multi'] = 100 * final_df['multi_ui_count'] / final_df['total_ui']
 
-    # Clean up ui_type labels
-    df_long['ui_type'] = df_long['ui_type'].str.replace('_ui_count', '').str.capitalize()
-
-    # Sort yr_qtr for proper x-axis ordering
-    df_long = df_long.sort_values(by='yr_qtr')
-
-    # Plot
-    fig = px.bar(
-        df_long,
-        x='yr_qtr',
-        y='count',
-        color='ui_type',
-        barmode='stack',
-        facet_col='naics_level',
-        facet_row='state',
-        title="Single vs Multi UI Establishments by NAICS Level, State, and Quarter",
-        labels={'count': 'UI Count', 'yr_qtr': 'Year-Quarter', 'ui_type': 'UI Type'},
-        height=800
-    )
-
-    fig.update_layout(
-        template='plotly_white',
-        showlegend=True,
-        margin=dict(l=20, r=20, t=50, b=20),
-    )
-    fig.update_xaxes(matches=None, showticklabels=True)
-    fig.update_yaxes(matches=None)
-
-    fig.show()
+    return final_df
