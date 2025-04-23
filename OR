@@ -1,260 +1,66 @@
-def count_ui_naics2_assignments(df):
-    """
-    For each yr_qtr and state, count UIs that are assigned:
-    - Only one unique naics2 (single-establishment UIs)
-    - More than one naics2 (multi-establishment UIs)
-
-    Parameters:
-        df (DataFrame): Must contain ['yr_qtr', 'state', 'UI', 'naics2']
-
-    Returns:
-        summary_df: DataFrame with ['yr_qtr', 'state', 'single_ui_count', 'multi_ui_count']
-    """
-    df = df.copy()
-    df['naics2'] = df['naics2'].astype(str)
-
-    group = df.groupby(['yr_qtr', 'state', 'UI'])['naics2'].nunique().reset_index()
-    group['ui_type'] = group['naics2'].apply(lambda x: 'single' if x == 1 else 'multi')
-
-    summary = (
-        group.groupby(['yr_qtr', 'state', 'ui_type'])['UI']
-        .nunique()
-        .unstack(fill_value=0)
-        .reset_index()
-        .rename(columns={'single': 'single_ui_count', 'multi': 'multi_ui_count'})
-    )
-
-    # Ensure both columns exist
-    if 'single_ui_count' not in summary.columns:
-        summary['single_ui_count'] = 0
-    if 'multi_ui_count' not in summary.columns:
-        summary['multi_ui_count'] = 0
-
-    return summary
-
-
-#%%%%%%%%%%%%%%
-def matches_naics2(naics6_int, naics2_str):
-    """Return True if naics6 prefix matches naics2 (handles ranges like '31-33')"""
-    prefix = int(str(naics6_int).zfill(6)[:2])
-    try:
-        if '-' in naics2_str:
-            start, end = map(int, naics2_str.split('-'))
-            return start <= prefix <= end
-        else:
-            return prefix == int(naics2_str)
-    except:
-        return False
-
-def create_mismatch_summary(df):
-    """
-    Create mismatch summary DataFrame grouped by yr_qtr and state.
-
-    Parameters:
-        df (DataFrame): Must contain ['yr_qtr', 'state', 'naics6', 'naics2']
-
-    Returns:
-        DataFrame with columns ['yr_qtr', 'state', 'mismatches']
-    """
-    df = df.copy()
-    df['naics6'] = df['naics6'].astype(int)
-    df['naics2'] = df['naics2'].astype(str)
-
-    # Flag mismatches
-    df['mismatch'] = ~df.apply(lambda row: matches_naics2(row['naics6'], row['naics2']), axis=1)
-
-    # Aggregate by yr_qtr and state
-    summary = (
-        df.groupby(['yr_qtr', 'state'])['mismatch']
-        .sum()
-        .reset_index()
-        .rename(columns={'mismatch': 'mismatches'})
-    )
-
-    return summary
-#$$$$$$$$$$$
 import pandas as pd
 import us
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def matches_naics2(naics6_int, naics2_str):
-    prefix = int(str(naics6_int).zfill(6)[:2])
-    try:
-        if '-' in naics2_str:
-            start, end = map(int, naics2_str.split('-'))
-            return start <= prefix <= end
-        else:
-            return prefix == int(naics2_str)
-    except:
-        return False
+def count_ui_naics_multi_by_level():
+    """
+    For each yr_qtr, state, and NAICS level (2 to 6), count:
+    - UIs with only one unique NAICS (single-establishment)
+    - UIs with more than one NAICS (multi-establishment)
 
-def create_df_results(yr_qtrs, fips_list):
-    results = []
-
-    def process(year_qtr, fips):
+    Returns a DataFrame:
+    ['yr_qtr', 'state', 'naics_level', 'single_ui_count', 'multi_ui_count']
+    """
+    def process_dom(year, fips):
         try:
-            D = DOM2(year_qtr, fips)
-            D['naics6'] = D['naics6'].astype(int)
-            D['naics2'] = D['naics2'].astype(str)
-            D['naics_match'] = D.apply(lambda row: matches_naics2(row['naics6'], row['naics2']), axis=1)
-            mismatches = (~D['naics_match']).sum()
-            total = len(D)
-            pct = round(100 * mismatches / total, 2) if total else 0
-            return {
-                'yr_qtr': year_qtr,
-                'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
-                'mismatches': mismatches,
-                'total': total,
-                'percent_mismatch': pct
-            }
+            df = DOM2(year, fips)
+            df = df[['yr_qtr', 'state', 'UI', 'naics2', 'naics3', 'naics4', 'naics5', 'naics6']].dropna()
+            df = df.astype({'naics2': str, 'naics3': str, 'naics4': str, 'naics5': str, 'naics6': str})
+
+            summaries = []
+
+            for level in ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']:
+                grouped = df.groupby(['yr_qtr', 'state', 'UI'])[level].nunique().reset_index()
+                grouped['ui_type'] = grouped[level].apply(lambda x: 'single' if x == 1 else 'multi')
+
+                summary = (
+                    grouped.groupby(['yr_qtr', 'state', 'ui_type'])['UI']
+                    .nunique()
+                    .unstack(fill_value=0)
+                    .reset_index()
+                    .rename(columns={'single': 'single_ui_count', 'multi': 'multi_ui_count'})
+                )
+
+                summary['naics_level'] = level
+                if 'single_ui_count' not in summary.columns:
+                    summary['single_ui_count'] = 0
+                if 'multi_ui_count' not in summary.columns:
+                    summary['multi_ui_count'] = 0
+
+                summaries.append(summary)
+
+            return pd.concat(summaries, ignore_index=True)
+
         except Exception as e:
-            return {
-                'yr_qtr': year_qtr,
-                'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
-                'mismatches': 0,
-                'total': 0,
-                'percent_mismatch': 0,
-                'error': str(e)
-            }
+            print(f"Error processing year={year}, fips={fips}: {e}")
+            return pd.DataFrame(columns=['yr_qtr', 'state', 'single_ui_count', 'multi_ui_count', 'naics_level'])
 
+    # Build (year, fips) jobs
+    year_range = range(2020, 2025)
+    fips_list = [state.fips for state in us.states.STATES if state.fips is not None]
+    jobs = [(year, fips) for year in year_range for fips in fips_list]
+
+    # Run in parallel
+    all_results = []
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(process, yq, fips) for yq in yr_qtrs for fips in fips_list]
+        futures = [executor.submit(process_dom, year, fips) for year, fips in jobs]
         for future in as_completed(futures):
-            results.append(future.result())
+            result = future.result()
+            if not result.empty:
+                all_results.append(result)
 
-    df_results = pd.DataFrame(results)
-    df_results = df_results[['yr_qtr', 'state', 'mismatches', 'total', 'percent_mismatch']]
-    df_results = df_results[df_results['state'] != 'Unknown'].sort_values(by=['yr_qtr', 'state'])
-    return df_results
-#$$$$$$$$$$$$$$
+    # Combine all state-year-level results
+    final_df = pd.concat(all_results, ignore_index=True)
+    final_df = final_df.groupby(['yr_qtr', 'state', 'naics_level'], as_index=False).sum()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import pandas as pd
-import us
-import plotly.express as px
-import plotly.io as pio
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# --- Define matching function for naics6 prefix vs. naics2 range ---
-def matches_naics2(naics6_int, naics2_str):
-    prefix = int(str(naics6_int).zfill(6)[:2])
-    try:
-        if '-' in naics2_str:
-            start, end = map(int, naics2_str.split('-'))
-            return start <= prefix <= end
-        else:
-            return prefix == int(naics2_str)
-    except:
-        return False
-
-# --- Build (year, fips) combinations ---
-year_range = range(2020, 2025)
-fips_year_pairs = [(year, state.fips) for state in us.states.STATES if state.fips is not None for year in year_range]
-
-# --- Worker function to apply to each (year, fips) ---
-def process_pair(year_fips):
-    year, fips = year_fips
-    try:
-        D = DOM2(year, fips)
-        D['naics6'] = D['naics6'].astype(int)
-        D['naics2'] = D['naics2'].astype(str)
-        D['naics_match'] = D.apply(lambda row: matches_naics2(row['naics6'], row['naics2']), axis=1)
-        mismatches = (~D['naics_match']).sum()
-        total = len(D)
-        percent = round(100 * mismatches / total, 2) if total else 0
-        return {
-            'year': year,
-            'fips': fips,
-            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
-            'mismatches': mismatches,
-            'total': total,
-            'percent_mismatch': percent
-        }
-    except Exception as e:
-        return {
-            'year': year,
-            'fips': fips,
-            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
-            'mismatches': 0,
-            'total': 0,
-            'percent_mismatch': 0,
-            'error': str(e)
-        }
-
-# --- Run in parallel ---
-results = []
-with ThreadPoolExecutor(max_workers=10) as executor:
-    futures = [executor.submit(process_pair, pair) for pair in fips_year_pairs]
-    for future in as_completed(futures):
-        results.append(future.result())
-
-# --- Convert to DataFrame ---
-df_results = pd.DataFrame(results)
-df_results = df_results[['year', 'state', 'percent_mismatch']]
-df_results = df_results[df_results['state'] != 'Unknown']
-df_results.sort_values(by=['year', 'state'], inplace=True)
-
-# --- Create stacked bar plot ---
-fig = px.bar(
-    df_results,
-    x='year',
-    y='percent_mismatch',
-    color='state',
-    title='Stacked Barplot of NAICS6 Prefix Mismatch by Year (State as Stack)',
-    labels={'percent_mismatch': '% Mismatch', 'year': 'Year'},
-    text_auto='.2s'
-)
-
-fig.update_layout(
-    barmode='stack',
-    xaxis=dict(type='category'),
-    legend_title='State',
-    template='plotly_white'
-)
-
-# --- Export for sharing ---
-fig.write_html("naics_stacked_mismatch.html")
-fig.write_image("naics_stacked_mismatch.png")  # Requires `pip install kaleido`
-
-print("✅ Exported interactive HTML and PNG: 'naics_stacked_mismatch.html', 'naics_stacked_mismatch.png'")
-
-
-
-import plotly.express as px
-
-def plot_stacked_mismatch_by_yr_qtr(df):
-    """
-    Create a stacked bar plot showing mismatches over yr_qtr with state as legend.
-
-    Parameters:
-        df (DataFrame): Must contain columns ['yr_qtr', 'state', 'mismatches']
-    """
-    fig = px.bar(
-        df,
-        x='yr_qtr',
-        y='mismatches',
-        color='state',
-        title='Stacked Barplot of NAICS Mismatches Over Time',
-        labels={'yr_qtr': 'Year-Quarter', 'mismatches': 'Mismatch Count'},
-        text_auto='.2s'
-    )
-    fig.update_layout(
-        barmode='stack',
-        xaxis=dict(type='category'),
-        legend_title='State',
-        template='plotly_white'
-    )
-    fig.show()
+    return final_df
