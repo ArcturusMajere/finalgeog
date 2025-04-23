@@ -1,78 +1,66 @@
 import pandas as pd
 import us
-import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Function to detect mismatch between naics6 prefix and naics2 (including ranges)
-def is_mismatch(naics6, naics2):
-    try:
-        prefix = int(str(int(naics6)).zfill(6)[:2])
-        if '-' in naics2:
-            start, end = map(int, naics2.split('-'))
-            return not (start <= prefix <= end)
-        else:
-            return prefix != int(naics2)
-    except:
-        return True
+def count_ui_naics_multi_by_level():
+    """
+    For each yr_qtr, state, and NAICS level (2 to 6), count:
+    - UIs with only one unique NAICS (single-establishment)
+    - UIs with more than one NAICS (multi-establishment)
 
-# Worker for each DOM2(year, fips)
-def process_dom(year, fips):
-    try:
-        df = DOM2(year, fips)
-        df = df[['yr_qtr', 'state', 'naics6', 'naics2']].dropna()
-        df['naics6'] = df['naics6'].astype(str)
-        df['naics2'] = df['naics2'].astype(str)
-        df['mismatch'] = df.apply(lambda row: is_mismatch(row['naics6'], row['naics2']), axis=1)
-        mismatches = df[df['mismatch']]
-        return mismatches
-    except Exception as e:
-        print(f"Error in {year}, {fips}: {e}")
-        return pd.DataFrame(columns=['yr_qtr', 'state', 'naics6', 'naics2', 'mismatch'])
+    Returns a DataFrame:
+    ['yr_qtr', 'state', 'naics_level', 'single_ui_count', 'multi_ui_count']
+    """
+    def process_dom(year, fips):
+        try:
+            df = DOM2(year, fips)
+            df = df[['yr_qtr', 'state', 'UI', 'naics2', 'naics3', 'naics4', 'naics5', 'naics6']].dropna()
+            df = df.astype({'naics2': str, 'naics3': str, 'naics4': str, 'naics5': str, 'naics6': str})
 
-# Threaded execution
-def collect_mismatches_multithreaded():
+            summaries = []
+
+            for level in ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']:
+                grouped = df.groupby(['yr_qtr', 'state', 'UI'])[level].nunique().reset_index()
+                grouped['ui_type'] = grouped[level].apply(lambda x: 'single' if x == 1 else 'multi')
+
+                summary = (
+                    grouped.groupby(['yr_qtr', 'state', 'ui_type'])['UI']
+                    .nunique()
+                    .unstack(fill_value=0)
+                    .reset_index()
+                    .rename(columns={'single': 'single_ui_count', 'multi': 'multi_ui_count'})
+                )
+
+                summary['naics_level'] = level
+                if 'single_ui_count' not in summary.columns:
+                    summary['single_ui_count'] = 0
+                if 'multi_ui_count' not in summary.columns:
+                    summary['multi_ui_count'] = 0
+
+                summaries.append(summary)
+
+            return pd.concat(summaries, ignore_index=True)
+
+        except Exception as e:
+            print(f"Error processing year={year}, fips={fips}: {e}")
+            return pd.DataFrame(columns=['yr_qtr', 'state', 'single_ui_count', 'multi_ui_count', 'naics_level'])
+
+    # Build (year, fips) jobs
     year_range = range(2020, 2025)
     fips_list = [state.fips for state in us.states.STATES if state.fips is not None]
     jobs = [(year, fips) for year in year_range for fips in fips_list]
 
-    all_mismatches = []
+    # Run in parallel
+    all_results = []
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(process_dom, year, fips) for year, fips in jobs]
         for future in as_completed(futures):
             result = future.result()
             if not result.empty:
-                all_mismatches.append(result)
+                all_results.append(result)
 
-    return pd.concat(all_mismatches, ignore_index=True)
+    # Combine all state-year-level results
+    final_df = pd.concat(all_results, ignore_index=True)
+    final_df = final_df.groupby(['yr_qtr', 'state', 'naics_level'], as_index=False).sum()
 
-# Run the process
-mismatched_df = collect_mismatches_multithreaded()
-
-# Save examples (limit to first 100 rows)
-mismatched_df.head(100).to_csv("naics_mismatch_examples.csv", index=False)
-
-# Summarize by yr_qtr
-summary = (
-    mismatched_df.groupby('yr_qtr')
-    .size()
-    .reset_index(name='mismatch_count')
-    .sort_values('yr_qtr')
-)
-
-# Save summary
-summary.to_csv("naics_mismatch_summary.csv", index=False)
-
-# Quick barplot
-fig = px.bar(
-    summary,
-    x='yr_qtr',
-    y='mismatch_count',
-    title="NAICS6 vs NAICS2 Mismatch Counts by Year-Quarter",
-    labels={'yr_qtr': 'Year-Quarter', 'mismatch_count': 'Mismatch Count'},
-    text_auto=True
-)
-fig.update_layout(template='plotly_white')
-fig.write_html("naics_mismatch_barplot.html")
-fig.show()
-
-print("✅ Mismatch summary, examples, and barplot saved.")
+    return final_df
