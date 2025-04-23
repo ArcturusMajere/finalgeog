@@ -1,12 +1,177 @@
+def matches_naics2(naics6_int, naics2_str):
+    """Return True if naics6 prefix matches naics2 (handles ranges like '31-33')"""
+    prefix = int(str(naics6_int).zfill(6)[:2])
+    try:
+        if '-' in naics2_str:
+            start, end = map(int, naics2_str.split('-'))
+            return start <= prefix <= end
+        else:
+            return prefix == int(naics2_str)
+    except:
+        return False
+
+def create_mismatch_summary(df):
+    """
+    Create mismatch summary DataFrame grouped by yr_qtr and state.
+
+    Parameters:
+        df (DataFrame): Must contain ['yr_qtr', 'state', 'naics6', 'naics2']
+
+    Returns:
+        DataFrame with columns ['yr_qtr', 'state', 'mismatches']
+    """
+    df = df.copy()
+    df['naics6'] = df['naics6'].astype(int)
+    df['naics2'] = df['naics2'].astype(str)
+
+    # Flag mismatches
+    df['mismatch'] = ~df.apply(lambda row: matches_naics2(row['naics6'], row['naics2']), axis=1)
+
+    # Aggregate by yr_qtr and state
+    summary = (
+        df.groupby(['yr_qtr', 'state'])['mismatch']
+        .sum()
+        .reset_index()
+        .rename(columns={'mismatch': 'mismatches'})
+    )
+
+    return summary
+#$$$$$$$$$$$
 import pandas as pd
+import us
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def matches_naics2(naics6_int, naics2_str):
+    prefix = int(str(naics6_int).zfill(6)[:2])
+    try:
+        if '-' in naics2_str:
+            start, end = map(int, naics2_str.split('-'))
+            return start <= prefix <= end
+        else:
+            return prefix == int(naics2_str)
+    except:
+        return False
+
+def create_df_results(yr_qtrs, fips_list):
+    results = []
+
+    def process(year_qtr, fips):
+        try:
+            D = DOM2(year_qtr, fips)
+            D['naics6'] = D['naics6'].astype(int)
+            D['naics2'] = D['naics2'].astype(str)
+            D['naics_match'] = D.apply(lambda row: matches_naics2(row['naics6'], row['naics2']), axis=1)
+            mismatches = (~D['naics_match']).sum()
+            total = len(D)
+            pct = round(100 * mismatches / total, 2) if total else 0
+            return {
+                'yr_qtr': year_qtr,
+                'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
+                'mismatches': mismatches,
+                'total': total,
+                'percent_mismatch': pct
+            }
+        except Exception as e:
+            return {
+                'yr_qtr': year_qtr,
+                'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
+                'mismatches': 0,
+                'total': 0,
+                'percent_mismatch': 0,
+                'error': str(e)
+            }
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(process, yq, fips) for yq in yr_qtrs for fips in fips_list]
+        for future in as_completed(futures):
+            results.append(future.result())
+
+    df_results = pd.DataFrame(results)
+    df_results = df_results[['yr_qtr', 'state', 'mismatches', 'total', 'percent_mismatch']]
+    df_results = df_results[df_results['state'] != 'Unknown'].sort_values(by=['yr_qtr', 'state'])
+    return df_results
+#$$$$$$$$$$$$$$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+import us
 import plotly.express as px
 import plotly.io as pio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Example DataFrame — replace this with your actual df_results
-# Columns: ['year', 'state', 'percent_mismatch']
-# df_results = ...
+# --- Define matching function for naics6 prefix vs. naics2 range ---
+def matches_naics2(naics6_int, naics2_str):
+    prefix = int(str(naics6_int).zfill(6)[:2])
+    try:
+        if '-' in naics2_str:
+            start, end = map(int, naics2_str.split('-'))
+            return start <= prefix <= end
+        else:
+            return prefix == int(naics2_str)
+    except:
+        return False
 
-# Step 1: Create the stacked bar plot
+# --- Build (year, fips) combinations ---
+year_range = range(2020, 2025)
+fips_year_pairs = [(year, state.fips) for state in us.states.STATES if state.fips is not None for year in year_range]
+
+# --- Worker function to apply to each (year, fips) ---
+def process_pair(year_fips):
+    year, fips = year_fips
+    try:
+        D = DOM2(year, fips)
+        D['naics6'] = D['naics6'].astype(int)
+        D['naics2'] = D['naics2'].astype(str)
+        D['naics_match'] = D.apply(lambda row: matches_naics2(row['naics6'], row['naics2']), axis=1)
+        mismatches = (~D['naics_match']).sum()
+        total = len(D)
+        percent = round(100 * mismatches / total, 2) if total else 0
+        return {
+            'year': year,
+            'fips': fips,
+            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
+            'mismatches': mismatches,
+            'total': total,
+            'percent_mismatch': percent
+        }
+    except Exception as e:
+        return {
+            'year': year,
+            'fips': fips,
+            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
+            'mismatches': 0,
+            'total': 0,
+            'percent_mismatch': 0,
+            'error': str(e)
+        }
+
+# --- Run in parallel ---
+results = []
+with ThreadPoolExecutor(max_workers=10) as executor:
+    futures = [executor.submit(process_pair, pair) for pair in fips_year_pairs]
+    for future in as_completed(futures):
+        results.append(future.result())
+
+# --- Convert to DataFrame ---
+df_results = pd.DataFrame(results)
+df_results = df_results[['year', 'state', 'percent_mismatch']]
+df_results = df_results[df_results['state'] != 'Unknown']
+df_results.sort_values(by=['year', 'state'], inplace=True)
+
+# --- Create stacked bar plot ---
 fig = px.bar(
     df_results,
     x='year',
@@ -24,176 +189,36 @@ fig.update_layout(
     template='plotly_white'
 )
 
-# Step 2: Export interactive HTML
+# --- Export for sharing ---
 fig.write_html("naics_stacked_mismatch.html")
+fig.write_image("naics_stacked_mismatch.png")  # Requires `pip install kaleido`
 
-# Step 3: Export as static PNG (requires kaleido)
-fig.write_image("naics_stacked_mismatch.png")
-
-# Optional Step 4: Export as animated GIF (requires kaleido and imageio)
-# For animated GIF you'd need an animation (e.g., animation_frame='year'), not this static stack
-# But here's the structure if you wanted it:
-# fig.write_image("naics_stacked_mismatch.gif", format="gif")
-
-print("✅ Exported as: HTML, PNG (and optionally GIF)")
+print("✅ Exported interactive HTML and PNG: 'naics_stacked_mismatch.html', 'naics_stacked_mismatch.png'")
 
 
 
-import pandas as pd
-import us
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import plotly.express as px
 
-# Build all (year, fips) combinations
-year_range = range(2020, 2025)
-fips_year_pairs = [(year, state.fips) for state in us.states.STATES if state.fips is not None for year in year_range]
+def plot_stacked_mismatch_by_yr_qtr(df):
+    """
+    Create a stacked bar plot showing mismatches over yr_qtr with state as legend.
 
-# Worker function
-def process_pair(year_fips):
-    year, fips = year_fips
-    try:
-        D = DOM2(year, fips)
-        D['naics6'] = D['naics6'].astype(str).str.zfill(6)
-        D['naics2'] = D['naics2'].astype(str).str.zfill(2)
-        D['naics6_prefix'] = D['naics6'].str[:2]
-
-        mismatches = (D['naics6_prefix'] != D['naics2']).sum()
-        total = len(D)
-        percent = round(100 * mismatches / total, 2) if total else 0
-
-        return {
-            'year': year,
-            'fips': fips,
-            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
-            'mismatches': mismatches,
-            'total': total,
-            'percent_mismatch': percent
-        }
-    except Exception as e:
-        return {
-            'year': year,
-            'fips': fips,
-            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
-            'mismatches': 0,
-            'total': 0,
-            'percent_mismatch': 0,
-            'error': str(e)
-        }
-
-# Run multithreaded collection
-results = []
-with ThreadPoolExecutor(max_workers=10) as executor:
-    futures = [executor.submit(process_pair, pair) for pair in fips_year_pairs]
-    for future in as_completed(futures):
-        results.append(future.result())
-
-# Create DataFrame
-df_results = pd.DataFrame(results)
-df_results = df_results[['year', 'state', 'fips', 'mismatches', 'total', 'percent_mismatch']]
-df_results.sort_values(by=['year', 'state'], inplace=True)
-
-# Save interactive HTML using DataTables
-html_template = """
-<html>
-<head>
-    <title>NAICS Mismatch Summary</title>
-    <link rel="stylesheet"
-          href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
-    <script src="https://code.jquery.com/jquery-3.5.1.js"></script>
-    <script
-      src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
-    <script>
-    $(document).ready(function() {
-        $('#results').DataTable();
-    });
-    </script>
-</head>
-<body>
-<h2>NAICS Prefix Mismatch Summary</h2>
-{table}
-</body>
-</html>
-"""
-
-table_html = df_results.to_html(index=False, classes='display', table_id='results')
-with open("naics_mismatch_summary.html", "w") as f:
-    f.write(html_template.format(table=table_html))
-
-print("✅ Interactive HTML written to 'naics_mismatch_summary.html'")
-
-
-
-
-###
-import pandas as pd
-import us
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dash import Dash, dash_table, html
-import dash_bootstrap_components as dbc
-
-# Build all (year, fips) combinations
-year_range = range(2020, 2025)
-fips_year_pairs = [(year, state.fips) for state in us.states.STATES if state.fips is not None for year in year_range]
-
-# Worker function
-def process_pair(year_fips):
-    year, fips = year_fips
-    try:
-        D = DOM2(year, fips)
-        D['naics6'] = D['naics6'].astype(str).str.zfill(6)
-        D['naics2'] = D['naics2'].astype(str).str.zfill(2)
-        D['naics6_prefix'] = D['naics6'].str[:2]
-
-        mismatches = (D['naics6_prefix'] != D['naics2']).sum()
-        total = len(D)
-        percent = round(100 * mismatches / total, 2) if total else 0
-
-        return {
-            'year': year,
-            'fips': fips,
-            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
-            'mismatches': mismatches,
-            'total': total,
-            'percent_mismatch': percent
-        }
-    except Exception as e:
-        return {
-            'year': year,
-            'fips': fips,
-            'state': us.states.lookup(fips).abbr if us.states.lookup(fips) else 'Unknown',
-            'mismatches': 0,
-            'total': 0,
-            'percent_mismatch': 0,
-            'error': str(e)
-        }
-
-# Run multithreaded data collection
-results = []
-with ThreadPoolExecutor(max_workers=10) as executor:
-    futures = [executor.submit(process_pair, pair) for pair in fips_year_pairs]
-    for future in as_completed(futures):
-        results.append(future.result())
-
-# DataFrame for Dash
-df_results = pd.DataFrame(results)
-df_results = df_results[['year', 'state', 'fips', 'mismatches', 'total', 'percent_mismatch']]
-df_results.sort_values(by=['year', 'state'], inplace=True)
-
-# Dash app
-app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-
-app.layout = dbc.Container([
-    html.H2("NAICS Prefix Mismatch Summary (2020–2024)", className="mt-4"),
-    dash_table.DataTable(
-        data=df_results.to_dict('records'),
-        columns=[{"name": i, "id": i} for i in df_results.columns],
-        page_size=20,
-        filter_action="native",
-        sort_action="native",
-        style_table={'overflowX': 'auto'},
-        style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold'},
-        style_cell={'padding': '6px', 'textAlign': 'left'},
+    Parameters:
+        df (DataFrame): Must contain columns ['yr_qtr', 'state', 'mismatches']
+    """
+    fig = px.bar(
+        df,
+        x='yr_qtr',
+        y='mismatches',
+        color='state',
+        title='Stacked Barplot of NAICS Mismatches Over Time',
+        labels={'yr_qtr': 'Year-Quarter', 'mismatches': 'Mismatch Count'},
+        text_auto='.2s'
     )
-], fluid=True)
-
-if __name__ == '__main__':
-    app.run_server(debug=True)
+    fig.update_layout(
+        barmode='stack',
+        xaxis=dict(type='category'),
+        legend_title='State',
+        template='plotly_white'
+    )
+    fig.show()
