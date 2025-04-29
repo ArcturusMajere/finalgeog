@@ -1,4 +1,12 @@
-import pandas as pd
+import us
+
+def abbrev_to_fips(state_abbrevs):
+    return [us.states.lookup(abbrev).fips for abbrev in state_abbrevs]
+
+state_abbrevs = ['NM', 'CA', 'TX', 'NY']
+fips_list = abbrev_to_fips(state_abbrevs)
+print(fips_list)
+
 
 def calculate_naics_mismatches(df):
     df = df.copy()
