@@ -1,5 +1,40 @@
 import pandas as pd
 
+def calculate_naics_mismatches(df):
+    df = df.copy()
+
+    # Convert to string and pad appropriately
+    df['naics2'] = df['naics2'].astype(str).str.zfill(2)
+    df['naics3'] = df['naics3'].astype(str).str.zfill(3)
+    df['naics4'] = df['naics4'].astype(str).str.zfill(4)
+    df['naics5'] = df['naics5'].astype(str).str.zfill(5)
+    df['naics6'] = df['naics6'].astype(str).str.zfill(6)
+
+    # Create mismatch indicators
+    df['mismatch_naics3'] = ~df['naics3'].str.startswith(df['naics2'])
+    df['mismatch_naics4'] = ~df['naics4'].str.startswith(df['naics2'])
+    df['mismatch_naics5'] = ~df['naics5'].str.startswith(df['naics2'])
+    df['mismatch_naics6'] = ~df['naics6'].str.startswith(df['naics2'])
+
+    # Group by state and calculate percentage of mismatches
+    summary = df.groupby('state').agg(
+        total=('naics2', 'count'),
+        naics3_mismatch_pct=('mismatch_naics3', 'mean'),
+        naics4_mismatch_pct=('mismatch_naics4', 'mean'),
+        naics5_mismatch_pct=('mismatch_naics5', 'mean'),
+        naics6_mismatch_pct=('mismatch_naics6', 'mean')
+    ).reset_index()
+
+    # Convert to percentage
+    for col in ['naics3_mismatch_pct', 'naics4_mismatch_pct', 'naics5_mismatch_pct', 'naics6_mismatch_pct']:
+        summary[col] = (summary[col] * 100).round(2)
+
+    return summary
+
+
+
+import pandas as pd
+
 def find_duplicates_same_wage_diff_sector(df):
     """
     Returns rows where the same ID appears with the exact same WAGE
