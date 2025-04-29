@@ -1,14 +1,21 @@
 import pandas as pd
 
-def find_exact_duplicates(df):
+def find_duplicates_same_wage_diff_sector(df):
     """
-    Returns rows where the same ID appears more than once with the exact same WAGE.
+    Returns rows where the same ID appears with the exact same WAGE
+    but different SECTOR values.
     """
-    duplicates = df[df.duplicated(subset=['ID', 'WAGE'], keep=False)]
-    return duplicates.sort_values(by=['ID', 'WAGE'])
+    # Group by ID and WAGE and filter those with more than one unique SECTOR
+    filtered = df.groupby(['ID', 'WAGE'])['SECTOR'].nunique().reset_index()
+    filtered = filtered[filtered['SECTOR'] > 1][['ID', 'WAGE']]
+
+    # Merge back to original to get full rows
+    result = df.merge(filtered, on=['ID', 'WAGE'])
+    return result.sort_values(by=['ID', 'WAGE'])
 
 # Example usage:
-# result = find_exact_duplicates(your_dataframe)
+# result = find_duplicates_same_wage_diff_sector(your_dataframe)
+
 
 
 import pandas as pd
