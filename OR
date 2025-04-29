@@ -1,4 +1,17 @@
 import pandas as pd
+
+def find_exact_duplicates(df):
+    """
+    Returns rows where the same ID appears more than once with the exact same WAGE.
+    """
+    duplicates = df[df.duplicated(subset=['ID', 'WAGE'], keep=False)]
+    return duplicates.sort_values(by=['ID', 'WAGE'])
+
+# Example usage:
+# result = find_exact_duplicates(your_dataframe)
+
+
+import pandas as pd
 import us
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
