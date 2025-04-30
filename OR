@@ -1,187 +1,59 @@
-import us
-
-def abbrev_to_fips(state_abbrevs):
-    return [us.states.lookup(abbrev).fips for abbrev in state_abbrevs]
-
-state_abbrevs = ['NM', 'CA', 'TX', 'NY']
-fips_list = abbrev_to_fips(state_abbrevs)
-print(fips_list)
-
-
-def calculate_naics_mismatches(df):
-    df = df.copy()
-
-    # Convert all NAICS columns to string and pad as needed
-    df['naics3'] = df['naics3'].astype(str).str.zfill(3)
-    df['naics4'] = df['naics4'].astype(str).str.zfill(4)
-    df['naics5'] = df['naics5'].astype(str).str.zfill(5)
-    df['naics6'] = df['naics6'].astype(str).str.zfill(6)
-
-    # Function to parse naics2 range into a set of valid 2-digit strings
-    def parse_naics2_range(val):
-        if '-' in val:
-            start, end = map(int, val.split('-'))
-            return {str(i).zfill(2) for i in range(start, end + 1)}
-        else:
-            return {val.zfill(2)}
-
-    # Expand valid naics2 prefixes
-    df['naics2_set'] = df['naics2'].astype(str).apply(parse_naics2_range)
-
-    # Check mismatches
-    df['mismatch_naics3'] = ~df.apply(lambda x: x['naics3'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics4'] = ~df.apply(lambda x: x['naics4'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics5'] = ~df.apply(lambda x: x['naics5'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics6'] = ~df.apply(lambda x: x['naics6'][:2] in x['naics2_set'], axis=1)
-
-    # Summarize percent mismatches per state
-    summary = df.groupby('state').agg(
-        total=('naics2', 'count'),
-        naics3_mismatch_pct=('mismatch_naics3', 'mean'),
-        naics4_mismatch_pct=('mismatch_naics4', 'mean'),
-        naics5_mismatch_pct=('mismatch_naics5', 'mean'),
-        naics6_mismatch_pct=('mismatch_naics6', 'mean')
-    ).reset_index()
-
-    # Convert to percentage
-    for col in ['naics3_mismatch_pct', 'naics4_mismatch_pct', 'naics5_mismatch_pct', 'naics6_mismatch_pct']:
-        summary[col] = (summary[col] * 100).round(2)
-
-    return summary
-
 import pandas as pd
 
-def calculate_naics_mismatches(df):
-    df = df.copy()
+def expand_naics2(df):
+    """Expand naics2 ranges to list of valid values per row."""
+    naics2_expanded = df['naics2'].astype(str).str.zfill(2).str.extract(r'(?P<start>\d{2})(?:-(?P<end>\d{2}))?')
+    naics2_expanded = naics2_expanded.fillna(method='ffill', axis=1).astype(int)
+    df['naics2_set'] = naics2_expanded.apply(lambda row: set(str(i).zfill(2) for i in range(row['start'], row['end'] + 1)), axis=1)
+    return df
 
-    # Convert to string and pad appropriately
-    df['naics2'] = df['naics2'].astype(str).str.zfill(2)
-    df['naics3'] = df['naics3'].astype(str).str.zfill(3)
-    df['naics4'] = df['naics4'].astype(str).str.zfill(4)
-    df['naics5'] = df['naics5'].astype(str).str.zfill(5)
-    df['naics6'] = df['naics6'].astype(str).str.zfill(6)
+def compute_mismatch_columns(df):
+    """Compute mismatch columns for all NAICS levels."""
+    for level in [3, 4, 5, 6]:
+        col = f'naics{level}'
+        df[col] = df[col].astype(str).str.zfill(level)
+        mismatch_col = f'mismatch_naics{level}'
+        df[mismatch_col] = ~df[col].str[:2].isin(df['naics2_set'])
+    return df
 
-    # Create mismatch indicators
-    df['mismatch_naics3'] = ~df['naics3'].str.startswith(df['naics2'])
-    df['mismatch_naics4'] = ~df['naics4'].str.startswith(df['naics2'])
-    df['mismatch_naics5'] = ~df['naics5'].str.startswith(df['naics2'])
-    df['mismatch_naics6'] = ~df['naics6'].str.startswith(df['naics2'])
+def summarize_mismatches(df):
+    """Group by state and yr_qtr, and compute mismatch percentages."""
+    mismatch_cols = [f'mismatch_naics{n}' for n in [3, 4, 5, 6]]
 
-    # Group by state and calculate percentage of mismatches
-    summary = df.groupby('state').agg(
-        total=('naics2', 'count'),
-        naics3_mismatch_pct=('mismatch_naics3', 'mean'),
-        naics4_mismatch_pct=('mismatch_naics4', 'mean'),
-        naics5_mismatch_pct=('mismatch_naics5', 'mean'),
-        naics6_mismatch_pct=('mismatch_naics6', 'mean')
-    ).reset_index()
-
-    # Convert to percentage
-    for col in ['naics3_mismatch_pct', 'naics4_mismatch_pct', 'naics5_mismatch_pct', 'naics6_mismatch_pct']:
-        summary[col] = (summary[col] * 100).round(2)
-
-    return summary
-
-
-
-import pandas as pd
-
-def find_duplicates_same_wage_diff_sector(df):
-    """
-    Returns rows where the same ID appears with the exact same WAGE
-    but different SECTOR values.
-    """
-    # Group by ID and WAGE and filter those with more than one unique SECTOR
-    filtered = df.groupby(['ID', 'WAGE'])['SECTOR'].nunique().reset_index()
-    filtered = filtered[filtered['SECTOR'] > 1][['ID', 'WAGE']]
-
-    # Merge back to original to get full rows
-    result = df.merge(filtered, on=['ID', 'WAGE'])
-    return result.sort_values(by=['ID', 'WAGE'])
-
-# Example usage:
-# result = find_duplicates_same_wage_diff_sector(your_dataframe)
-
-
-
-import pandas as pd
-import us
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-def count_ui_naics_multi_by_level():
-    """
-    For each yr_qtr, state, and NAICS level (2 to 6), count:
-    - UIs with only one unique NAICS (single)
-    - UIs with multiple NAICS (multi)
-    - Compute % breakdown
-
-    Returns a DataFrame:
-    ['yr_qtr', 'state', 'naics_level', 'single_ui_count', 'multi_ui_count', 'total_ui', 'pct_single', 'pct_multi']
-    """
-
-    def process_dom(year, fips):
-        try:
-            df = DOM2(year, fips)
-            df = df[['yr_qtr', 'state', 'UI', 'naics2', 'naics3', 'naics4', 'naics5', 'naics6']].dropna()
-            df = df.astype({lvl: str for lvl in ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']})
-
-            summaries = []
-
-            for level in ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']:
-                grouped = df.groupby(['yr_qtr', 'state', 'UI'])[level].nunique().reset_index()
-                grouped['ui_type'] = grouped[level].apply(lambda x: 'single' if x == 1 else 'multi')
-
-                summary = (
-                    grouped.groupby(['yr_qtr', 'state', 'ui_type'])['UI']
-                    .nunique()
-                    .unstack(fill_value=0)
-                    .reset_index()
-                    .rename(columns={'single': 'single_ui_count', 'multi': 'multi_ui_count'})
-                )
-
-                summary['naics_level'] = level
-                summary['single_ui_count'] = summary.get('single_ui_count', 0)
-                summary['multi_ui_count'] = summary.get('multi_ui_count', 0)
-                summary['total_ui'] = summary['single_ui_count'] + summary['multi_ui_count']
-                summary['pct_single'] = 100 * summary['single_ui_count'] / summary['total_ui']
-                summary['pct_multi'] = 100 * summary['multi_ui_count'] / summary['total_ui']
-
-                summaries.append(summary)
-
-            return pd.concat(summaries, ignore_index=True)
-
-        except Exception as e:
-            print(f"Error processing year={year}, fips={fips}: {e}")
-            return pd.DataFrame(columns=[
-                'yr_qtr', 'state', 'single_ui_count', 'multi_ui_count',
-                'total_ui', 'pct_single', 'pct_multi', 'naics_level'
-            ])
-
-    # Build jobs
-    year_range = range(2020, 2025)
-    fips_list = [state.fips for state in us.states.STATES if state.fips is not None]
-    jobs = [(year, fips) for year in year_range for fips in fips_list]
-
-    # Multithreaded execution
-    all_results = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(process_dom, year, fips) for year, fips in jobs]
-        for future in as_completed(futures):
-            result = future.result()
-            if not result.empty:
-                all_results.append(result)
-
-    # Combine and group totals
-    final_df = pd.concat(all_results, ignore_index=True)
-    final_df = (
-        final_df.groupby(['yr_qtr', 'state', 'naics_level'], as_index=False)
-        .agg({
-            'single_ui_count': 'sum',
-            'multi_ui_count': 'sum',
-            'total_ui': 'sum'
-        })
+    summary = (
+        df.groupby(['state', 'yr_qtr'])[mismatch_cols]
+        .mean()
+        .mul(100)
+        .round(2)
+        .reset_index()
     )
-    final_df['pct_single'] = 100 * final_df['single_ui_count'] / final_df['total_ui']
-    final_df['pct_multi'] = 100 * final_df['multi_ui_count'] / final_df['total_ui']
+    summary['total'] = df.groupby(['state', 'yr_qtr']).size().values
+    return summary
 
-    return final_df
+def calculate_naics_mismatches(df):
+    df = df.copy()
+    df = expand_naics2(df)
+    df = compute_mismatch_columns(df)
+    result = summarize_mismatches(df)
+    return result
+
+# === Execution ===
+# Replace this with your actual DataFrame load
+# Example: df = pd.read_csv('your_data.csv')
+# df must include: ['state', 'yr_qtr', 'naics2', 'naics3', 'naics4', 'naics5', 'naics6']
+
+# Sample usage
+if __name__ == "__main__":
+    # Example dummy data (replace with your actual data)
+    df = pd.DataFrame({
+        'state': ['NM', 'NM', 'AZ', 'AZ'],
+        'yr_qtr': ['2020-1', '2020-1', '2021-2', '2021-2'],
+        'naics2': ['31-33', '42', '44-45', '72'],
+        'naics3': ['311', '423', '451', '721'],
+        'naics4': ['3111', '4231', '4511', '7211'],
+        'naics5': ['31111', '42311', '45111', '72111'],
+        'naics6': ['311111', '423111', '451111', '721111']
+    })
+
+    result_df = calculate_naics_mismatches(df)
+    print(result_df)
