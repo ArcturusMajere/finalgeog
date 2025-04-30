@@ -2,46 +2,62 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product
 
+# Replace this with your actual DOM(fips, year) function
+def DOM(fips, year):
+    # Placeholder - simulate with real implementation
+    raise NotImplementedError("Replace with your data retrieval logic")
+
 def parse_naics2_range(val):
-    if '-' in val:
-        start, end = map(int, val.split('-'))
-        return {str(i).zfill(2) for i in range(start, end + 1)}
-    return {val.zfill(2)}
+    try:
+        if '-' in val:
+            start, end = map(int, val.split('-'))
+            return {str(i).zfill(2) for i in range(start, end + 1)}
+        return {val.zfill(2)}
+    except:
+        return set()  # Return empty set on parse error
 
-def process_subset(df):
-    # Prepare NAICS columns
-    df = df.copy()
-    for col in ['naics3', 'naics4', 'naics5', 'naics6']:
-        df[col] = df[col].astype(str).str.zfill(len(col))
+def process_fips_year(fips, year):
+    try:
+        df = DOM(fips, year)
+        if df.empty:
+            return None
 
-    df['naics2_set'] = df['naics2'].astype(str).apply(parse_naics2_range)
+        df = df.copy()
+        df['fips'] = fips
+        df['year'] = year
 
-    df['mismatch_naics3'] = ~df.apply(lambda x: x['naics3'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics4'] = ~df.apply(lambda x: x['naics4'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics5'] = ~df.apply(lambda x: x['naics5'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics6'] = ~df.apply(lambda x: x['naics6'][:2] in x['naics2_set'], axis=1)
+        # Pad NAICS levels
+        for col in ['naics3', 'naics4', 'naics5', 'naics6']:
+            df[col] = df[col].astype(str).str.zfill(len(col))
+        df['naics2_set'] = df['naics2'].astype(str).apply(parse_naics2_range)
 
-    summary = {
-        'state': df['state'].iloc[0],
-        'yr_qtr': df['yr_qtr'].iloc[0],
-        'naics3_mismatch_pct': round(df['mismatch_naics3'].mean() * 100, 2),
-        'naics4_mismatch_pct': round(df['mismatch_naics4'].mean() * 100, 2),
-        'naics5_mismatch_pct': round(df['mismatch_naics5'].mean() * 100, 2),
-        'naics6_mismatch_pct': round(df['mismatch_naics6'].mean() * 100, 2),
-        'total': len(df)
-    }
-    return summary
+        # Mismatch checks
+        df['mismatch_naics3'] = ~df.apply(lambda x: x['naics3'][:2] in x['naics2_set'], axis=1)
+        df['mismatch_naics4'] = ~df.apply(lambda x: x['naics4'][:2] in x['naics2_set'], axis=1)
+        df['mismatch_naics5'] = ~df.apply(lambda x: x['naics5'][:2] in x['naics2_set'], axis=1)
+        df['mismatch_naics6'] = ~df.apply(lambda x: x['naics6'][:2] in x['naics2_set'], axis=1)
 
-def calculate_mismatches_parallel(df, states, start_yr=2020, end_yr=2023, end_qtr=3):
-    timeframes = [f"{y}-{q}" for y in range(start_yr, end_yr + 1) for q in range(1, 5) if not (y == end_yr and q > end_qtr)]
+        return {
+            'fips': fips,
+            'year': year,
+            'naics3_mismatch_pct': round(df['mismatch_naics3'].mean() * 100, 2),
+            'naics4_mismatch_pct': round(df['mismatch_naics4'].mean() * 100, 2),
+            'naics5_mismatch_pct': round(df['mismatch_naics5'].mean() * 100, 2),
+            'naics6_mismatch_pct': round(df['mismatch_naics6'].mean() * 100, 2),
+            'total': len(df)
+        }
+    except Exception as e:
+        print(f"Error processing FIPS {fips}, Year {year}: {e}")
+        return None
+
+def calculate_mismatch_all(FIPS):
+    years = list(range(2020, 2025))
     tasks = []
 
     with ThreadPoolExecutor() as executor:
-        for state, yr_qtr in product(states, timeframes):
-            subset = df[(df['state'] == state) & (df['yr_qtr'] == yr_qtr)]
-            if not subset.empty:
-                tasks.append(executor.submit(process_subset, subset))
+        for fips, year in product(FIPS, years):
+            tasks.append(executor.submit(process_fips_year, fips, year))
 
-        results = [t.result() for t in tasks]
+        results = [t.result() for t in tasks if t.result() is not None]
 
     return pd.DataFrame(results)
