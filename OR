@@ -1,59 +1,47 @@
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
+from itertools import product
 
-def expand_naics2(df):
-    """Expand naics2 ranges to list of valid values per row."""
-    naics2_expanded = df['naics2'].astype(str).str.zfill(2).str.extract(r'(?P<start>\d{2})(?:-(?P<end>\d{2}))?')
-    naics2_expanded = naics2_expanded.fillna(method='ffill', axis=1).astype(int)
-    df['naics2_set'] = naics2_expanded.apply(lambda row: set(str(i).zfill(2) for i in range(row['start'], row['end'] + 1)), axis=1)
-    return df
+def parse_naics2_range(val):
+    if '-' in val:
+        start, end = map(int, val.split('-'))
+        return {str(i).zfill(2) for i in range(start, end + 1)}
+    return {val.zfill(2)}
 
-def compute_mismatch_columns(df):
-    """Compute mismatch columns for all NAICS levels."""
-    for level in [3, 4, 5, 6]:
-        col = f'naics{level}'
-        df[col] = df[col].astype(str).str.zfill(level)
-        mismatch_col = f'mismatch_naics{level}'
-        df[mismatch_col] = ~df[col].str[:2].isin(df['naics2_set'])
-    return df
+def process_subset(df):
+    # Prepare NAICS columns
+    df = df.copy()
+    for col in ['naics3', 'naics4', 'naics5', 'naics6']:
+        df[col] = df[col].astype(str).str.zfill(len(col))
 
-def summarize_mismatches(df):
-    """Group by state and yr_qtr, and compute mismatch percentages."""
-    mismatch_cols = [f'mismatch_naics{n}' for n in [3, 4, 5, 6]]
+    df['naics2_set'] = df['naics2'].astype(str).apply(parse_naics2_range)
 
-    summary = (
-        df.groupby(['state', 'yr_qtr'])[mismatch_cols]
-        .mean()
-        .mul(100)
-        .round(2)
-        .reset_index()
-    )
-    summary['total'] = df.groupby(['state', 'yr_qtr']).size().values
+    df['mismatch_naics3'] = ~df.apply(lambda x: x['naics3'][:2] in x['naics2_set'], axis=1)
+    df['mismatch_naics4'] = ~df.apply(lambda x: x['naics4'][:2] in x['naics2_set'], axis=1)
+    df['mismatch_naics5'] = ~df.apply(lambda x: x['naics5'][:2] in x['naics2_set'], axis=1)
+    df['mismatch_naics6'] = ~df.apply(lambda x: x['naics6'][:2] in x['naics2_set'], axis=1)
+
+    summary = {
+        'state': df['state'].iloc[0],
+        'yr_qtr': df['yr_qtr'].iloc[0],
+        'naics3_mismatch_pct': round(df['mismatch_naics3'].mean() * 100, 2),
+        'naics4_mismatch_pct': round(df['mismatch_naics4'].mean() * 100, 2),
+        'naics5_mismatch_pct': round(df['mismatch_naics5'].mean() * 100, 2),
+        'naics6_mismatch_pct': round(df['mismatch_naics6'].mean() * 100, 2),
+        'total': len(df)
+    }
     return summary
 
-def calculate_naics_mismatches(df):
-    df = df.copy()
-    df = expand_naics2(df)
-    df = compute_mismatch_columns(df)
-    result = summarize_mismatches(df)
-    return result
+def calculate_mismatches_parallel(df, states, start_yr=2020, end_yr=2023, end_qtr=3):
+    timeframes = [f"{y}-{q}" for y in range(start_yr, end_yr + 1) for q in range(1, 5) if not (y == end_yr and q > end_qtr)]
+    tasks = []
 
-# === Execution ===
-# Replace this with your actual DataFrame load
-# Example: df = pd.read_csv('your_data.csv')
-# df must include: ['state', 'yr_qtr', 'naics2', 'naics3', 'naics4', 'naics5', 'naics6']
+    with ThreadPoolExecutor() as executor:
+        for state, yr_qtr in product(states, timeframes):
+            subset = df[(df['state'] == state) & (df['yr_qtr'] == yr_qtr)]
+            if not subset.empty:
+                tasks.append(executor.submit(process_subset, subset))
 
-# Sample usage
-if __name__ == "__main__":
-    # Example dummy data (replace with your actual data)
-    df = pd.DataFrame({
-        'state': ['NM', 'NM', 'AZ', 'AZ'],
-        'yr_qtr': ['2020-1', '2020-1', '2021-2', '2021-2'],
-        'naics2': ['31-33', '42', '44-45', '72'],
-        'naics3': ['311', '423', '451', '721'],
-        'naics4': ['3111', '4231', '4511', '7211'],
-        'naics5': ['31111', '42311', '45111', '72111'],
-        'naics6': ['311111', '423111', '451111', '721111']
-    })
+        results = [t.result() for t in tasks]
 
-    result_df = calculate_naics_mismatches(df)
-    print(result_df)
+    return pd.DataFrame(results)
