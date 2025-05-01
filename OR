@@ -1,5 +1,7 @@
-# Updated to drop FIPS — now just returns proportions per year-quarter across all states combined
-def process_year_qtr(year, quarter):
+# Updated function: returns a DataFrame where rows are unique NAICS codes (from levels 2–6)
+# Columns are yr_qtr (e.g., 2020-1, 2020-2, ...) and values are proportions of total for that period
+
+def process_year_qtr_distribution(year, quarter):
     try:
         all_dfs = [DOM(fips, year, quarter) for fips in FIPS]
         all_dfs = [df for df in all_dfs if df is not None and not df.empty]
@@ -10,167 +12,36 @@ def process_year_qtr(year, quarter):
         df = pd.concat(all_dfs, ignore_index=True)
         df['yr_qtr'] = f"{year}-{quarter}"
 
-        naics_counts = {
-            'yr_qtr': f"{year}-{quarter}",
-            'naics2_count': df['naics2'].notna().sum(),
-            'naics3_count': df['naics3'].notna().sum(),
-            'naics4_count': df['naics4'].notna().sum(),
-            'naics5_count': df['naics5'].notna().sum(),
-            'naics6_count': df['naics6'].notna().sum(),
-            'total_rows': len(df)
-        }
+        result_frames = []
 
         for level in ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']:
-            naics_counts[f'{level}_proportion'] = round(naics_counts[f'{level}_count'] / naics_counts['total_rows'], 4)
+            temp = df[level].dropna().astype(str)
+            counts = temp.value_counts(normalize=True).rename(f"{year}-{quarter}")
+            counts.index.name = 'naics_code'
+            counts = counts.reset_index().assign(level=level)
+            result_frames.append(counts)
 
-        return naics_counts
+        return pd.concat(result_frames, ignore_index=True)
 
     except Exception as e:
         print(f"Error processing {year}-Q{quarter}: {e}")
         return None
 
-# Function to multithread over years and quarters (dropping FIPS as a dimension)
-def compute_naics_proportions_all():
+# Multithreaded execution
+def compute_all_naics_distributions():
     years = range(2020, 2025)
     quarters = range(1, 5)
     tasks = []
 
     with ThreadPoolExecutor() as executor:
         for year, quarter in product(years, quarters):
-            tasks.append(executor.submit(process_year_qtr, year, quarter))
+            tasks.append(executor.submit(process_year_qtr_distribution, year, quarter))
 
         results = [t.result() for t in tasks if t is not None]
 
-    return pd.DataFrame(results)
-df_naics_prop = compute_naics_proportions_all()
-print(df_naics_prop)
-
-
-
-
-
-import pandas as pd
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-
-# Simulate a sample dfm based on user description
-# Replace this with actual `dfm` when available
-data = {
-    'fips': ['06', '06', '06', '48', '48', '48', '35', '35', '35'],
-    'year': [2020, 2021, 2022, 2020, 2021, 2022, 2020, 2021, 2022],
-    'naics3_mismatch_pct': [10, 12, 11, 9, 13, 12, 14, 15, 16],
-    'naics4_mismatch_pct': [15, 14, 13, 11, 12, 14, 18, 16, 17],
-    'naics5_mismatch_pct': [20, 22, 21, 19, 18, 20, 23, 24, 25],
-    'naics6_mismatch_pct': [25, 24, 26, 22, 23, 21, 27, 28, 29]
-}
-dfm = pd.DataFrame(data)
-
-# Melt the dataframe for bubble plot
-df_long = dfm.melt(id_vars=['fips', 'year'], 
-                   value_vars=['naics3_mismatch_pct', 'naics4_mismatch_pct', 
-                               'naics5_mismatch_pct', 'naics6_mismatch_pct'],
-                   var_name='mismatch_type', value_name='mismatch_pct')
-df_long['mismatch_level'] = df_long['mismatch_type'].str.extract(r'(\d)').astype(int)
-
-# Prepare figure
-fig, ax = plt.subplots(figsize=(10, 6))
-years = sorted(df_long['year'].unique())
-colors = {3: 'blue', 4: 'green', 5: 'orange', 6: 'red'}
-
-# First animation: bubble plot by state and mismatch type over years
-def update_bubble(frame):
-    ax.clear()
-    year = years[frame]
-    df_year = df_long[df_long['year'] == year]
-    avg_mismatch = df_year.groupby(['fips', 'mismatch_level'])['mismatch_pct'].mean().reset_index()
-    for level in sorted(df_year['mismatch_level'].unique()):
-        df_type = avg_mismatch[avg_mismatch['mismatch_level'] == level]
-        ax.scatter(df_type['fips'], df_type['mismatch_level'], 
-                   s=df_type['mismatch_pct'] * 10, 
-                   color=colors[level], label=f'NAICS {level}')
-    ax.set_title(f'Mismatch Bubble Plot - Year {year}')
-    ax.set_xlabel('FIPS')
-    ax.set_ylabel('NAICS Level')
-    ax.legend()
-    ax.set_ylim(2, 7)
-    ax.grid(True)
-
-anim_bubble = FuncAnimation(fig, update_bubble, frames=len(years), interval=1000, repeat=False)
-plt.close()
-
-# Second animation: mismatch type over years (line plot)
-fig2, ax2 = plt.subplots(figsize=(10, 6))
-
-def update_line(frame):
-    ax2.clear()
-    year = years[frame]
-    df_until_year = df_long[df_long['year'] <= year]
-    for level in sorted(df_long['mismatch_level'].unique()):
-        df_type = df_until_year[df_until_year['mismatch_level'] == level]
-        df_grouped = df_type.groupby('year')['mismatch_pct'].mean().reset_index()
-        ax2.plot(df_grouped['year'], df_grouped['mismatch_pct'], label=f'NAICS {level}', color=colors[level])
-    ax2.set_title(f'Mismatch Trends up to Year {year}')
-    ax2.set_xlabel('Year')
-    ax2.set_ylabel('Avg Mismatch %')
-    ax2.legend()
-    ax2.grid(True)
-    ax2.set_xlim(min(years), max(years))
-    ax2.set_ylim(0, df_long['mismatch_pct'].max() + 5)
-
-anim_line = FuncAnimation(fig2, update_line, frames=len(years), interval=1000, repeat=False)
-plt.close()
-
-import ace_tools as tools; tools.display_dataframe_to_user(name="Mismatch Bubble Data", dataframe=df_long)
-
-anim_bubble, anim_line
-
-
-
-from IPython.display import HTML
-
-HTML(anim_bubble.to_jshtml())  # For the bubble plot
-# or
-HTML(anim_line.to_jshtml())   # For the line plot
-
-# (if not installed)
-pip install pillow
-
-anim_bubble.save("naics_mismatch_bubble.html", writer="html")
-anim_line.save("naics_mismatch_line.html", writer="html")
-anim_bubble.save("naics_mismatch_bubble.gif", writer="pillow", fps=1)
-anim_line.save("naics_mismatch_line.gif", writer="pillow", fps=1)
-
-#************
-
-from IPython.display import HTML, display
-from pathlib import Path
-
-def save_and_show_animations(anim_bubble, anim_line, output_dir="animations"):
-    # Ensure output directory exists
-    Path(output_dir).mkdir(exist_ok=True)
-
-    # Filenames
-    bubble_html = f"{output_dir}/naics_mismatch_bubble.html"
-    line_html = f"{output_dir}/naics_mismatch_line.html"
-    bubble_gif = f"{output_dir}/naics_mismatch_bubble.gif"
-    line_gif = f"{output_dir}/naics_mismatch_line.gif"
-
-    # Save as HTML
-    anim_bubble.save(bubble_html, writer="html")
-    anim_line.save(line_html, writer="html")
-
-    # Save as GIF using Pillow writer
-    anim_bubble.save(bubble_gif, writer="pillow", fps=1)
-    anim_line.save(line_gif, writer="pillow", fps=1)
-
-    print(f"Saved:\n- {bubble_html}\n- {line_html}\n- {bubble_gif}\n- {line_gif}")
-
-    # Display in Jupyter Notebook
-    print("\nPreviewing animations below (in notebook):")
-    display(HTML(anim_bubble.to_jshtml()))
-    display(HTML(anim_line.to_jshtml()))
-
-
-
-save_and_show_animations(anim_bubble, anim_line)
-
+    combined = pd.concat(results, ignore_index=True)
+    pivoted = combined.pivot_table(index=['level', 'naics_code'], 
+                                   columns=combined.columns[1], 
+                                   values=combined.columns[0], 
+                                   fill_value=0)
+    return pivoted.sort_index()
