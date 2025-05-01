@@ -1,3 +1,54 @@
+# Updated to drop FIPS — now just returns proportions per year-quarter across all states combined
+def process_year_qtr(year, quarter):
+    try:
+        all_dfs = [DOM(fips, year, quarter) for fips in FIPS]
+        all_dfs = [df for df in all_dfs if df is not None and not df.empty]
+
+        if not all_dfs:
+            return None
+
+        df = pd.concat(all_dfs, ignore_index=True)
+        df['yr_qtr'] = f"{year}-{quarter}"
+
+        naics_counts = {
+            'yr_qtr': f"{year}-{quarter}",
+            'naics2_count': df['naics2'].notna().sum(),
+            'naics3_count': df['naics3'].notna().sum(),
+            'naics4_count': df['naics4'].notna().sum(),
+            'naics5_count': df['naics5'].notna().sum(),
+            'naics6_count': df['naics6'].notna().sum(),
+            'total_rows': len(df)
+        }
+
+        for level in ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']:
+            naics_counts[f'{level}_proportion'] = round(naics_counts[f'{level}_count'] / naics_counts['total_rows'], 4)
+
+        return naics_counts
+
+    except Exception as e:
+        print(f"Error processing {year}-Q{quarter}: {e}")
+        return None
+
+# Function to multithread over years and quarters (dropping FIPS as a dimension)
+def compute_naics_proportions_all():
+    years = range(2020, 2025)
+    quarters = range(1, 5)
+    tasks = []
+
+    with ThreadPoolExecutor() as executor:
+        for year, quarter in product(years, quarters):
+            tasks.append(executor.submit(process_year_qtr, year, quarter))
+
+        results = [t.result() for t in tasks if t is not None]
+
+    return pd.DataFrame(results)
+df_naics_prop = compute_naics_proportions_all()
+print(df_naics_prop)
+
+
+
+
+
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
