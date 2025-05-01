@@ -1,3 +1,10 @@
+df['cleaned_value'] = df.apply(
+    lambda row: clean(row['value']) if row['level'] == 'naics2' else row['value'],
+    axis=1
+)
+
+
+
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product
