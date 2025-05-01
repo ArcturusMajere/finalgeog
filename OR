@@ -1,5 +1,5 @@
-df['cleaned_value'] = df.apply(
-    lambda row: clean(row['value']) if row['level'] == 'naics2' else row['value'],
+df['name'] = df.apply(
+    lambda row: Getname(row['naics_code']) if row['level'] == 'naics2' else None,
     axis=1
 )
 
