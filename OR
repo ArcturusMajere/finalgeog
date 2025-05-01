@@ -1,15 +1,15 @@
+# Re-import necessary modules after reset
 import pandas as pd
 
+# Define the mismatch function grouped by year
 def calculate_naics_mismatches_by_year(df):
     df = df.copy()
 
-    # Convert all NAICS columns to string and pad as needed
     df['naics3'] = df['naics3'].astype(str).str.zfill(3)
     df['naics4'] = df['naics4'].astype(str).str.zfill(4)
     df['naics5'] = df['naics5'].astype(str).str.zfill(5)
     df['naics6'] = df['naics6'].astype(str).str.zfill(6)
 
-    # Parse NAICS2 ranges
     def parse_naics2_range(val):
         try:
             if '-' in val:
@@ -22,13 +22,11 @@ def calculate_naics_mismatches_by_year(df):
 
     df['naics2_set'] = df['naics2'].astype(str).apply(parse_naics2_range)
 
-    # Check mismatches
     df['mismatch_naics3'] = ~df.apply(lambda x: x['naics3'][:2] in x['naics2_set'], axis=1)
     df['mismatch_naics4'] = ~df.apply(lambda x: x['naics4'][:2] in x['naics2_set'], axis=1)
     df['mismatch_naics5'] = ~df.apply(lambda x: x['naics5'][:2] in x['naics2_set'], axis=1)
     df['mismatch_naics6'] = ~df.apply(lambda x: x['naics6'][:2] in x['naics2_set'], axis=1)
 
-    # Group by year and calculate mismatch percentages
     summary = df.groupby('year').agg(
         total=('naics2', 'count'),
         naics3_mismatch_pct=('mismatch_naics3', 'mean'),
@@ -41,5 +39,26 @@ def calculate_naics_mismatches_by_year(df):
         summary[col] = (summary[col] * 100).round(2)
 
     return summary
-summary_by_year = calculate_naics_mismatches_by_year(df)
-print(summary_by_year)
+
+# Placeholder for the actual DOM(year) function
+def DOM(year):
+    raise NotImplementedError("Replace with your real DOM(year) function returning a DataFrame")
+
+# Function to loop over 2020–2024
+def calculate_mismatches_over_years():
+    all_results = []
+    for year in range(2020, 2025):
+        try:
+            df = DOM(year)
+            if df is not None and not df.empty:
+                df['year'] = year
+                result = calculate_naics_mismatches_by_year(df)
+                all_results.append(result)
+        except Exception as e:
+            print(f"Error processing year {year}: {e}")
+    return pd.concat(all_results, ignore_index=True) if all_results else pd.DataFrame()
+
+
+
+final_mismatch_summary = calculate_mismatches_over_years()
+print(final_mismatch_summary)
