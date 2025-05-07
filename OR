@@ -64,3 +64,109 @@ fig.update_layout(
 
 # Display the figure
 fig.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+import plotly.express as px
+
+def generate_interactive_html(xlsx_path: str, output_html: str):
+    """
+    Reads an Excel with sheets named by state abbrev, filters to the 2020-1 cohort,
+    builds an animated bubble chart with a state dropdown, and writes to HTML.
+    
+    Parameters
+    ----------
+    xlsx_path : str
+        Path to your cohort_tracking.xlsx
+    output_html : str
+        Path for the generated HTML dashboard (e.g. "cohort_dashboard.html")
+    """
+    # 1) Load & stack all sheets
+    xls = pd.ExcelFile(xlsx_path)
+    df = pd.concat(
+        [pd.read_excel(xls, sheet_name=sh).assign(state=sh) 
+         for sh in xls.sheet_names],
+        ignore_index=True
+    )
+
+    # 2) Identify the 2020-1 cohort keys
+    init = (
+        df[df["yr_qtr"] == "2020-1"]
+        .loc[:, ["state", "sector", "original_class"]]
+        .drop_duplicates()
+    )
+    df_cohort = df.merge(init, on=["state", "sector", "original_class"], how="inner")
+
+    # 3) Base figure (for the first state)
+    states = sorted(df_cohort["state"].unique())
+    first = states[0]
+    df0 = df_cohort[df_cohort["state"] == first]
+
+    fig = px.scatter(
+        df0,
+        x="yr_qtr",
+        y="current_class",
+        size="count",
+        color="current_class",
+        animation_frame="yr_qtr",
+        animation_group="sector",
+        hover_data=["sector", "original_class"],
+        title=f"Cohort Evolution — {first}"
+    )
+
+    # 4) Build dropdown buttons
+    buttons = []
+    for st in states:
+        df_st = df_cohort[df_cohort["state"] == st]
+        buttons.append(
+            dict(
+                method="update",
+                label=st,
+                args=[
+                    {
+                        "x": [df_st["yr_qtr"]] * len(fig.data),
+                        "y": [df_st["current_class"]] * len(fig.data),
+                        "marker.size": [df_st["count"]] * len(fig.data),
+                        "marker.color": [df_st["current_class"]] * len(fig.data),
+                        "hovertext": [df_st["sector"] + "<br>orig: " + df_st["original_class"]] * len(fig.data),
+                    },
+                    {"title": f"Cohort Evolution — {st}"}
+                ]
+            )
+        )
+
+    fig.update_layout(
+        updatemenus=[
+            dict(
+                buttons=buttons,
+                direction="down",
+                showactive=True,
+                x=0.05,
+                xanchor="left",
+                y=1.1,
+                yanchor="top"
+            )
+        ],
+        margin={"t":50, "b":50, "l":20, "r":20},
+        height=700
+    )
+
+    # 5) Export to standalone HTML
+    fig.write_html(output_html, include_plotlyjs="cdn", full_html=True)
+    print(f"✅ Dashboard written to {output_html}")
+
+# Example usage:
+# generate_interactive_html("cohort_tracking.xlsx", "cohort_dashboard.html")
