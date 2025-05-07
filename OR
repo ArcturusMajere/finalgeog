@@ -1,84 +1,66 @@
-df['name'] = df.apply(
-    lambda row: Getname(row['naics_code']) if row['level'] == 'naics2' else None,
-    axis=1
+import pandas as pd
+import plotly.express as px
+
+# Load & prep data
+xlsx_path = "cohort_tracking.xlsx"  # replace with your file path
+xls = pd.ExcelFile(xlsx_path)
+df = pd.concat(
+    [pd.read_excel(xls, sheet_name=sh).assign(state=sh) for sh in xls.sheet_names],
+    ignore_index=True
 )
 
+# Filter to 2020-1 cohort
+init = (
+    df[df["yr_qtr"] == "2020-1"]
+    .loc[:, ["state", "sector", "original_class"]]
+    .drop_duplicates()
+)
+df_cohort = df.merge(init, on=["state", "sector", "original_class"], how="inner")
 
+# List of states and initial subset
+states = sorted(df_cohort["state"].unique())
+first_state = states[0]
+df0 = df_cohort[df_cohort["state"] == first_state]
 
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor
-from itertools import product
+# Create animated scatter for first state
+fig = px.scatter(
+    df0,
+    x="yr_qtr",
+    y="current_class",
+    size="count",
+    color="current_class",
+    animation_frame="yr_qtr",
+    animation_group="sector",
+    hover_data=["sector", "original_class"],
+    title=f"Cohort Evolution — {first_state}"
+)
 
-# 🔧 Placeholder for your actual data fetch function
-def DOM(fips, year):
-    # Example placeholder — replace with real logic
-    raise NotImplementedError("You must implement DOM(fips, year) to return a DataFrame.")
+# Add dropdown to switch states
+fig.update_layout(
+    updatemenus=[dict(
+        buttons=[
+            dict(
+                method="update",
+                label=state,
+                args=[
+                    # Update data for each trace
+                    {
+                        "x": [df_cohort[df_cohort["state"] == state]["yr_qtr"]] * len(fig.data),
+                        "y": [df_cohort[df_cohort["state"] == state]["current_class"]] * len(fig.data),
+                        "marker.size": [df_cohort[df_cohort["state"] == state]["count"]] * len(fig.data)
+                    },
+                    {"title": f"Cohort Evolution — {state}"}
+                ]
+            ) for state in states
+        ],
+        direction="down",
+        showactive=True,
+        x=0.1,
+        xanchor="left",
+        y=1.15,
+        yanchor="top"
+    )]
+)
 
-# 🔍 Mismatch computation logic by FIPS
-def calculate_naics_mismatches_by_fips(df):
-    df = df.copy()
-
-    df['naics3'] = df['naics3'].astype(str).str.zfill(3)
-    df['naics4'] = df['naics4'].astype(str).str.zfill(4)
-    df['naics5'] = df['naics5'].astype(str).str.zfill(5)
-    df['naics6'] = df['naics6'].astype(str).str.zfill(6)
-
-    def parse_naics2_range(val):
-        try:
-            if '-' in val:
-                start, end = map(int, val.split('-'))
-                return {str(i).zfill(2) for i in range(start, end + 1)}
-            else:
-                return {val.zfill(2)}
-        except:
-            return set()
-
-    df['naics2_set'] = df['naics2'].astype(str).apply(parse_naics2_range)
-
-    df['mismatch_naics3'] = ~df.apply(lambda x: x['naics3'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics4'] = ~df.apply(lambda x: x['naics4'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics5'] = ~df.apply(lambda x: x['naics5'][:2] in x['naics2_set'], axis=1)
-    df['mismatch_naics6'] = ~df.apply(lambda x: x['naics6'][:2] in x['naics2_set'], axis=1)
-
-    summary = df.groupby('fips').agg(
-        total=('naics2', 'count'),
-        naics3_mismatch_pct=('mismatch_naics3', 'mean'),
-        naics4_mismatch_pct=('mismatch_naics4', 'mean'),
-        naics5_mismatch_pct=('mismatch_naics5', 'mean'),
-        naics6_mismatch_pct=('mismatch_naics6', 'mean')
-    ).reset_index()
-
-    for col in ['naics3_mismatch_pct', 'naics4_mismatch_pct', 'naics5_mismatch_pct', 'naics6_mismatch_pct']:
-        summary[col] = (summary[col] * 100).round(2)
-
-    return summary
-
-# 📦 Helper function: fetch and tag data for (fips, year)
-def fetch_and_process_fips_year(fips, year):
-    try:
-        df = DOM(fips, year)
-        if df is not None and not df.empty:
-            df = df.copy()
-            df['fips'] = fips
-            return df
-        return None
-    except Exception as e:
-        print(f"Error fetching data for FIPS {fips}, Year {year}: {e}")
-        return None
-
-# 🚀 Main function: multithreaded collection and mismatch summary by FIPS
-def calculate_mismatches_by_fips_multithread(FIPS):
-    years = range(2020, 2025)
-    tasks = []
-
-    with ThreadPoolExecutor() as executor:
-        for fips, year in product(FIPS, years):
-            tasks.append(executor.submit(fetch_and_process_fips_year, fips, year))
-
-        results = [task.result() for task in tasks if task.result() is not None]
-
-    if results:
-        combined_df = pd.concat(results, ignore_index=True)
-        return calculate_naics_mismatches_by_fips(combined_df)
-    else:
-        return pd.DataFrame()
+# Display the figure
+fig.show()
