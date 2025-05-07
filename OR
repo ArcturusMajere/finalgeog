@@ -1,49 +1,61 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.express as px
 
-# 1) Load & stack all sheets, label by sheet name
-xlsx_path = "cohort_tracking.xlsx"  # replace with your file path
+# 1) Load & stack all sheets, tagging with state abbrev
+xlsx_path = "cohort_tracking.xlsx"  # ← point this at your file
 xls = pd.ExcelFile(xlsx_path)
 df = pd.concat(
     [pd.read_excel(xls, sheet_name=sh).assign(state=sh) for sh in xls.sheet_names],
     ignore_index=True
 )
 
-# 2) Identify the 2020-1 cohort and filter for sector '6244'
+# 2) Identify the 2020-1 cohort and filter ONLY sector '6244'
 init = (
     df[df["yr_qtr"] == "2020-1"]
-    .loc[:, ["state", "sector", "original_class"]]
-    .drop_duplicates()
+      .loc[:, ["state", "sector", "original_class"]]
+      .drop_duplicates()
 )
 df_cohort = df.merge(init, on=["state", "sector", "original_class"], how="inner")
 df_6244 = df_cohort[df_cohort["sector"] == "6244"]
 
-# 3) Aggregate counts by state & quarter and compute percent change
+# 3) Aggregate & compute percent‐change by state & quarter
 agg = (
     df_6244
-    .groupby(['state', 'yr_qtr'])['count']
-    .sum()
-    .reset_index(name='total')
-    .sort_values(['state', 'yr_qtr'])
+      .groupby(["state","yr_qtr"])["count"]
+      .sum()
+      .reset_index(name="total")
+      .sort_values(["state","yr_qtr"])
 )
-agg['prev_total'] = agg.groupby('state')['total'].shift(1)
-agg['pct_change'] = agg['total'] / agg['prev_total'] - 1
-agg['pct_change'] = agg['pct_change'].replace([np.inf, -np.inf], np.nan).fillna(0)
+agg["prev_total"] = agg.groupby("state")["total"].shift(1)
+agg["pct_change"] = agg["total"] / agg["prev_total"] - 1
+agg["pct_change"] = agg["pct_change"].replace([np.inf, -np.inf], np.nan).fillna(0)
+agg["abs_change"] = agg["pct_change"].abs()
 
-# 4) Pivot for heatmap
-pivot = agg.pivot(index='state', columns='yr_qtr', values='pct_change')
+# 4) Build animated bubble chart
+fig = px.scatter(
+    agg,
+    x="state",
+    y="pct_change",
+    size="abs_change",               # bubble size by magnitude of change
+    color="pct_change",              # color ramp for up vs down
+    animation_frame="yr_qtr",        # slider through quarters
+    hover_name="state",
+    hover_data={"total":True, "pct_change":":.1%"},
+    title="Sector 6244: Quarterly % Change by State"
+)
 
-# 5) Plot heatmap
-fig, ax = plt.subplots(figsize=(12, 8))
-cax = ax.imshow(pivot.values, aspect='auto')
-ax.set_xticks(np.arange(len(pivot.columns)))
-ax.set_xticklabels(pivot.columns, rotation=45, ha='right')
-ax.set_yticks(np.arange(len(pivot.index)))
-ax.set_yticklabels(pivot.index)
-ax.set_xlabel('Quarter')
-ax.set_ylabel('State')
-ax.set_title('Sector 6244: Normalized Quarterly Change of Cohort Counts')
-fig.colorbar(cax, ax=ax, label='Percent Change')
-plt.tight_layout()
-plt.show()
+# Tidy up axes & layout
+fig.update_layout(
+    xaxis={"categoryorder":"array", "categoryarray":sorted(agg["state"].unique())},
+    yaxis_title="Percent Change",
+    xaxis_title="State",
+    height=600, margin={"t":50, "b":100}
+)
+
+# 5) Show or export
+# In a notebook:
+fig.show()
+
+# Or save standalone HTML:
+# fig.write_html("sector_6244_pct_change_bubbles.html", include_plotlyjs="cdn")
