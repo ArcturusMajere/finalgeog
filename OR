@@ -32,7 +32,7 @@ agg["pct_change"] = agg["total"] / agg["prev_total"] - 1
 agg["pct_change"] = agg["pct_change"].replace([np.inf, -np.inf], np.nan).fillna(0)
 agg["abs_change"] = agg["pct_change"].abs()
 
-# 4) Build animated bubble chart
+# 4) Build animated bubble chart with BIGGER bubbles
 fig = px.scatter(
     agg,
     x="state",
@@ -42,20 +42,23 @@ fig = px.scatter(
     animation_frame="yr_qtr",        # slider through quarters
     hover_name="state",
     hover_data={"total":True, "pct_change":":.1%"},
-    title="Sector 6244: Quarterly % Change by State"
+    title="Sector 6244: Quarterly % Change by State",
+    size_max=80                       # <-- increase max bubble diameter
 )
+
+# ensure bubbles are sized by area
+fig.update_traces(marker=dict(sizemode='area'))
 
 # Tidy up axes & layout
 fig.update_layout(
     xaxis={"categoryorder":"array", "categoryarray":sorted(agg["state"].unique())},
     yaxis_title="Percent Change",
     xaxis_title="State",
-    height=600, margin={"t":50, "b":100}
+    height=600,
+    margin={"t":50, "b":100}
 )
 
-# 5) Show or export
-# In a notebook:
+# show or save
 fig.show()
-
-# Or save standalone HTML:
+# or:
 # fig.write_html("sector_6244_pct_change_bubbles.html", include_plotlyjs="cdn")
