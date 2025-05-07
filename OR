@@ -1,86 +1,41 @@
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 
-def quarterly_diffs(
-    df_cohort: pd.DataFrame,
-    *,
-    sector: str = None,
-    original_class: str = None,
-    current_class: str = None
-) -> pd.DataFrame:
-    """
-    Returns a pivot table of quarterly gains/losses in 'count' by state.
-    
-    Filters df_cohort by the optional sector, original_class, and/or current_class,
-    then for each state and yr_qtr computes:
-       total = sum(count)
-       diff  = total_current_qtr - total_prev_qtr
-    
-    Finally pivots so:
-        index = state
-        columns = yr_qtr
-        values = diff
-    
-    Parameters
-    ----------
-    df_cohort : pd.DataFrame
-        Must contain ['state','yr_qtr','sector','original_class','current_class','count'].
-    sector : str, optional
-        If given, only include rows where df_cohort['sector']==sector.
-    original_class : str, optional
-        If given, only include rows where df_cohort['original_class']==original_class.
-    current_class : str, optional
-        If given, only include rows where df_cohort['current_class']==current_class.
-    
-    Returns
-    -------
-    pd.DataFrame
-        Pivot table of differences, with NA where no data or first-quarter.
-    """
-    df = df_cohort.copy()
-    # apply filters
-    if sector is not None:
-        df = df[df['sector'] == sector]
-    if original_class is not None:
-        df = df[df['original_class'] == original_class]
-    if current_class is not None:
-        df = df[df['current_class'] == current_class]
-    
-    # aggregate counts by state & quarter
-    agg = (
-        df
-        .groupby(['state','yr_qtr'])['count']
-        .sum()
-        .reset_index(name='total')
-    )
-    
-    # sort and compute diff
-    agg = agg.sort_values(['state','yr_qtr'])
-    agg['prev_total'] = agg.groupby('state')['total'].shift(1).fillna(0)
-    agg['diff'] = agg['total'] - agg['prev_total']
-    
-    # pivot to wide form
-    pivot = agg.pivot(index='state', columns='yr_qtr', values='diff')
-    return pivot
-
-# — example usage — 
-
-# 1) Low→High transitions by quarter
-low_to_high_qtr = quarterly_diffs(
-    df_cohort,
-    original_class='low',
-    current_class='high'
+# 1) Load & prep df_cohort from your Excel
+xlsx_path = "cohort_tracking.xlsx"  # replace with your file path
+xls = pd.ExcelFile(xlsx_path)
+df = pd.concat(
+    [pd.read_excel(xls, sheet_name=sh).assign(state=sh) for sh in xls.sheet_names],
+    ignore_index=True
 )
-print("Quarterly Low→High Gains/Losses:")
-print(low_to_high_qtr)
-
-# 2) Sector 6244 attractor dynamics by quarter
-sector_6244_qtr = quarterly_diffs(
-    df_cohort,
-    sector='6244'
+init = (
+    df[df["yr_qtr"] == "2020-1"]
+    .loc[:, ["state", "sector", "original_class"]]
+    .drop_duplicates()
 )
-print("\nQuarterly net change in sector 6244 counts:")
-print(sector_6244_qtr)
+df_cohort = df.merge(init, on=["state", "sector", "original_class"], how="inner")
 
-# 3) If you want a CSV:
-low_to_high_qtr.to_csv("low_to_high_qtr_diffs.csv")
-sector_6244_qtr.to_csv("sector_6244_qtr_diffs.csv")
+# 2) Aggregate and compute percent change
+agg = df_cohort.groupby(['state', 'yr_qtr'])['count'].sum().reset_index()
+agg = agg.sort_values(['state', 'yr_qtr'])
+agg['prev_total'] = agg.groupby('state')['count'].shift(1)
+agg['pct_change'] = agg['count'] / agg['prev_total'] - 1
+agg['pct_change'] = agg['pct_change'].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+# 3) Pivot for heatmap
+pivot = agg.pivot(index='state', columns='yr_qtr', values='pct_change')
+
+# 4) Plot heatmap
+fig, ax = plt.subplots(figsize=(12, 8))
+cax = ax.imshow(pivot.values, aspect='auto')
+ax.set_xticks(np.arange(len(pivot.columns)))
+ax.set_xticklabels(pivot.columns, rotation=45, ha='right')
+ax.set_yticks(np.arange(len(pivot.index)))
+ax.set_yticklabels(pivot.index)
+ax.set_xlabel('Quarter')
+ax.set_ylabel('State')
+ax.set_title('Normalized Quarterly Change (Percent) of Cohort Counts')
+fig.colorbar(cax, ax=ax, label='Percent Change')
+plt.tight_layout()
+plt.show()
