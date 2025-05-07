@@ -1,0 +1,106 @@
+# Progressive Leasing — Interview Answers (Full, LaTeX‑Formatted)
+
+## Question 1 – What does the company do?
+
+Progressive Leasing is a financial‑technology company that enables **lease‑to‑own** purchases at partner retailers.  
+* Customers acquire items (e.g., a laptop at Best Buy) immediately.  
+* Progressive Leasing pays the retailer the full cash price up front.  
+* The customer repays Progressive in periodic installments and may exercise an early‑buyout option.  
+* The firm’s revenue comes from lease fees and early‑buyout payments, while it **assumes credit and fraud risk**.  
+* Real‑time underwriting combines financial, employment, banking, device, and historical repayment data to approve or decline each lease and set the fee schedule.
+
+---
+
+## Question 2 – What data are collected from a customer leasing a laptop at Best Buy?
+
+| Data Domain | Variables Collected | Underwriting Purpose |
+|-------------|---------------------|----------------------|
+| **Identity & Contact** | Full name, street address, date of birth, Social Security Number, mobile phone, email | Identity verification and soft credit pull |
+| **Employment & Income** | Employer name, tenure, pay frequency, net paycheck amount, employment type | Measure repayment capacity & stability |
+| **Banking Behavior** | Account age, average daily balance, direct‑deposit pattern, overdraft count, deposit frequency variance | Detect cash‑flow volatility & recent distress |
+| **Item & Transaction** | Retailer ID, product category (laptop), cash price incl. tax, requested term length | Determine collateral value & payment schedule |
+| **Fraud Signals** | Device fingerprint, IP geolocation, application time, velocity of recent applications | Detect synthetic or high‑risk behavior |
+
+All variables feed the risk model that outputs an approval decision and lease‑fee terms.
+
+---
+
+## Question 3 – Case Study: Manual → Automatic Underwriting (200 000 Historical Rows)
+
+1. **Objective** – build a binary classifier:  
+   $$ y=\begin{cases}1 & \text{repays in full}\\ 0 & \text{defaults}\end{cases} $$
+2. **Data Prep**  
+   * Handle missing values (median/indicator flags)  
+   * One‑hot‑encode categorical features  
+   * Log‑transform highly skewed dollar amounts
+3. **Feature Engineering**  
+   * Debt‑to‑income ratio  
+   * Months at employer  
+   * Deposit frequency variability  
+   * Product price × income interaction
+4. **Training / Validation**  
+   * Time‑based train–test split (70 % / 30 %)  
+   * Baseline logistic regression → grid‑tuned XGBoost  
+   * Metrics: ROC‑AUC, Precision, Recall, F1
+5. **Calibration & Profit Threshold**  
+   * Isotonic calibration  
+   * Expected‑profit curve:  
+     $$ \text{E[Profit]} = p_{\text{repay}} \cdot \text{LeaseFee} - (1-p_{\text{repay}})\cdot\text{ExpectedLoss} $$
+   * Choose approval cut‑off that maximizes E[Profit] subject to portfolio‑loss limit
+6. **Explainability & Fairness** – global SHAP values, demographic bias tests  
+7. **Deployment** – containerized model behind a REST endpoint; monitor drift, latency, default‑rate KPI
+
+---
+
+## Question 4 – Using Statistical / ML Tools to Evaluate Customers
+
+### 1 Define the Predictor  
+* Primary target: probability of full repayment, \( P(\text{repay}=1) \).
+
+### 2 Feature Families  
+* **Financial** – debt‑to‑income ratio, net pay stability  
+* **Behavioral** – overdraft frequency, cash‑flow variance  
+* **Product** – item price, category, term length  
+
+### 3 Model Line‑Up  
+| Model | Why Use It |
+|-------|------------|
+| Logistic regression | Baseline, interpretable coefficients |
+| Gradient‑boosted trees | High accuracy on tabular, non‑linear interactions |
+| Survival model (Cox) | Time‑to‑default analysis |
+
+### 4 Evaluation  
+* Classification → ROC‑AUC, Precision‑Recall, confusion matrix  
+* Regression → root‑mean‑squared error if predicting dollars of lifetime profit
+
+### 5 Business Integration  
+* Approval/decline by threshold on \( P(\text{repay}) \)  
+* Risk‑based pricing: higher lease fee for higher predicted default risk  
+* Larger upfront payment for borderline approvals
+
+---
+
+## Question 5 – Numerical Expected‑Default‑Rate Problem
+
+**Inputs**
+
+* Lease value \( V = \$1000 \)  
+* Target return \( r = 15\% \Rightarrow \text{Revenue if repaid } R = V(1+r)=\$1150 \)  
+* Progressive pays retailer \( 0.60V = \$600 \)  
+* Service fee collected upfront \( S = \$50 \)  
+  → Loss if default \( L = 600 - 50 = \$550 \)
+
+**Equation**
+
+Set expected profit \( \text{E[Profit]} \) to zero to find break‑even repayment probability \( p \):
+
+\[
+\text{E[Profit]} = p\cdot\$1150 \;-\; (1-p)\cdot\$550 = 0
+\]
+
+\[
+1150p - 550 + 550p = 0 \quad\Rightarrow\quad 1700p = 550 \quad\Rightarrow\quad
+\boxed{\,p = 0.3235 \approx 32.35\%\,}
+\]
+
+**Interpretation** – Under current pricing, the underwriting model must certify that the customer’s probability of full repayment is at least \( 32.35\% \). Otherwise, Progressive must either decline the lease or raise the lease fee to meet the fifteen‑percent return requirement.
