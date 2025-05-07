@@ -2,31 +2,39 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# 1) Load & prep df_cohort from your Excel
+# 1) Load & stack all sheets, label by sheet name
 xlsx_path = "cohort_tracking.xlsx"  # replace with your file path
 xls = pd.ExcelFile(xlsx_path)
 df = pd.concat(
     [pd.read_excel(xls, sheet_name=sh).assign(state=sh) for sh in xls.sheet_names],
     ignore_index=True
 )
+
+# 2) Identify the 2020-1 cohort and filter for sector '6244'
 init = (
     df[df["yr_qtr"] == "2020-1"]
     .loc[:, ["state", "sector", "original_class"]]
     .drop_duplicates()
 )
 df_cohort = df.merge(init, on=["state", "sector", "original_class"], how="inner")
+df_6244 = df_cohort[df_cohort["sector"] == "6244"]
 
-# 2) Aggregate and compute percent change
-agg = df_cohort.groupby(['state', 'yr_qtr'])['count'].sum().reset_index()
-agg = agg.sort_values(['state', 'yr_qtr'])
-agg['prev_total'] = agg.groupby('state')['count'].shift(1)
-agg['pct_change'] = agg['count'] / agg['prev_total'] - 1
+# 3) Aggregate counts by state & quarter and compute percent change
+agg = (
+    df_6244
+    .groupby(['state', 'yr_qtr'])['count']
+    .sum()
+    .reset_index(name='total')
+    .sort_values(['state', 'yr_qtr'])
+)
+agg['prev_total'] = agg.groupby('state')['total'].shift(1)
+agg['pct_change'] = agg['total'] / agg['prev_total'] - 1
 agg['pct_change'] = agg['pct_change'].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-# 3) Pivot for heatmap
+# 4) Pivot for heatmap
 pivot = agg.pivot(index='state', columns='yr_qtr', values='pct_change')
 
-# 4) Plot heatmap
+# 5) Plot heatmap
 fig, ax = plt.subplots(figsize=(12, 8))
 cax = ax.imshow(pivot.values, aspect='auto')
 ax.set_xticks(np.arange(len(pivot.columns)))
@@ -35,7 +43,7 @@ ax.set_yticks(np.arange(len(pivot.index)))
 ax.set_yticklabels(pivot.index)
 ax.set_xlabel('Quarter')
 ax.set_ylabel('State')
-ax.set_title('Normalized Quarterly Change (Percent) of Cohort Counts')
+ax.set_title('Sector 6244: Normalized Quarterly Change of Cohort Counts')
 fig.colorbar(cax, ax=ax, label='Percent Change')
 plt.tight_layout()
 plt.show()
