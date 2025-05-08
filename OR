@@ -1,4 +1,23 @@
 import pandas as pd
+def compute_summary_stats_pivot(xlsx_path):
+    xls=pd.ExcelFile(xlsx_path)
+    df=pd.concat([pd.read_excel(xls,sheet_name=sh).assign(state=sh) for sh in xls.sheet_names],ignore_index=True)
+    keys=df[df['yr_qtr']=='2020-1'][['state','sector','original_class']].drop_duplicates()
+    dfc=df.merge(keys,on=['state','sector','original_class'],how='inner')
+    state_totals=dfc.groupby(['state','yr_qtr'],as_index=False)['count'].sum().rename(columns={'count':'state_total'}).pivot(index='state',columns='yr_qtr',values='state_total').reset_index()
+    sector_totals=df.groupby(['sector','yr_qtr'],as_index=False)['count'].sum().rename(columns={'count':'sector_total'}).pivot(index='sector',columns='yr_qtr',values='sector_total').reset_index()
+    d4=dfc[dfc['sector']=='6244'].groupby(['state','yr_qtr'],as_index=False)['count'].sum()
+    orig4=d4[d4['yr_qtr']=='2020-1'][['state','count']].rename(columns={'count':'orig_6244'})
+    sector_6244_counts=d4.merge(orig4,on='state').pivot(index='state',columns='yr_qtr',values='count').reset_index()
+    sector_6244_change=d4.merge(orig4,on='state').assign(change=lambda d:d['count']-d['orig_6244']).pivot(index='state',columns='yr_qtr',values='change').reset_index()
+    orig_tot=dfc[dfc['yr_qtr']=='2020-1'].groupby('state',as_index=False)['count'].sum().rename(columns={'count':'orig_total'})
+    cohort_tot=dfc.groupby(['state','yr_qtr'],as_index=False)['count'].sum().rename(columns={'count':'cohort_total'})
+    unfound=cohort_tot.merge(orig_tot,on='state').assign(unfound=lambda d:d['orig_total']-d['cohort_total']).pivot(index='state',columns='yr_qtr',values='unfound').reset_index()
+    return{'state_totals':state_totals,'sector_totals':sector_totals,'sector_6244_counts':sector_6244_counts,'sector_6244_change':sector_6244_change,'unfound':unfound}
+if __name__=='__main__':
+    sums=compute_summary_stats_pivot("cohort_tracking.xlsx")
+    with pd.ExcelWriter("summary_stats_pivot.xlsx",engine="xlsxwriter") as w:
+        for k,df in sums.items():df.to_excel(w,sheet_name=k,index=False)
 
 def compute_summary_stats_pivot(xlsx_path):
     xls=pd.ExcelFile(xlsx_path)
