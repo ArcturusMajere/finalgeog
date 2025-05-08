@@ -1,134 +1,138 @@
-# dashboard_summary.py
+import pandas as pd
+def compute_summary_stats(xlsx_path):
+    xls=pd.ExcelFile(xlsx_path)
+    df=pd.concat([pd.read_excel(xls,sheet_name=sh).assign(state=sh) for sh in xls.sheet_names],ignore_index=True)
+    keys=df[df['yr_qtr']=='2020-1'][['state','sector','original_class']].drop_duplicates()
+    dfc=df.merge(keys,on=['state','sector','original_class'],how='inner')
+    state_totals=dfc.groupby(['state','yr_qtr'],as_index=False)['count'].sum().rename(columns={'count':'state_total'})
+    sector_totals=dfc.groupby(['sector','yr_qtr'],as_index=False)['count'].sum().rename(columns={'count':'sector_total'})
+    df6244=dfc[dfc['sector']=='6244']
+    sec=df6244.groupby(['state','yr_qtr'],as_index=False)['count'].sum()
+    orig6244=sec[sec['yr_qtr']=='2020-1'][['state','count']].rename(columns={'count':'orig_6244'})
+    sector_6244_changes=sec.merge(orig6244,on='state').assign(change=lambda d:d['count']-d['orig_6244'])
+    orig_tot=dfc[dfc['yr_qtr']=='2020-1'].groupby('state',as_index=False)['count'].sum().rename(columns={'count':'orig_total'})
+    cohort_tot=dfc.groupby(['state','yr_qtr'],as_index=False)['count'].sum().rename(columns={'count':'cohort_total'})
+    unfound=cohort_tot.merge(orig_tot,on='state').assign(unfound=lambda d:d['orig_total']-d['cohort_total'])
+    return{'state_totals':state_totals,'sector_totals':sector_totals,'sector_6244_changes':sector_6244_changes,'unfound':unfound}
 
-from shiny import App, ui, reactive
-from shiny.ui import page_fluid, layout_sidebar, panel_sidebar, panel_main
-from shiny import render_table
+if __name__=="__main__":
+    summaries=compute_summary_stats("cohort_tracking.xlsx")
+    for k,df in summaries.items():
+        print(k,df.head().to_string(index=False))
+
+
+
 import pandas as pd
 
-# ——————————————————————————————
-# 1) LOAD & PREP DATA
-# ——————————————————————————————
-xlsx_path = "cohort_tracking.xlsx"
-xls = pd.ExcelFile(xlsx_path)
-df = pd.concat(
-    [pd.read_excel(xls, sheet_name=sh).assign(state=sh) for sh in xls.sheet_names],
-    ignore_index=True
-)
-
-# Identify the 2020-1 cohort
-init = (
-    df[df["yr_qtr"] == "2020-1"]
-      .loc[:, ["state","sector","original_class"]]
-      .drop_duplicates()
-)
-df_cohort = df.merge(init, on=["state","sector","original_class"], how="inner")
-
-# Helper for quarterly diffs pivot
-def quarterly_diffs(df, sector=None, original_class=None, current_class=None):
-    d = df.copy()
-    if sector:         d = d[d["sector"] == sector]
-    if original_class:d = d[d["original_class"] == original_class]
-    if current_class:  d = d[d["current_class"] == current_class]
-    agg = (
-        d.groupby(["state","yr_qtr"])["count"]
-         .sum().reset_index(name="total")
-         .sort_values(["state","yr_qtr"])
+def compute_summary_stats(xlsx_path: str):
+    """
+    Reads an Excel workbook with sheets named by state abbrev, each having
+    columns [yr_qtr, state, sector, original_class, current_class, count].
+    Filters to the 2020-1 cohort, then computes:
+    
+      1) state_totals:   total count per state & yr_qtr
+      2) sector_totals:  total count per sector & yr_qtr
+      3) sector_6244_changes:
+            - count of sector '6244' per state & yr_qtr
+            - change = count – orig_6244 (where orig_6244 is its 2020-1 count)
+      4) unfound:
+            - orig_total = total cohort count in 2020-1 per state
+            - cohort_total = cohort count per state & yr_qtr
+            - unfound = orig_total – cohort_total
+    
+    Returns
+    -------
+    dict of DataFrames:
+      {
+        'state_totals': pd.DataFrame,
+        'sector_totals': pd.DataFrame,
+        'sector_6244_changes': pd.DataFrame,
+        'unfound': pd.DataFrame
+      }
+    """
+    # 1) load & stack all sheets, tagging each row with sheet_name
+    xls = pd.ExcelFile(xlsx_path)
+    df = pd.concat(
+        [pd.read_excel(xls, sheet_name=sh).assign(state=sh)
+         for sh in xls.sheet_names],
+        ignore_index=True
     )
-    agg["prev"] = agg.groupby("state")["total"].shift(1).fillna(0)
-    agg["diff"] = agg["total"] - agg["prev"]
-    return agg.pivot(index="state", columns="yr_qtr", values="diff").reset_index()
 
-# Available choices
-sectors = sorted(df_cohort["sector"].unique())
-classes = sorted(df_cohort["original_class"].unique())
-
-# ——————————————————————————————
-# 2) UI
-# ——————————————————————————————
-app_ui = page_fluid(
-    ui.h2("Cohort Summary Dashboard"),
-    layout_sidebar(
-        panel_sidebar(
-            ui.input_select(
-                "summary_type", "Summary Type:",
-                choices=[
-                    "Top Attractor States",
-                    "Class Transition Diff",
-                    "Quarterly Diffs Pivot"
-                ],
-                selected="Top Attractor States"
-            ),
-            ui.input_select("sector", "Sector:", choices=sectors, selected=sectors[0]),
-            ui.input_slider("top_n", "Top N States:", min=1, max=50, value=20, step=1),
-            ui.input_select("orig_class", "Original Class:", choices=classes, selected=classes[0]),
-            ui.input_select("curr_class", "Current Class:", choices=classes, selected=classes[-1]),
-        ),
-        panel_main(
-            ui.output_table("summary_table")
-        )
+    # 2) identify the 2020-1 cohort keys and filter to just that cohort
+    cohort_keys = (
+        df[df['yr_qtr']=='2020-1']
+        .loc[:, ['state','sector','original_class']]
+        .drop_duplicates()
     )
-)
+    df_cohort = df.merge(cohort_keys, on=['state','sector','original_class'], how='inner')
 
-# ——————————————————————————————
-# 3) SERVER
-# ——————————————————————————————
-def server(input, output, session):
+    # 3) state_totals
+    state_totals = (
+        df_cohort
+        .groupby(['state','yr_qtr'], as_index=False)['count']
+        .sum()
+        .rename(columns={'count':'state_total'})
+    )
 
-    @reactive.Calc
-    def summary_df():
-        dfc = df_cohort
+    # 4) sector_totals
+    sector_totals = (
+        df_cohort
+        .groupby(['sector','yr_qtr'], as_index=False)['count']
+        .sum()
+        .rename(columns={'count':'sector_total'})
+    )
 
-        if input.summary_type() == "Top Attractor States":
-            # sum counts by state for chosen sector
-            df_s = (
-                dfc[dfc["sector"] == input.sector()]
-                .groupby("state")["count"]
-                .sum()
-                .nlargest(input.top_n())
-                .reset_index(name="total_count")
-            )
-            return df_s
+    # 5) sector_6244_changes
+    df_6244 = df_cohort[df_cohort['sector']=='6244']
+    sec = (
+        df_6244
+        .groupby(['state','yr_qtr'], as_index=False)['count']
+        .sum()
+    )
+    # original 6244 counts per state at 2020-1
+    orig_6244 = (
+        sec[sec['yr_qtr']=='2020-1']
+        .loc[:, ['state','count']]
+        .rename(columns={'count':'orig_6244'})
+    )
+    sector_6244_changes = (
+        sec
+        .merge(orig_6244, on='state')
+        .assign(change = lambda d: d['count'] - d['orig_6244'])
+    )
 
-        elif input.summary_type() == "Class Transition Diff":
-            # diff between last and first quarter for chosen classes
-            filt = dfc[
-                (dfc["original_class"] == input.orig_class()) &
-                (dfc["current_class"] == input.curr_class())
-            ]
-            first = (
-                filt[filt["yr_qtr"] == filt["yr_qtr"].min()]
-                .groupby("state")["count"]
-                .sum()
-                .rename("count_start")
-            )
-            last = (
-                filt[filt["yr_qtr"] == filt["yr_qtr"].max()]
-                .groupby("state")["count"]
-                .sum()
-                .rename("count_end")
-            )
-            df_diff = (
-                pd.concat([first, last], axis=1)
-                  .fillna(0)
-                  .assign(diff=lambda d: d["count_end"] - d["count_start"])
-                  .reset_index()
-            )
-            return df_diff
+    # 6) unfound: how many from the original cohort are NOT found in each quarter
+    # 6a) original cohort total per state (all sectors & classes) at 2020-1
+    orig_tot = (
+        df_cohort[df_cohort['yr_qtr']=='2020-1']
+        .groupby('state', as_index=False)['count']
+        .sum()
+        .rename(columns={'count':'orig_total'})
+    )
+    # 6b) cohort total per state & quarter
+    cohort_tot = (
+        df_cohort
+        .groupby(['state','yr_qtr'], as_index=False)['count']
+        .sum()
+        .rename(columns={'count':'cohort_total'})
+    )
+    # 6c) merge and compute unfound
+    unfound = (
+        cohort_tot
+        .merge(orig_tot, on='state')
+        .assign(unfound=lambda d: d['orig_total'] - d['cohort_total'])
+    )
 
-        else:  # Quarterly Diffs Pivot
-            return quarterly_diffs(
-                dfc,
-                sector=input.sector(),
-                original_class=input.orig_class(),
-                current_class=input.curr_class()
-            )
+    return {
+        'state_totals': state_totals,
+        'sector_totals': sector_totals,
+        'sector_6244_changes': sector_6244_changes,
+        'unfound': unfound
+    }
 
-    @output
-    @render_table
-    def summary_table():
-        return summary_df()
-
-# ——————————————————————————————
-# 4) RUN
-# ——————————————————————————————
-app = App(app_ui, server)
+# — example usage —
+if __name__ == "__main__":
+    summaries = compute_summary_stats("cohort_tracking.xlsx")
+    for name, df in summaries.items():
+        print(f"\n===== {name} =====")
+        print(df.head().to_string(index=False))
