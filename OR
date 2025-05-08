@@ -17,8 +17,8 @@ def compute_summary_stats(xlsx_path):
 
 if __name__=="__main__":
     summaries=compute_summary_stats("cohort_tracking.xlsx")
-    for k,df in summaries.items():
-        print(k,df.head().to_string(index=False))
+    with pd.ExcelWriter("summary_stats.xlsx",engine="xlsxwriter") as writer:
+        for name,df in summaries.items():df.to_excel(writer,sheet_name=name,index=False)
 
 
 
