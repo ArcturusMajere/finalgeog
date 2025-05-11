@@ -1,3 +1,82 @@
+import pandas as pd
+
+def summarize_6244_state_flows(
+    df,
+    cohort_qtr: str = '2020-1',
+    sector_code: str = '6244'
+):
+    """
+    From an aggregated df of cohort counts, compute raw and normalized state 
+    distributions of the sector 6244 cohort over time.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Aggregated counts with columns:
+        ['yr_qtr','state','sector','original_class','current_class','count']
+        This df must already only contain rows for the cohort individuals
+        (i.e. everyone in sector_code at cohort_qtr and their counts by state
+        & quarter).
+    cohort_qtr : str
+        The quarter defining the base cohort (default '2020-1').
+    sector_code : str
+        The sector code of interest (default '6244').
+    
+    Returns
+    -------
+    state_trans : pd.DataFrame
+        Long table with columns ['yr_qtr','state','raw_count','pct_of_cohort'].
+    state_wide_raw : pd.DataFrame
+        Pivoted table (rows=yr_qtr, cols=state) of raw counts.
+    state_wide_pct : pd.DataFrame
+        Pivoted table of normalized shares of the original cohort.
+    """
+    # 1. Filter to the sector and all quarters ≥ cohort_qtr
+    sub = df.loc[
+        (df['sector'] == sector_code) &
+        (df['yr_qtr'] >= cohort_qtr),
+        ['yr_qtr','state','count']
+    ].copy()
+    
+    # 2. Compute the cohort's original size in cohort_qtr
+    orig_size = (
+        sub.loc[sub['yr_qtr'] == cohort_qtr, 'count']
+        .sum()
+    )
+    
+    # 3. Summarize raw counts by quarter & state
+    state_trans = (
+        sub
+        .groupby(['yr_qtr','state'])['count']
+        .sum()
+        .reset_index(name='raw_count')
+        .sort_values(['yr_qtr','raw_count'], ascending=[True, False])
+    )
+    
+    # 4. Compute normalized share of the original cohort
+    state_trans['pct_of_cohort'] = state_trans['raw_count'] / orig_size
+    
+    # 5. Pivot to wide format
+    state_wide_raw = (
+        state_trans
+        .pivot(index='yr_qtr', columns='state', values='raw_count')
+        .fillna(0)
+        .reset_index()
+    )
+    state_wide_pct = (
+        state_trans
+        .pivot(index='yr_qtr', columns='state', values='pct_of_cohort')
+        .fillna(0)
+        .reset_index()
+    )
+    
+    return state_trans, state_wide_raw, state_wide_pct
+
+# Example usage:
+# state_trans, raw_wide, pct_wide = summarize_6244_state_flows(df)
+# print(state_trans.head())
+# print(raw_wide.head())
+# print(pct_wide.head())
 
 import pandas as pd
 
