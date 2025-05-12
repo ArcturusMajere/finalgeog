@@ -1,3 +1,25 @@
+def summarize_6244_flows(df,cohort_qtr='2020-1',sector_code='6244',filename='6244_flows.xlsx'):
+    sub=df[df['yr_qtr']>=cohort_qtr]
+    orig=sub.loc[(sub['yr_qtr']==cohort_qtr)&(sub['sector']==sector_code),'count'].sum()
+    st=sub.groupby(['yr_qtr','state'])['count'].sum().reset_index(name='count')
+    st['pct']=st['count']/orig
+    swr=st.pivot('yr_qtr','state','count').fillna(0).reset_index()
+    swp=st.pivot('yr_qtr','state','pct').fillna(0).reset_index()
+    sc=sub.groupby(['yr_qtr','sector'])['count'].sum().reset_index(name='count')
+    sc['pct']=sc['count']/orig
+    secw=sc.pivot('yr_qtr','sector','count').fillna(0).reset_index()
+    secp=sc.pivot('yr_qtr','sector','pct').fillna(0).reset_index()
+    with pd.ExcelWriter(filename) as writer:
+        st.to_excel(writer,'state_trans',index=False)
+        swr.to_excel(writer,'state_raw_wide',index=False)
+        swp.to_excel(writer,'state_pct_wide',index=False)
+        sc.to_excel(writer,'sector_trans',index=False)
+        secw.to_excel(writer,'sector_raw_wide',index=False)
+        secp.to_excel(writer,'sector_pct_wide',index=False)
+    return st,swr,swp,sc,secw,secp
+
+
+
 import pandas as pd
 
 def summarize_6244_state_flows(
