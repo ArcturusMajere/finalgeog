@@ -2,60 +2,47 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 
-def LOOK2_multithreaded(states, years, quarters, cohort, max_threads=4):
+def LOOK2_multithreaded(years, quarters, max_threads=4):
     """
-    Run extraction(state, year, quarter, cohort) in parallel over all
-    combinations of states × years × quarters, then concatenate the results.
+    Run extraction(year, quarter) in parallel over all
+    combinations of years × quarters, then concatenate the results.
     
-    Returns a single DataFrame of all “conflict” rows.
+    Returns a single DataFrame of all conflict rows.
     """
     result_queue = Queue()
 
-    def thread_worker(state, year, quarter):
+    def thread_worker(year, quarter):
         try:
-            # call your existing extraction fn, which should return a DataFrame
-            df = extraction(state, year, quarter, cohort)
+            df = extraction(year, quarter)   # your function should return a DataFrame
             if not df.empty:
-                # tag the rows so you know which slice they came from
-                df = df.assign(_state=state, _year=year, _quarter=quarter)
+                # tag rows so we know their origin
+                df = df.assign(YR=year, QTR=quarter)
                 result_queue.put(df)
         except Exception as e:
-            print(f"[{state} {year}-{quarter}] failed: {e}")
+            print(f"[{year}-{quarter}] failed: {e}")
 
-    # build all (state,year,quarter) tasks
-    tasks = [(s, y, q) for s in states for y in years for q in quarters]
+    # build all (year, quarter) tasks
+    tasks = [(y, q) for y in years for q in quarters]
 
     # fire off threads
     with ThreadPoolExecutor(max_workers=max_threads) as executor:
         futures = {
-            executor.submit(thread_worker, s, y, q): (s, y, q)
-            for s, y, q in tasks
+            executor.submit(thread_worker, y, q): (y, q)
+            for y, q in tasks
         }
-        # wait for all to finish (and print any that error’ed)
         for fut in as_completed(futures):
-            s, y, q = futures[fut]
+            y, q = futures[fut]
             try:
                 fut.result()
             except Exception as e:
-                # should already be caught in worker, but just in case
-                print(f"[{s} {y}-{q}] unhandled exception: {e}")
+                print(f"[{y}-{q}] unhandled exception: {e}")
 
     # collect all the DataFrames
     dfs = []
     while not result_queue.empty():
         dfs.append(result_queue.get())
 
-    # if nothing found, return empty DF; otherwise concat
+    # return concatenated result (or empty DF if none)
     if not dfs:
-        return pd.DataFrame(
-            columns=['ID','WAGE','UI','NAICS2','YR','QTR','_state','_year','_quarter']
-        )
+        return pd.DataFrame(columns=['ID','WAGE','UI','NAICS2','YR','QTR'])
     return pd.concat(dfs, ignore_index=True)
-
-
-states   = ['CA','NY','TX', …]           # whatever state list you have
-years    = list(range(2020, 2025))       # 2020–2024 inclusive
-quarters = [1,2,3,4]
-cohort   = your_cohort_definition_here   # however you pass this in
-
-all_conflicts = LOOK2_multithreaded(states, years, quarters, cohort, max_threads=8)
