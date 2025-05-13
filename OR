@@ -1,3 +1,51 @@
+import pandas as pd
+
+def count_naics_nans_by_year_and_fips(years, fips_list):
+    """
+    For each year in `years` and each FIPS in `fips_list`, calls DOM2(year, fips),
+    extracts the year, tags the fips, and counts NaNs in naics2..naics6.
+    Returns a DataFrame with columns:
+      year, fips, missing_naics2, missing_naics3, missing_naics4, missing_naics5, missing_naics6
+    """
+    naics_cols = ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']
+    records = []
+
+    for year in years:
+        for fips in fips_list:
+            df = DOM2(year, fips)
+            # tag the year and fips
+            df = df.copy()
+            df['year'] = int(year)
+            df['fips'] = fips
+
+            # count NaNs in one row (since we're grouping by a single combination)
+            counts = df[naics_cols].isna().sum().to_dict()
+            records.append({
+                'year': year,
+                'fips': fips,
+                **{f"missing_{col}": counts[col] for col in naics_cols}
+            })
+
+    return pd.DataFrame.from_records(records)
+
+# Example usage:
+years = range(2019, 2025)               # 2019, 2020, ..., 2024
+fips_list = ['01', '02', '04', '06', ...]  # your list of FIPS codes
+
+nan_summary = count_naics_nans_by_year_and_fips(years, fips_list)
+print(nan_summary)
+
+
+
+
+
+
+
+
+
+
+
+
 def summarize_6244_flows(df,cohort_qtr='2020-1',sector_code='6244',filename='6244_flows.xlsx'):
     sub=df[df['yr_qtr']>=cohort_qtr]
     orig=sub.loc[(sub['yr_qtr']==cohort_qtr)&(sub['sector']==sector_code),'count'].sum()
