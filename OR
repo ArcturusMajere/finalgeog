@@ -1,42 +1,28 @@
 import pandas as pd
 
-def count_naics_nans_by_year_and_state(years, fips_list):
+def find_wage_naics_conflicts(df: pd.DataFrame) -> pd.DataFrame:
     """
-    For each year in `years` and each FIPS in `fips_list`, calls DOM2(year, fips),
-    tags the year, then concatenates all slices and finally counts NaNs in 
-    naics2..naics6 grouped by year and state.
-    
-    Returns a DataFrame with columns:
-      year, state, missing_naics2, missing_naics3, missing_naics4, missing_naics5, missing_naics6
+    Return all rows for ID/YR/QTR/WAGE combinations
+    that have more than one distinct NAICS2.
     """
-    naics_cols = ['naics2', 'naics3', 'naics4', 'naics5', 'naics6']
-    all_slices = []
-
-    # 1. Collect each slice with its year
-    for year in years:
-        for fips in fips_list:
-            df_slice = DOM2(year, fips).copy()
-            df_slice['year'] = int(year)
-            all_slices.append(df_slice)
-
-    # 2. Concatenate into one big DataFrame
-    big_df = pd.concat(all_slices, ignore_index=True)
-
-    # 3. Group by year & state, count NaNs in each NAICS column
-    missing = (
-        big_df
-        .groupby(['year', 'state'])[naics_cols]
-        .apply(lambda sub: sub.isna().sum())
-        .reset_index()
+    # count distinct NAICS2 per ID, year, quarter, and wage
+    grp = (
+        df
+        .groupby(['ID', 'YR', 'QTR', 'WAGE'], as_index=False)
+        .agg(naics2_count=('NAICS2', 'nunique'))
     )
 
-    # 4. Rename for clarity
-    missing = missing.rename(columns={col: f"missing_{col}" for col in naics_cols})
-    return missing
+    # keep only those combinations with >1 distinct NAICS2
+    conflicts = grp[grp['naics2_count'] > 1]
 
-# Example usage:
-years = range(2019, 2025)                  # 2019, 2020, ..., 2024
-fips_list = ['01', '02', '04', '06', ...]  # your list of county FIPS codes
+    # join back to the original df to get all offending rows
+    result = df.merge(
+        conflicts[['ID', 'YR', 'QTR', 'WAGE']],
+        on=['ID', 'YR', 'QTR', 'WAGE'],
+        how='inner'
+    )
+    return result
 
-nan_by_year_state = count_naics_nans_by_year_and_state(years, fips_list)
-print(nan_by_year_state)
+# assume `df` is your DataFrame
+conflicting_rows = find_wage_naics_conflicts(df)
+print(conflicting_rows)
