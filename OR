@@ -1,29 +1,40 @@
 import pandas as pd
 
-def naics_counts_pct(df):
+def naics_id_counts_pct(df):
     levels = ['naics2','naics3','naics4','naics5','naics6']
     counts = {lvl: df[lvl].nunique() for lvl in levels}
     total = sum(counts.values())
     return pd.DataFrame([
-        {'level': lvl, 'count': counts[lvl], 'percentage': counts[lvl]/total*100 if total else 0}
+        {'level': lvl, 'id_count': counts[lvl], 'percentage': counts[lvl]/total*100 if total else 0}
         for lvl in levels
     ])
 
-def multithread_naics_counts(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
-    results = []
+
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def naics_id_counts_pct(df):
     levels = ['naics2','naics3','naics4','naics5','naics6']
+    counts = {lvl: df[lvl].nunique() for lvl in levels}
+    total = sum(counts.values())
+    return pd.DataFrame([
+        {'level': lvl, 'id_count': counts[lvl], 'percentage': counts[lvl]/total*100 if total else 0}
+        for lvl in levels
+    ])
+
+def multithread_naics_id_counts_pct(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+    results = []
     def worker(state, year, qtr):
         df = get_cohort(state, year, qtr)
         if df is None or df.empty:
             return
-        counts = {lvl: df[lvl].nunique() for lvl in levels}
-        total = sum(counts.values())
-        for lvl in levels:
-            counts[lvl + '_pct'] = counts[lvl] / total * 100 if total else 0
-        counts.update({'state': state, 'year': year, 'qtr': qtr})
-        results.append(counts)
+        pct_df = naics_id_counts_pct(df)
+        pct_df['state'] = state
+        pct_df['year'] = year
+        pct_df['qtr'] = qtr
+        results.append(pct_df)
     with ThreadPoolExecutor(max_workers=max_workers) as exe:
         futures = [exe.submit(worker, s, y, q) for s in STATES for y in range(start_year, end_year+1) for q in quarters]
         for f in as_completed(futures):
             f.result()
-    return pd.DataFrame(results)
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
