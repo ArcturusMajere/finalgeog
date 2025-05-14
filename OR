@@ -1,136 +1,56 @@
-import pandas as pd
+def count_ids_by_naics(df):
+    total = df['ID'].nunique()
+    dfs = []
+    for lvl in ['naics2','naics3','naics4','naics5','naics6']:
+        df2 = df.groupby(lvl)['ID'].nunique().reset_index()
+        df2['percentage'] = df2['ID'] / total * 100
+        df2['level'] = lvl
+        dfs.append(df2)
+    return __import__('pandas').concat(dfs, ignore_index=True)
+def count_ids_by_naics(df):
+    dfs = []
+    for lvl in ['naics2','naics3','naics4','naics5','naics6']:
+        df2 = df.groupby(lvl)['ID'].nunique().reset_index()
+        df2['level'] = lvl
+        dfs.append(df2)
+    return __import__('pandas').concat(dfs, ignore_index=True)
 
-def naics_level_id_distribution(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    For each of NAICS2, NAICS3, NAICS4, NAICS5, NAICS6:
-      - compute for each ID the number of distinct codes at that level,
-      - bin those counts into 1,2,3,4,5+,
-      - return a DataFrame with columns:
-          level, unique_count, id_count, percentage
-    """
-    total_ids = df['ID'].nunique()
-    summaries = []
-
-    for lvl in ['NAICS2','NAICS3','NAICS4','NAICS5','NAICS6']:
-        # how many distinct codes per ID
-        id_code_counts = df.groupby('ID')[lvl].nunique()
-
-        # count how many IDs have 1,2,3,4,>=5 distinct codes
-        vc = id_code_counts.value_counts().sort_index()
-        # collapse 5 and above
-        five_plus = vc.loc[vc.index >= 5].sum()
-        vc = vc.loc[vc.index < 5].copy()
-        vc.loc[5] = five_plus
-
-        # build summary table
-        summary = (
-            vc
-            .reset_index()
-            .rename(columns={'index':'unique_count', lvl:'id_count'})
-        )
-        summary['percentage'] = summary['id_count'] / total_ids * 100
-        summary['level'] = lvl
-        summaries.append(summary[['level','unique_count','id_count','percentage']])
-
-    return pd.concat(summaries, ignore_index=True)
-
-# --- usage example ---
-# dist = naics_level_id_distribution(df)
-# print(dist)
 
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from queue import Queue
 
-def naics_level_id_distribution(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    For each of NAICS2–NAICS6 in df:
-      - count distinct codes per ID,
-      - bin into 1,2,3,4,5+,
-      - return a DataFrame with columns:
-        [level, unique_count, id_count, percentage]
-    """
-    total_ids = df['ID'].nunique()
-    summaries = []
-
-    for lvl in ['NAICS2','NAICS3','NAICS4','NAICS5','NAICS6']:
-        id_code_counts = df.groupby('ID')[lvl].nunique()
-        vc = id_code_counts.value_counts().sort_index()
-        # collapse 5 and above into “5+”
-        five_plus = vc.loc[vc.index >= 5].sum()
-        vc = vc.loc[vc.index < 5].copy()
-        vc.loc[5] = five_plus
-
-        summary = (
-            vc
-            .reset_index()
-            .rename(columns={'index':'unique_count', lvl:'id_count'})
-        )
-        summary['percentage'] = summary['id_count'] / total_ids * 100
-        summary['level'] = lvl
-        summaries.append(summary[['level','unique_count','id_count','percentage']])
-
-    return pd.concat(summaries, ignore_index=True)
-
-
-def NAICS_dist_multithread(STATES, start_year=2020, end_year=2024,
-                           quarters=(1,2,3,4), max_threads=8) -> pd.DataFrame:
-    """
-    For each state in STATES and each (year,quarter) from start_year-1
-    to end_year-4, in parallel:
-      1. call Get_cohort(state, year, quarter)
-      2. compute naics_level_id_distribution on that cohort
-      3. tag with state, year, quarter
-    Returns a single concatenated DataFrame.
-    """
-    result_queue = Queue()
-
-    def worker(state, year, quarter):
-        try:
-            cohort_df = Get_cohort(state, year, quarter)
-            if cohort_df is None or cohort_df.empty:
-                return
-            dist_df = naics_level_id_distribution(cohort_df)
-            # tag origin
-            dist_df = dist_df.assign(state=state, year=year, quarter=quarter)
-            result_queue.put(dist_df)
-        except Exception as e:
-            print(f"[{state} {year}-Q{quarter}] error: {e}")
-
-    tasks = [
-        (state, year, quarter)
-        for state in STATES
-        for year in range(start_year, end_year+1)
-        for quarter in quarters
-    ]
-
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
-        futures = {
-            executor.submit(worker, state, year, quarter): (state, year, quarter)
-            for state, year, quarter in tasks
-        }
-        # ensure all exceptions are printed
-        for fut in as_completed(futures):
-            try:
-                fut.result()
-            except Exception:
-                pass
-
-    # collect results
+def count_ids_by_naics(df):
+    total = df['ID'].nunique()
     dfs = []
-    while not result_queue.empty():
-        dfs.append(result_queue.get())
-
-    if not dfs:
-        return pd.DataFrame(columns=[
-            'level','unique_count','id_count','percentage',
-            'state','year','quarter'
-        ])
+    for lvl in ['naics2','naics3','naics4','naics5','naics6']:
+        df2 = df.groupby(lvl)['ID'].nunique().reset_index()
+        df2['percentage'] = df2['ID'] / total * 100
+        df2['level'] = lvl
+        dfs.append(df2)
     return pd.concat(dfs, ignore_index=True)
 
+def multithread_counts(STATES):
+    dfs = []
+    def work(state, year, qtr):
+        df = get_cohort(state, year, qtr)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        out = count_ids_by_naics(df)
+        out['state'] = state
+        out['year'] = year
+        out['qtr'] = qtr
+        return out
 
-# --- usage example ---
-# assuming you have a list of state abbreviations in `STATES`:
-# STATES = ['AL','AK','AZ', ...]
-# dist_all = NAICS_dist_multithread(STATES)
-# print(dist_all)
+    with ThreadPoolExecutor() as exe:
+        futures = [
+            exe.submit(work, s, y, q)
+            for s in STATES
+            for y in range(2020, 2025)
+            for q in (1, 2, 3, 4)
+        ]
+        for f in as_completed(futures):
+            df = f.result()
+            if not df.empty:
+                dfs.append(df)
+
+    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
