@@ -1,56 +1,21 @@
-def count_ids_by_naics(df):
-    total = df['ID'].nunique()
-    dfs = []
-    for lvl in ['naics2','naics3','naics4','naics5','naics6']:
-        df2 = df.groupby(lvl)['ID'].nunique().reset_index()
-        df2['percentage'] = df2['ID'] / total * 100
-        df2['level'] = lvl
-        dfs.append(df2)
-    return __import__('pandas').concat(dfs, ignore_index=True)
-def count_ids_by_naics(df):
-    dfs = []
-    for lvl in ['naics2','naics3','naics4','naics5','naics6']:
-        df2 = df.groupby(lvl)['ID'].nunique().reset_index()
-        df2['level'] = lvl
-        dfs.append(df2)
-    return __import__('pandas').concat(dfs, ignore_index=True)
-
-
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def count_ids_by_naics(df):
-    total = df['ID'].nunique()
-    dfs = []
-    for lvl in ['naics2','naics3','naics4','naics5','naics6']:
-        df2 = df.groupby(lvl)['ID'].nunique().reset_index()
-        df2['percentage'] = df2['ID'] / total * 100
-        df2['level'] = lvl
-        dfs.append(df2)
-    return pd.concat(dfs, ignore_index=True)
-
-def multithread_counts(STATES):
-    dfs = []
-    def work(state, year, qtr):
+def multithread_naics_counts(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+    results = []
+    levels = ['naics2','naics3','naics4','naics5','naics6']
+    def worker(state, year, qtr):
         df = get_cohort(state, year, qtr)
         if df is None or df.empty:
-            return pd.DataFrame()
-        out = count_ids_by_naics(df)
-        out['state'] = state
-        out['year'] = year
-        out['qtr'] = qtr
-        return out
-
-    with ThreadPoolExecutor() as exe:
-        futures = [
-            exe.submit(work, s, y, q)
-            for s in STATES
-            for y in range(2020, 2025)
-            for q in (1, 2, 3, 4)
-        ]
+            return
+        counts = {lvl: df[lvl].nunique() for lvl in levels}
+        total = sum(counts.values())
+        for lvl in levels:
+            counts[lvl + '_pct'] = counts[lvl] / total * 100 if total else 0
+        counts.update({'state': state, 'year': year, 'qtr': qtr})
+        results.append(counts)
+    with ThreadPoolExecutor(max_workers=max_workers) as exe:
+        futures = [exe.submit(worker, s, y, q) for s in STATES for y in range(start_year, end_year+1) for q in quarters]
         for f in as_completed(futures):
-            df = f.result()
-            if not df.empty:
-                dfs.append(df)
-
-    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+            f.result()
+    return pd.DataFrame(results)
