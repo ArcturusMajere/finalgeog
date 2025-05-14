@@ -1,30 +1,15 @@
-def find_duplicate_wage_entries(df):
-    dup = (
-        df
-        .groupby(['YR','QTR','ID','WAGE'])
-        .size()
-        .reset_index(name='count')
-    )
-    return dup[dup['count']>1]
-
-
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def find_duplicate_wage_entries(df):
-    dup=df.groupby(['YR','QTR','ID','WAGE']).size().reset_index(name='count')
-    return dup[dup['count']>1]
-
-def threaded_find_duplicate_wage_entries(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+def threaded_dup_counts(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
     results=[]
     def work(s,y,q):
         df=get_cohort(s,y,q)
         if df is None or df.empty: return
-        d=find_duplicate_wage_entries(df)
-        if d.empty: return
-        d['state'],d['year'],d['qtr']=s,y,q
-        results.append(d)
+        c=df.groupby(['YR','QTR','ID','WAGE']).size()
+        n=int((c>1).sum())
+        results.append({'state':s,'year':y,'qtr':q,'dup_count':n})
     with ThreadPoolExecutor(max_workers=max_workers) as exe:
         futures=[exe.submit(work,s,y,q) for s in STATES for y in range(start_year,end_year+1) for q in quarters]
         for f in as_completed(futures): f.result()
-    return pd.concat(results,ignore_index=True) if results else pd.DataFrame()
+    return pd.DataFrame(results)
