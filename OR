@@ -1,46 +1,18 @@
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def threaded_agg_dup_id_counts(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
-    stats = []
-    def worker(state, year, qtr):
-        df = get_cohort(state, year, qtr)
-        if df is None or df.empty: return
-        total_ids = df['ID'].nunique()
-        dup_ids = df.groupby(['ID','WAGE']).size().loc[lambda x: x>1].index.get_level_values('ID').nunique()
-        stats.append({'year': year, 'qtr': qtr, 'dup_id_count': dup_ids, 'total_ids': total_ids})
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(worker, s, y, q) for s in STATES for y in range(start_year, end_year+1) for q in quarters]
-        for f in as_completed(futures): f.result()
-    df_stats = pd.DataFrame(stats)
-    agg = df_stats.groupby(['year','qtr'], as_index=False)[['dup_id_count','total_ids']].sum()
-    agg['dup_pct'] = agg['dup_id_count'] / agg['total_ids'] * 100
-    return agg
-
-
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-def threaded_dup_id_counts_yr_qtr(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+def threaded_dup_ids_across_states(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=5):
     results = []
-    def worker(state, year, qtr):
-        df = get_cohort(state, year, qtr)
-        if df is None or df.empty: return
-        total_ids = df['ID'].nunique()
-        dup_ids = df.groupby(['ID','WAGE']).size().loc[lambda x: x>1].index.get_level_values('ID').nunique()
-        results.append({'year': year, 'qtr': qtr, 'dup_id_count': dup_ids, 'total_ids': total_ids})
+    def work(year, qtr):
+        dfs = [get_cohort(s, year, qtr) for s in STATES]
+        df = pd.concat([d for d in dfs if d is not None and not d.empty], ignore_index=True)
+        if df.empty: return
+        total = df['ID'].nunique()
+        dup = df['ID'].value_counts().loc[lambda x: x>1].shape[0]
+        results.append({'year': year, 'qtr': qtr, 'dup_id_count': dup, 'total_unique_ids': total})
     with ThreadPoolExecutor(max_workers=max_workers) as exe:
-        futures = [exe.submit(worker, s, y, q) for s in STATES for y in range(start_year,end_year+1) for q in quarters]
+        futures = [exe.submit(work, y, q) for y in range(start_year, end_year+1) for q in quarters]
         for f in as_completed(futures): f.result()
     df = pd.DataFrame(results)
-    agg = df.groupby(['year','qtr'], as_index=False).sum()
-    agg['dup_pct'] = agg['dup_id_count'] / agg['total_ids'] * 100
-    return agg
-
-
-import pandas as pd
-
-def aggregate_dup_stats(df):
-    agg = df.groupby(['year','qtr'], as_index=False)[['dup_id_count','total_ids']].sum()
-    agg['dup_pct'] = agg['dup_id_count'] / agg['total_ids'] * 100
-    return agg
+    df['dup_pct'] = df['dup_id_count'] / df['total_unique_ids'] * 100
+    return df
