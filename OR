@@ -1,15 +1,18 @@
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def threaded_dup_counts(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
-    results=[]
-    def work(s,y,q):
-        df=get_cohort(s,y,q)
-        if df is None or df.empty: return
-        c=df.groupby(['YR','QTR','ID','WAGE']).size()
-        n=int((c>1).sum())
-        results.append({'state':s,'year':y,'qtr':q,'dup_count':n})
+def threaded_dup_id_counts_yr_qtr(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+    results = []
+    def worker(state, year, qtr):
+        df = get_cohort(state, year, qtr)
+        if df is None or df.empty:
+            return
+        c = df.groupby(['ID','WAGE']).size()
+        n = c[c>1].index.get_level_values('ID').nunique()
+        results.append({'year': year, 'qtr': qtr, 'dup_id_count': n})
     with ThreadPoolExecutor(max_workers=max_workers) as exe:
-        futures=[exe.submit(work,s,y,q) for s in STATES for y in range(start_year,end_year+1) for q in quarters]
-        for f in as_completed(futures): f.result()
-    return pd.DataFrame(results)
+        futures = [exe.submit(worker, s, y, q) for s in STATES for y in range(start_year, end_year+1) for q in quarters]
+        for f in as_completed(futures):
+            f.result()
+    df = pd.DataFrame(results)
+    return df.groupby(['year','qtr'], as_index=False)['dup_id_count'].sum()
