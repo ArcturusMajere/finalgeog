@@ -1,5 +1,13 @@
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def naics_counts_pct(df):
+    levels = ['naics2','naics3','naics4','naics5','naics6']
+    counts = {lvl: df[lvl].nunique() for lvl in levels}
+    total = sum(counts.values())
+    return pd.DataFrame([
+        {'level': lvl, 'count': counts[lvl], 'percentage': counts[lvl]/total*100 if total else 0}
+        for lvl in levels
+    ])
 
 def multithread_naics_counts(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
     results = []
