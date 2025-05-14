@@ -1,40 +1,43 @@
 import pandas as pd
 
-def naics_id_counts_pct(df):
+def naics_id_occurrences(df):
     levels = ['naics2','naics3','naics4','naics5','naics6']
-    counts = {lvl: df[lvl].nunique() for lvl in levels}
-    total = sum(counts.values())
+    total = len(df)
     return pd.DataFrame([
-        {'level': lvl, 'id_count': counts[lvl], 'percentage': counts[lvl]/total*100 if total else 0}
+        {
+            'level': lvl,
+            'id_count': df[lvl].notna().sum(),
+            'percentage': df[lvl].notna().sum()/total*100 if total else 0
+        }
         for lvl in levels
     ])
-
 
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def naics_id_counts_pct(df):
+def naics_id_occurrences(df):
     levels = ['naics2','naics3','naics4','naics5','naics6']
-    counts = {lvl: df[lvl].nunique() for lvl in levels}
-    total = sum(counts.values())
+    total = len(df)
     return pd.DataFrame([
-        {'level': lvl, 'id_count': counts[lvl], 'percentage': counts[lvl]/total*100 if total else 0}
+        {
+            'level': lvl,
+            'id_count': df[lvl].notna().sum(),
+            'percentage': df[lvl].notna().sum()/total*100 if total else 0
+        }
         for lvl in levels
     ])
 
-def multithread_naics_id_counts_pct(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+def threaded_naics_counts(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
     results = []
     def worker(state, year, qtr):
         df = get_cohort(state, year, qtr)
-        if df is None or df.empty:
-            return
-        pct_df = naics_id_counts_pct(df)
-        pct_df['state'] = state
-        pct_df['year'] = year
-        pct_df['qtr'] = qtr
-        results.append(pct_df)
+        if df is None or df.empty: return
+        occ = naics_id_occurrences(df)
+        occ['state'] = state
+        occ['year'] = year
+        occ['qtr'] = qtr
+        results.append(occ)
     with ThreadPoolExecutor(max_workers=max_workers) as exe:
         futures = [exe.submit(worker, s, y, q) for s in STATES for y in range(start_year, end_year+1) for q in quarters]
-        for f in as_completed(futures):
-            f.result()
+        for f in as_completed(futures): f.result()
     return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
