@@ -1,48 +1,30 @@
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-def id_wage_metrics(df):
-    levels = ['naics2','naics3','naics4','naics5','naics6']
-    total_wage = df['WAGE'].sum()
-    return pd.DataFrame([{
-        'level': lvl,
-        'id_count': df[df[lvl].notna()]['ID'].nunique(),
-        'wage_share': df.loc[df[lvl].notna(),'WAGE'].sum()/total_wage*100 if total_wage else 0
-    } for lvl in levels])
-
-def threaded_metrics(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
-    res = []
-    def work(s,y,q):
-        df = get_cohort(s,y,q)
-        if df is None or df.empty: return
-        m = id_wage_metrics(df)
-        m['state'], m['year'], m['qtr'] = s, y, q
-        res.append(m)
-    with ThreadPoolExecutor(max_workers=max_workers) as exe:
-        futures = [exe.submit(work,s,y,q) for s in STATES for y in range(start_year,end_year+1) for q in quarters]
-        for f in as_completed(futures): f.result()
-    return pd.concat(res, ignore_index=True) if res else pd.DataFrame()
-
-def count_ids_same_wage_multi_ui(df):
-    grp = df.groupby(['ID','WAGE'])['UI'].nunique()
-    return grp[grp>1].index.get_level_values('ID').nunique()
+def find_duplicate_wage_entries(df):
+    dup = (
+        df
+        .groupby(['YR','QTR','ID','WAGE'])
+        .size()
+        .reset_index(name='count')
+    )
+    return dup[dup['count']>1]
 
 
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def count_ids_same_wage_multi_ui(df):
-    grp=df.groupby(['ID','WAGE'])['UI'].nunique()
-    return grp[grp>1].index.get_level_values('ID').nunique()
+def find_duplicate_wage_entries(df):
+    dup=df.groupby(['YR','QTR','ID','WAGE']).size().reset_index(name='count')
+    return dup[dup['count']>1]
 
-def threaded_count_ids_same_wage_multi_ui(STATES,start_year=2020,end_year=2024,quarters=(1,2,3,4),max_workers=8):
-    res=[]
+def threaded_find_duplicate_wage_entries(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+    results=[]
     def work(s,y,q):
         df=get_cohort(s,y,q)
-        if df is None or df.empty:return
-        c=count_ids_same_wage_multi_ui(df)
-        res.append({'state':s,'year':y,'qtr':q,'dup_id_count':c})
+        if df is None or df.empty: return
+        d=find_duplicate_wage_entries(df)
+        if d.empty: return
+        d['state'],d['year'],d['qtr']=s,y,q
+        results.append(d)
     with ThreadPoolExecutor(max_workers=max_workers) as exe:
         futures=[exe.submit(work,s,y,q) for s in STATES for y in range(start_year,end_year+1) for q in quarters]
-        for f in as_completed(futures):f.result()
-    return pd.DataFrame(res)
+        for f in as_completed(futures): f.result()
+    return pd.concat(results,ignore_index=True) if results else pd.DataFrame()
