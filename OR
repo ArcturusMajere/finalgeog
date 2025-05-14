@@ -16,3 +16,11 @@ def threaded_dup_id_counts_yr_qtr(STATES, start_year=2020, end_year=2024, quarte
     agg = df.groupby(['year','qtr'], as_index=False).sum()
     agg['dup_pct'] = agg['dup_id_count'] / agg['total_ids'] * 100
     return agg
+
+
+import pandas as pd
+
+def aggregate_dup_stats(df):
+    agg = df.groupby(['year','qtr'], as_index=False)[['dup_id_count','total_ids']].sum()
+    agg['dup_pct'] = agg['dup_id_count'] / agg['total_ids'] * 100
+    return agg
