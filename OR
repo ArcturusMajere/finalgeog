@@ -1,15 +1,24 @@
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def threaded_dup_id_counts_yr_qtr(start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
-    results = []
+def threaded_yr_qtr_stats(start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+    results=[]
     def worker(year, qtr):
-        df = get_cohort(year, qtr)
+        df=get_cohort(year, qtr)
         if df is None or df.empty: return
-        total = df['ID'].nunique()
-        dup = df['ID'].value_counts().loc[lambda x: x>1].shape[0]
-        results.append({'year': year, 'qtr': qtr, 'dup_id_count': dup, 'total_ids': total, 'dup_pct': dup/total*100 if total else 0})
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(worker, y, q) for y in range(start_year, end_year+1) for q in quarters]
+        total_ids=df['ID'].nunique()
+        dup_count=df['ID'].value_counts().loc[lambda x: x>1].shape[0]
+        zero_count=df.loc[df['WAGE']==0,'ID'].nunique()
+        naics2_nan_count=df.loc[df['naics2'].isna(),'ID'].nunique()
+        results.append({
+            'year':year,'qtr':qtr,
+            'total_ids':total_ids,
+            'dup_id_count':dup_count,
+            'dup_pct':dup_count/total_ids*100 if total_ids else 0,
+            'wage_zero_ids':zero_count,
+            'naics2_missing_ids':naics2_nan_count
+        })
+    with ThreadPoolExecutor(max_workers=max_workers) as exe:
+        futures=[exe.submit(worker,y,q) for y in range(start_year,end_year+1) for q in quarters]
         for f in as_completed(futures): f.result()
     return pd.DataFrame(results)
