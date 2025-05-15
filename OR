@@ -1,18 +1,15 @@
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def threaded_dup_ids_across_states(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=5):
+def threaded_dup_id_counts_yr_qtr(start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
     results = []
-    def work(year, qtr):
-        dfs = [get_cohort(s, year, qtr) for s in STATES]
-        df = pd.concat([d for d in dfs if d is not None and not d.empty], ignore_index=True)
-        if df.empty: return
+    def worker(year, qtr):
+        df = get_cohort(year, qtr)
+        if df is None or df.empty: return
         total = df['ID'].nunique()
         dup = df['ID'].value_counts().loc[lambda x: x>1].shape[0]
-        results.append({'year': year, 'qtr': qtr, 'dup_id_count': dup, 'total_unique_ids': total})
-    with ThreadPoolExecutor(max_workers=max_workers) as exe:
-        futures = [exe.submit(work, y, q) for y in range(start_year, end_year+1) for q in quarters]
+        results.append({'year': year, 'qtr': qtr, 'dup_id_count': dup, 'total_ids': total, 'dup_pct': dup/total*100 if total else 0})
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(worker, y, q) for y in range(start_year, end_year+1) for q in quarters]
         for f in as_completed(futures): f.result()
-    df = pd.DataFrame(results)
-    df['dup_pct'] = df['dup_id_count'] / df['total_unique_ids'] * 100
-    return df
+    return pd.DataFrame(results)
