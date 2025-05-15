@@ -1,24 +1,27 @@
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def threaded_yr_qtr_stats(start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
-    results=[]
-    def worker(year, qtr):
-        df=get_cohort(year, qtr)
-        if df is None or df.empty: return
-        total_ids=df['ID'].nunique()
-        dup_count=df['ID'].value_counts().loc[lambda x: x>1].shape[0]
-        zero_count=df.loc[df['WAGE']==0,'ID'].nunique()
-        naics2_nan_count=df.loc[df['naics2'].isna(),'ID'].nunique()
-        results.append({
-            'year':year,'qtr':qtr,
-            'total_ids':total_ids,
-            'dup_id_count':dup_count,
-            'dup_pct':dup_count/total_ids*100 if total_ids else 0,
-            'wage_zero_ids':zero_count,
-            'naics2_missing_ids':naics2_nan_count
-        })
-    with ThreadPoolExecutor(max_workers=max_workers) as exe:
-        futures=[exe.submit(worker,y,q) for y in range(start_year,end_year+1) for q in quarters]
-        for f in as_completed(futures): f.result()
-    return pd.DataFrame(results)
+def threaded_equal_wage_dups_2024q3(STATES, max_workers=8):
+    results = []
+    def worker(state):
+        df = get_cohort(state, 2024, 3)
+        if df is None or df.empty:
+            return
+        grp = df.groupby(['ID', 'WAGE']).size()
+        dup = grp[grp > 1].reset_index(name='count')
+        if dup.empty:
+            return
+        dup['state'] = state
+        results.append(dup[['state', 'ID', 'WAGE', 'count']])
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(worker, s) for s in STATES]
+        for f in as_completed(futures):
+            f.result()
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame(
+        columns=['state', 'ID', 'WAGE', 'count']
+    )
+
+# Usage:
+# STATES = ['AL','AK',...,'WY']
+# df_dups = threaded_equal_wage_dups_2024q3(STATES)
+# print(df_dups)
