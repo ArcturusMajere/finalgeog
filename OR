@@ -1,3 +1,22 @@
 def find_ties(df):
     ties=df.groupby(['YR','QTR','ID','WAGE']).size().reset_index(name='count')
     return ties[ties['count']>=2]
+
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import pandas as pd
+
+def threaded_find_ties(STATES, start_year=2020, end_year=2024, quarters=(1,2,3,4), max_workers=8):
+    results=[]
+    def worker(state,year,qtr):
+        df=get_cohort(state,year,qtr)
+        if df is None or df.empty:return
+        ties=df.groupby(['YR','QTR','ID','WAGE']).size().reset_index(name='count')
+        ties=ties[ties['count']>=2]
+        if ties.empty:return
+        ties['state']=state
+        results.append(ties)
+    with ThreadPoolExecutor(max_workers=max_workers) as exe:
+        futures=[exe.submit(worker,s,y,q) for s in STATES for y in range(start_year,end_year+1) for q in quarters]
+        for f in as_completed(futures):f.result()
+    return pd.concat(results,ignore_index=True) if results else pd.DataFrame(columns=['YR','QTR','ID','WAGE','count','state'])
