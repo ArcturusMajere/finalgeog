@@ -1,15 +1,8 @@
-from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
-def count_duplicate_ids_over_cohorts(states):
-    quarters = pd.period_range('2020Q1', '2024Q3', freq='Q').astype(str)
-    def _count_for(args):
-        state, yr_qtr = args
-        year, quarter = map(int, yr_qtr.split('Q'))
-        df = get_cohort(state, year, quarter)
-        dup_count = df['id'].duplicated().sum()
-        return {'state': state, 'yr_qtr': yr_qtr, 'duplicate_id_count': dup_count}
-    tasks = [(s, q) for s in states for q in quarters]
-    with ThreadPoolExecutor() as executor:
-        results = list(executor.map(_count_for, tasks))
-    return pd.DataFrame(results)
+def merge_special(left: pd.DataFrame, right: pd.DataFrame) -> pd.DataFrame:
+    mn_wa = left[left['state'].isin(['MN', 'WA'])]
+    others = left[~left['state'].isin(['MN', 'WA'])]
+    merged_mn_wa = pd.merge(mn_wa, right, on=['UI', 'RUN'], how='inner')
+    merged_others = pd.merge(others, right, on=['UI'], how='inner')
+    return pd.concat([merged_mn_wa, merged_others], ignore_index=True)
