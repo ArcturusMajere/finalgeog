@@ -1,8 +1,5 @@
 import pandas as pd
 
-def merge_special(left: pd.DataFrame, right: pd.DataFrame) -> pd.DataFrame:
-    mn_wa = left[left['state'].isin(['MN', 'WA'])]
-    others = left[~left['state'].isin(['MN', 'WA'])]
-    merged_mn_wa = pd.merge(mn_wa, right, on=['UI', 'RUN'], how='inner')
-    merged_others = pd.merge(others, right, on=['UI'], how='inner')
-    return pd.concat([merged_mn_wa, merged_others], ignore_index=True)
+def merge_special(left: pd.DataFrame, right: pd.DataFrame, state: str) -> pd.DataFrame:
+    keys = ['UI', 'RUN'] if state in ['MN', 'WA'] else ['UI']
+    return pd.merge(left, right, on=keys, how='inner')
