@@ -1,20 +1,15 @@
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
-def count_naics2_nans_over_cohorts(states):
+def count_duplicate_ids_over_cohorts(states):
     quarters = pd.period_range('2020Q1', '2024Q3', freq='Q').astype(str)
     def _count_for(args):
         state, yr_qtr = args
-        year_str, q_str = yr_qtr.split('Q')
-        year, quarter = int(year_str), int(q_str)
-        cohort_df = get_cohort(state, year, quarter)
-        nan_count = cohort_df['naics2'].isna().sum()
-        return {'state': state, 'yr_qtr': yr_qtr, 'naics2_nan_count': nan_count}
+        year, quarter = map(int, yr_qtr.split('Q'))
+        df = get_cohort(state, year, quarter)
+        dup_count = df['id'].duplicated().sum()
+        return {'state': state, 'yr_qtr': yr_qtr, 'duplicate_id_count': dup_count}
     tasks = [(s, q) for s in states for q in quarters]
     with ThreadPoolExecutor() as executor:
         results = list(executor.map(_count_for, tasks))
     return pd.DataFrame(results)
-
-
-summary = count_naics2_nans_over_cohorts(states)
-print(summary)
