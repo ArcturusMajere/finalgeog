@@ -1,36 +1,6 @@
-import pandas as pd
-from itertools import product
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-def process_cohort(state, year, quarter):
-    df = get_cohort(state, year, quarter)
-    if df.empty:
-        return pd.DataFrame()
-    df['yr_qtr'] = f'{year}Q{quarter}'
-    grouped = df.groupby('naics2').agg(
-        unique_ids=('ID', 'nunique'),
-        unique_uis=('UI', 'nunique')
-    ).reset_index()
-    grouped['state'] = state
-    grouped['yr_qtr'] = f'{year}Q{quarter}'
-    return grouped
-
-def extract_naics2_counts_multithread(states, years, quarters, max_workers=8):
-    results = []
-    combos = list(product(states, years, quarters))
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(process_cohort, s, y, q): (s, y, q) for s, y, q in combos}
-        for future in as_completed(futures):
-            try:
-                result = future.result()
-                if not result.empty:
-                    results.append(result)
-            except Exception as e:
-                s, y, q = futures[future]
-                print(f"Error processing {s}-{y}Q{q}: {e}")
-    
-    if results:
-        return pd.concat(results, ignore_index=True)
-    else:
-        return pd.DataFrame(columns=['naics2', 'unique_ids', 'unique_uis', 'state', 'yr_qtr'])
+@timer
+def get_cohort(state, year, quarter):
+    f = US.get(state).lstrip('0')
+    params = {'state': US.get(state), 'year': year, 'qtr': quarter}
+    df = pd.read_sql(query, con=conn, params=params)
+    df['STATE_CODE'] = df['STATE_CODE'].astype
