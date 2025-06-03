@@ -1,28 +1,20 @@
-import pandas as pd, sys, pathlib
+import pandas as pd
 
-inp=sys.argv[1] if len(sys.argv)>1 else "input.xlsx"
-outp=pathlib.Path(inp).with_stem(pathlib.Path(inp).stem+"_trends").with_suffix(".xlsx")
+def aggregate_tabs(xlsx_path):
+    return pd.concat(pd.read_excel(xlsx_path, sheet_name=None).values(), ignore_index=True)
 
-sheets=pd.read_excel(inp,sheet_name=None)
-df=pd.concat(sheets.values(),ignore_index=True)
+def aggregate_and_sectorcount(xlsx_path, *args, **kwargs):
+    return sectorcount(aggregate_tabs(xlsx_path), *args, **kwargs)
 
-state_yr_qtr=df.groupby(["state","ytr_qtr"])["count"].sum().unstack("ytr_qtr")
-sector_yr_qtr=df.groupby(["sector","ytr_qtr"])["count"].sum().unstack("ytr_qtr")
 
-df7222=df[df["sector"].str.startswith("7222")]
-pivot7222=df7222.groupby(["state","ytr_qtr"])["count"].sum().unstack("ytr_qtr").sort_index(axis=1)
-delta7222=pivot7222.diff(axis=1).stack().reset_index().rename(columns={0:"delta"})
-delta7222["type"]=delta7222["delta"].gt(0).map({True:"attractor",False:"repulsor"}).where(delta7222["delta"].ne(0),"neutral")
 
-cohort="2020-1"
-baseline=df[df["ytr_qtr"]==cohort].groupby("state")["count"].sum()
-totals=df.groupby(["state","ytr_qtr"])["count"].sum().unstack("ytr_qtr")
-unknowns=totals.apply(lambda col:baseline-col).stack().reset_index().rename(columns={0:"unfound"})
-unknowns=unknowns[unknowns["ytr_qtr"]!=cohort]
 
-with pd.ExcelWriter(outp,engine="xlsxwriter") as w:
-    state_yr_qtr.to_excel(w,sheet_name="state_by_yr_qtr")
-    sector_yr_qtr.to_excel(w,sheet_name="sector_by_yr_qtr")
-    delta7222.to_excel(w,sheet_name="7222_delta")
-    unknowns.to_excel(w,sheet_name="unknowns")
-print(f"Wrote {outp}")
+result = aggregate_and_sectorcount("state_tabs.xlsx")
+
+# if sectorcount expects extra parameters, pass them straight through
+result = aggregate_and_sectorcount(
+    "state_tabs.xlsx",
+    sector="7222",
+    yr_qtr="2020-1",
+    normalize=True
+)
