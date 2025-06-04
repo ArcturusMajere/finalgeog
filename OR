@@ -47,7 +47,23 @@ changed_summary = df[df['changed']].groupby('class_change')['count'].sum().reset
 
 
 
-import pandas as pd
+
+# Filter for sector "6544"
+df_6544 = df[df['sector'] == "6544"]
+
+# Aggregate count by yr_qtr and state
+totals_6544 = df_6544.groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
+
+# If you prefer a pivot table:
+pivot_6544 = df_6544.pivot_table(
+    index='yr_qtr',
+    columns='state',
+    values='count',
+    aggfunc='sum',
+    fill_value=0
+)
+
+
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
@@ -88,5 +104,76 @@ ani = FuncAnimation(fig, update, frames=len(quarters), interval=1000)
 
 plt.tight_layout()
 plt.show()
+
+
+#****************************
+import pandas as pd
+
+# 1. Total counts per yr_qtr and state (pivot table)
+pivot_total = df.pivot_table(
+    index='yr_qtr',
+    columns='state',
+    values='count',
+    aggfunc='sum',
+    fill_value=0
+)
+
+# 2. Baseline (2020-1) and "unfound"
+baseline = pivot_total.loc["2020-1"]
+unfound = (baseline - pivot_total).clip(lower=0)
+unfound_long = unfound.reset_index().melt(
+    id_vars="yr_qtr",
+    var_name="state",
+    value_name="unfound"
+)
+
+# 3. Pivot for sector "00:Unknown"
+df_unknown = df[df['sector'] == "00:Unknown"]
+pivot_unknown = df_unknown.pivot_table(
+    index='yr_qtr',
+    columns='state',
+    values='count',
+    aggfunc='sum',
+    fill_value=0
+)
+
+# 4. Totals per yr_qtr & state (long form)
+totals = df.groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
+
+# 5. Class‐change summaries
+df['class_change'] = df['original_class'] + "->" + df['current_class']
+df['changed'] = df['original_class'] != df['current_class']
+transitions = df.groupby(['original_class', 'current_class'])['count'].sum().reset_index()
+changed_summary = (
+    df[df['changed']]
+    .groupby('class_change')['count']
+    .sum()
+    .reset_index()
+)
+
+# 6. Counts for sector "6544"
+df_6544 = df[df['sector'] == "6544"]
+totals_6544 = df_6544.groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
+pivot_6544 = df_6544.pivot_table(
+    index='yr_qtr',
+    columns='state',
+    values='count',
+    aggfunc='sum',
+    fill_value=0
+)
+
+# Write all outputs to one Excel file with separate sheets
+with pd.ExcelWriter("all_outputs.xlsx") as writer:
+    pivot_total.to_excel(writer, sheet_name="total_counts")
+    unfound.to_excel(writer, sheet_name="unfound")
+    unfound_long.to_excel(writer, sheet_name="unfound_long", index=False)
+    pivot_unknown.to_excel(writer, sheet_name="unknown_pivot")
+    totals.to_excel(writer, sheet_name="totals", index=False)
+    transitions.to_excel(writer, sheet_name="transitions", index=False)
+    changed_summary.to_excel(writer, sheet_name="changed_summary", index=False)
+    totals_6544.to_excel(writer, sheet_name="totals_6544", index=False)
+    pivot_6544.to_excel(writer, sheet_name="pivot_6544")
+
+
 
 
