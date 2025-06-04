@@ -1,20 +1,92 @@
 import pandas as pd
+import matplotlib.pyplot as plt
 
-def aggregate_tabs(xlsx_path):
-    return pd.concat(pd.read_excel(xlsx_path, sheet_name=None).values(), ignore_index=True)
+# Pivot to get total counts per yr_qtr and state
+pivot = df.pivot_table(index='yr_qtr', columns='state', values='count', aggfunc='sum', fill_value=0)
 
-def aggregate_and_sectorcount(xlsx_path, *args, **kwargs):
-    return sectorcount(aggregate_tabs(xlsx_path), *args, **kwargs)
+# Baseline counts for 2020-1
+baseline = pivot.loc["2020-1"]
+
+# Compute unfound = baseline minus each yr_qtr, clip negatives to zero
+unfound = (baseline - pivot).clip(lower=0)
+
+# (Optional) long format
+unfound_long = unfound.reset_index().melt(id_vars="yr_qtr", var_name="state", value_name="unfound")
+
+
+# Filter for sector "00:Unknown" and pivot
+df_unknown = df[df['sector'] == "00:Unknown"]
+pivot = df_unknown.pivot_table(index='yr_qtr', columns='state', values='count', aggfunc='sum', fill_value=0)
+
+# Plot heatmap with state on x-axis and yr_qtr on y-axis
+plt.figure(figsize=(12, 8))
+plt.imshow(pivot, aspect='auto')
+plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=90)
+plt.yticks(range(len(pivot.index)), pivot.index)
+plt.xlabel('state')
+plt.ylabel('yr_qtr')
+plt.colorbar(label='count')
+plt.tight_layout()
+plt.show()
+
+
+# Totals per yr_qtr and state
+totals = df.groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
+
+# Add a column showing the class transition
+df['class_change'] = df['original_class'] + '->' + df['current_class']
+
+# Flag rows where the class changed
+df['changed'] = df['original_class'] != df['current_class']
+
+# Summary of all transitions
+transitions = df.groupby(['original_class', 'current_class'])['count'].sum().reset_index()
+
+# Summary of only changed cases
+changed_summary = df[df['changed']].groupby('class_change')['count'].sum().reset_index()
 
 
 
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
-result = aggregate_and_sectorcount("state_tabs.xlsx")
+# Flag rows where class changed
+df['changed'] = df['original_class'] != df['current_class']
 
-# if sectorcount expects extra parameters, pass them straight through
-result = aggregate_and_sectorcount(
-    "state_tabs.xlsx",
-    sector="7222",
-    yr_qtr="2020-1",
-    normalize=True
-)
+# Aggregate count of class changes by yr_qtr and state
+agg = df[df['changed']].groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
+
+# Sort unique quarters and states
+quarters = sorted(agg['yr_qtr'].unique())
+states = sorted(agg['state'].unique())
+
+# Map states to x positions
+x_positions = list(range(len(states)))
+state_to_x = dict(zip(states, x_positions))
+
+# Set up the figure and axes
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# Update function for animation
+def update(frame):
+    ax.clear()
+    q = quarters[frame]
+    data = agg[agg['yr_qtr'] == q]
+    xs = [state_to_x[s] for s in data['state']]
+    ys = data['count']
+    sizes = ys * 10  # Scale bubble sizes
+    ax.scatter(xs, ys, s=sizes, alpha=0.6)
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(states, rotation=90)
+    ax.set_ylim(0, agg['count'].max() * 1.1)
+    ax.set_ylabel('Count of Class Changes')
+    ax.set_title(f'Class Changes by State for {q}')
+
+# Create animation
+ani = FuncAnimation(fig, update, frames=len(quarters), interval=1000)
+
+plt.tight_layout()
+plt.show()
+
+
