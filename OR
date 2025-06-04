@@ -1,179 +1,77 @@
 import pandas as pd
-import matplotlib.pyplot as plt
+import ipywidgets as widgets
+from IPython.display import display, clear_output
 
-# Pivot to get total counts per yr_qtr and state
-pivot = df.pivot_table(index='yr_qtr', columns='state', values='count', aggfunc='sum', fill_value=0)
+# Load all sheets into a dict of DataFrames
+xlsx_path = "all_outputs.xlsx"
+all_sheets = pd.read_excel(xlsx_path, sheet_name=None)
 
-# Baseline counts for 2020-1
-baseline = pivot.loc["2020-1"]
-
-# Compute unfound = baseline minus each yr_qtr, clip negatives to zero
-unfound = (baseline - pivot).clip(lower=0)
-
-# (Optional) long format
-unfound_long = unfound.reset_index().melt(id_vars="yr_qtr", var_name="state", value_name="unfound")
-
-
-# Filter for sector "00:Unknown" and pivot
-df_unknown = df[df['sector'] == "00:Unknown"]
-pivot = df_unknown.pivot_table(index='yr_qtr', columns='state', values='count', aggfunc='sum', fill_value=0)
-
-# Plot heatmap with state on x-axis and yr_qtr on y-axis
-plt.figure(figsize=(12, 8))
-plt.imshow(pivot, aspect='auto')
-plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=90)
-plt.yticks(range(len(pivot.index)), pivot.index)
-plt.xlabel('state')
-plt.ylabel('yr_qtr')
-plt.colorbar(label='count')
-plt.tight_layout()
-plt.show()
-
-
-# Totals per yr_qtr and state
-totals = df.groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
-
-# Add a column showing the class transition
-df['class_change'] = df['original_class'] + '->' + df['current_class']
-
-# Flag rows where the class changed
-df['changed'] = df['original_class'] != df['current_class']
-
-# Summary of all transitions
-transitions = df.groupby(['original_class', 'current_class'])['count'].sum().reset_index()
-
-# Summary of only changed cases
-changed_summary = df[df['changed']].groupby('class_change')['count'].sum().reset_index()
-
-
-
-
-# Filter for sector "6544"
-df_6544 = df[df['sector'] == "6544"]
-
-# Aggregate count by yr_qtr and state
-totals_6544 = df_6544.groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
-
-# If you prefer a pivot table:
-pivot_6544 = df_6544.pivot_table(
-    index='yr_qtr',
-    columns='state',
-    values='count',
-    aggfunc='sum',
-    fill_value=0
+# Dropdown widget for selecting sheet
+sheet_dropdown = widgets.Dropdown(
+    options=list(all_sheets.keys()),
+    description='Sheet:',
+    value=list(all_sheets.keys())[0]
 )
 
+# Dropdowns for filtering columns, will be updated per sheet
+filter_col_dropdown = widgets.Dropdown(description='Filter Column:', options=[''])
+filter_val_dropdown = widgets.SelectMultiple(description='Filter Values:', options=[])
 
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+# Function to update column dropdown when sheet changes
+def update_columns(change):
+    sheet = change['new']
+    df = all_sheets[sheet]
+    cols = list(df.columns)
+    filter_col_dropdown.options = [''] + cols
+    filter_val_dropdown.options = []
+    filter_val_dropdown.value = ()
 
-# Flag rows where class changed
-df['changed'] = df['original_class'] != df['current_class']
+sheet_dropdown.observe(update_columns, names='value')
 
-# Aggregate count of class changes by yr_qtr and state
-agg = df[df['changed']].groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
+# Function to update filter values when column changes
+def update_values(change):
+    sheet = sheet_dropdown.value
+    df = all_sheets[sheet]
+    col = change['new']
+    if col and col in df.columns:
+        unique_vals = df[col].dropna().astype(str).unique().tolist()
+        filter_val_dropdown.options = unique_vals
+    else:
+        filter_val_dropdown.options = []
+        filter_val_dropdown.value = ()
 
-# Sort unique quarters and states
-quarters = sorted(agg['yr_qtr'].unique())
-states = sorted(agg['state'].unique())
+filter_col_dropdown.observe(update_values, names='value')
 
-# Map states to x positions
-x_positions = list(range(len(states)))
-state_to_x = dict(zip(states, x_positions))
+# Output area for displaying filtered DataFrame
+output = widgets.Output()
 
-# Set up the figure and axes
-fig, ax = plt.subplots(figsize=(12, 6))
+# Function to display filtered results
+def display_filtered(*args):
+    with output:
+        clear_output()
+        sheet = sheet_dropdown.value
+        df = all_sheets[sheet]
+        
+        col = filter_col_dropdown.value
+        vals = list(filter_val_dropdown.value)
+        if col and vals:
+            df = df[df[col].astype(str).isin(vals)]
+        
+        display(df)
 
-# Update function for animation
-def update(frame):
-    ax.clear()
-    q = quarters[frame]
-    data = agg[agg['yr_qtr'] == q]
-    xs = [state_to_x[s] for s in data['state']]
-    ys = data['count']
-    sizes = ys * 10  # Scale bubble sizes
-    ax.scatter(xs, ys, s=sizes, alpha=0.6)
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels(states, rotation=90)
-    ax.set_ylim(0, agg['count'].max() * 1.1)
-    ax.set_ylabel('Count of Class Changes')
-    ax.set_title(f'Class Changes by State for {q}')
+# Button to trigger filter and display
+filter_button = widgets.Button(description='Show Data')
+filter_button.on_click(display_filtered)
 
-# Create animation
-ani = FuncAnimation(fig, update, frames=len(quarters), interval=1000)
+# Layout
+ui = widgets.VBox([
+    sheet_dropdown,
+    widgets.HBox([filter_col_dropdown, filter_val_dropdown]),
+    filter_button,
+    output
+])
 
-plt.tight_layout()
-plt.show()
+display(ui)
 
-
-#****************************
-import pandas as pd
-
-# 1. Total counts per yr_qtr and state (pivot table)
-pivot_total = df.pivot_table(
-    index='yr_qtr',
-    columns='state',
-    values='count',
-    aggfunc='sum',
-    fill_value=0
-)
-
-# 2. Baseline (2020-1) and "unfound"
-baseline = pivot_total.loc["2020-1"]
-unfound = (baseline - pivot_total).clip(lower=0)
-unfound_long = unfound.reset_index().melt(
-    id_vars="yr_qtr",
-    var_name="state",
-    value_name="unfound"
-)
-
-# 3. Pivot for sector "00:Unknown"
-df_unknown = df[df['sector'] == "00:Unknown"]
-pivot_unknown = df_unknown.pivot_table(
-    index='yr_qtr',
-    columns='state',
-    values='count',
-    aggfunc='sum',
-    fill_value=0
-)
-
-# 4. Totals per yr_qtr & state (long form)
-totals = df.groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
-
-# 5. Class‐change summaries
-df['class_change'] = df['original_class'] + "->" + df['current_class']
-df['changed'] = df['original_class'] != df['current_class']
-transitions = df.groupby(['original_class', 'current_class'])['count'].sum().reset_index()
-changed_summary = (
-    df[df['changed']]
-    .groupby('class_change')['count']
-    .sum()
-    .reset_index()
-)
-
-# 6. Counts for sector "6544"
-df_6544 = df[df['sector'] == "6544"]
-totals_6544 = df_6544.groupby(['yr_qtr', 'state'])['count'].sum().reset_index()
-pivot_6544 = df_6544.pivot_table(
-    index='yr_qtr',
-    columns='state',
-    values='count',
-    aggfunc='sum',
-    fill_value=0
-)
-
-# Write all outputs to one Excel file with separate sheets
-with pd.ExcelWriter("all_outputs.xlsx") as writer:
-    pivot_total.to_excel(writer, sheet_name="total_counts")
-    unfound.to_excel(writer, sheet_name="unfound")
-    unfound_long.to_excel(writer, sheet_name="unfound_long", index=False)
-    pivot_unknown.to_excel(writer, sheet_name="unknown_pivot")
-    totals.to_excel(writer, sheet_name="totals", index=False)
-    transitions.to_excel(writer, sheet_name="transitions", index=False)
-    changed_summary.to_excel(writer, sheet_name="changed_summary", index=False)
-    totals_6544.to_excel(writer, sheet_name="totals_6544", index=False)
-    pivot_6544.to_excel(writer, sheet_name="pivot_6544")
-
-
-
-
+# Initial population of columns based on default sheet
+update_columns({'new': sheet_dropdown.value})
