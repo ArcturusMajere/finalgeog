@@ -1,4 +1,33 @@
 import pandas as pd
+import plotly.express as px
+
+def create_animated_bubble_plot(df: pd.DataFrame, output_file: str = "bubble_plot.html"):
+    df = df.copy()
+    df["normalized_count"] = df.groupby("yr_qtr")["count"].transform(lambda x: x / x.sum())
+    fig = px.scatter(
+        df,
+        x="state",
+        y="normalized_count",
+        size="normalized_count",
+        color="sector",
+        animation_frame="yr_qtr",
+        hover_name="state",
+        title="Normalized State Counts by Sector Over Time"
+    )
+    fig.update_layout(legend=dict(x=1.02, y=1), margin=dict(r=150))
+    fig.write_html(output_file, include_plotlyjs="cdn")
+    return fig
+
+# Example usage:
+# df = pd.read_csv("your_data.csv")
+# fig = create_animated_bubble_plot(df, "state_sector_bubble.html")
+# fig.show()
+
+
+
+
+#@&^@%&*@^@@@@@@@@@@@@@@@@@@@@@
+import pandas as pd
 import ipywidgets as widgets
 from IPython.display import display, clear_output
 
