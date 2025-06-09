@@ -1,106 +1,38 @@
-import pandas as pd
-import plotly.express as px
+import polars as pl
+import oracledb
 
-def create_animated_bubble_plot(df: pd.DataFrame, output_file: str = "bubble_plot.html"):
-    df = df.copy()
-    df["normalized_count"] = df.groupby("yr_qtr")["count"].transform(lambda x: x / x.sum())
-    fig = px.scatter(
-        df,
-        x="state",
-        y="normalized_count",
-        size="normalized_count",
-        color="sector",
-        animation_frame="yr_qtr",
-        hover_name="state",
-        title="Normalized State Counts by Sector Over Time"
-    )
-    fig.update_layout(legend=dict(x=1.02, y=1), margin=dict(r=150))
-    fig.write_html(output_file, include_plotlyjs="cdn")
-    return fig
+def WRfetch(state, year, quarter):
+    conn = oracledb.connect(user=USER, password=wrpass, dsn="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov")
+    query = """
+        SELECT * FROM wagerecusr.wage_data 
+        WHERE state_code = :state AND YR = :year AND qtr = :qtr
+    """
+    params = {'state': US.get(state), 'year': year, 'qtr': quarter}
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    columns = [col[0] for col in cursor.description]
+    rows = cursor.fetchall()
+    df = pl.DataFrame(rows, schema=columns)
 
-# Example usage:
-# df = pd.read_csv("your_data.csv")
-# fig = create_animated_bubble_plot(df, "state_sector_bubble.html")
-# fig.show()
+    total = df.shape[0]
+    df = df.with_columns([
+        pl.col('STATE_CODE').cast(pl.Utf8),
+        pl.col('UI').cast(pl.Utf8).str.zfill(10),
+        pl.col('YR').cast(pl.Utf8),
+        pl.col('QTR').cast(pl.Utf8),
+        (pl.col('YR') + "-" + pl.col('QTR')).alias('yr_qtr'),
+        pl.col('WAGE').cast(pl.Float64)
+    ])
+    df = df.with_columns([
+        pl.Series(name='state', values=[fips2name(code) for code in df['STATE_CODE']])
+    ])
 
+    zeros = df.filter(pl.col('WAGE') == 0).shape[0]
+    dups = df.select(pl.col('BLS_ID')).is_duplicated().sum()
 
+    df = df.drop(['STATE_CODE', 'YR', 'QTR', 'EIN', 'SOCODE', 'HOURS', 'WEEKS', 'JOBTITLE', 'HOURLYRATE', 'STATEUSE'])
 
-
-#@&^@%&*@^@@@@@@@@@@@@@@@@@@@@@
-import pandas as pd
-import ipywidgets as widgets
-from IPython.display import display, clear_output
-
-# Load all sheets into a dict of DataFrames
-xlsx_path = "all_outputs.xlsx"
-all_sheets = pd.read_excel(xlsx_path, sheet_name=None)
-
-# Dropdown widget for selecting sheet
-sheet_dropdown = widgets.Dropdown(
-    options=list(all_sheets.keys()),
-    description='Sheet:',
-    value=list(all_sheets.keys())[0]
-)
-
-# Dropdowns for filtering columns, will be updated per sheet
-filter_col_dropdown = widgets.Dropdown(description='Filter Column:', options=[''])
-filter_val_dropdown = widgets.SelectMultiple(description='Filter Values:', options=[])
-
-# Function to update column dropdown when sheet changes
-def update_columns(change):
-    sheet = change['new']
-    df = all_sheets[sheet]
-    cols = list(df.columns)
-    filter_col_dropdown.options = [''] + cols
-    filter_val_dropdown.options = []
-    filter_val_dropdown.value = ()
-
-sheet_dropdown.observe(update_columns, names='value')
-
-# Function to update filter values when column changes
-def update_values(change):
-    sheet = sheet_dropdown.value
-    df = all_sheets[sheet]
-    col = change['new']
-    if col and col in df.columns:
-        unique_vals = df[col].dropna().astype(str).unique().tolist()
-        filter_val_dropdown.options = unique_vals
-    else:
-        filter_val_dropdown.options = []
-        filter_val_dropdown.value = ()
-
-filter_col_dropdown.observe(update_values, names='value')
-
-# Output area for displaying filtered DataFrame
-output = widgets.Output()
-
-# Function to display filtered results
-def display_filtered(*args):
-    with output:
-        clear_output()
-        sheet = sheet_dropdown.value
-        df = all_sheets[sheet]
-        
-        col = filter_col_dropdown.value
-        vals = list(filter_val_dropdown.value)
-        if col and vals:
-            df = df[df[col].astype(str).isin(vals)]
-        
-        display(df)
-
-# Button to trigger filter and display
-filter_button = widgets.Button(description='Show Data')
-filter_button.on_click(display_filtered)
-
-# Layout
-ui = widgets.VBox([
-    sheet_dropdown,
-    widgets.HBox([filter_col_dropdown, filter_val_dropdown]),
-    filter_button,
-    output
-])
-
-display(ui)
-
-# Initial population of columns based on default sheet
-update_columns({'new': sheet_dropdown.value})
+    print(f"{total} wage records found in {state} for {year}Q{quarter}")
+    print(f"{zeros} zero wages found & {dups} duplicate IDs")
+    
+    return df
