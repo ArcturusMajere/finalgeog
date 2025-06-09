@@ -2,7 +2,7 @@ import polars as pl
 import oracledb
 
 def WRfetch(state, year, quarter):
-    conn = oracledb.connect(user=USER, password=wrpass, dsn="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov")
+    conn =
     query = """
         SELECT * FROM wagerecusr.wage_data 
         WHERE state_code = :state AND YR = :year AND qtr = :qtr
