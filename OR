@@ -1,38 +1,13 @@
-import polars as pl
-import oracledb
 
-def WRfetch(state, year, quarter):
-    conn =
-    query = """
-        SELECT * FROM wagerecusr.wage_data 
-        WHERE state_code = :state AND YR = :year AND qtr = :qtr
-    """
-    params = {'state': US.get(state), 'year': year, 'qtr': quarter}
-    cursor = conn.cursor()
-    cursor.execute(query, params)
-    columns = [col[0] for col in cursor.description]
-    rows = cursor.fetchall()
-    df = pl.DataFrame(rows, schema=columns)
+# Add indicator column to df2 before join
+df2 = df2.with_columns(pl.lit(True).alias("matched"))
 
-    total = df.shape[0]
-    df = df.with_columns([
-        pl.col('STATE_CODE').cast(pl.Utf8),
-        pl.col('UI').cast(pl.Utf8).str.zfill(10),
-        pl.col('YR').cast(pl.Utf8),
-        pl.col('QTR').cast(pl.Utf8),
-        (pl.col('YR') + "-" + pl.col('QTR')).alias('yr_qtr'),
-        pl.col('WAGE').cast(pl.Float64)
-    ])
-    df = df.with_columns([
-        pl.Series(name='state', values=[fips2name(code) for code in df['STATE_CODE']])
-    ])
+# Left join
+joined = df1.join(df2, on=["UI", "state"], how="left")
 
-    zeros = df.filter(pl.col('WAGE') == 0).shape[0]
-    dups = df.select(pl.col('BLS_ID')).is_duplicated().sum()
+# Fill nulls in 'matched' with False to indicate no match
+joined = joined.with_columns(
+    pl.col("matched").fill_null(False)
+)
 
-    df = df.drop(['STATE_CODE', 'YR', 'QTR', 'EIN', 'SOCODE', 'HOURS', 'WEEKS', 'JOBTITLE', 'HOURLYRATE', 'STATEUSE'])
-
-    print(f"{total} wage records found in {state} for {year}Q{quarter}")
-    print(f"{zeros} zero wages found & {dups} duplicate IDs")
-    
-    return df
+print(joined)
