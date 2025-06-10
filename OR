@@ -1,149 +1,17 @@
 import polars as pl
 
-def DOM(year, qtr, fips):
-    # Assuming `host`, `username`, `password`, and `filesystem` have been properly set
-    tds = fs.ds.dataset(dnaclos, filesystem=fs)
-    DOM1 = pl.scan_pyarrow_dataset(tds)
-    DOM2 = DOM1.filter(pl.col('fips') == fips).filter(pl.col('year') == year).filter(pl.col('qtr') == qtr)
-    Final = DOM2.select(["ui_acct", "fips", "naics2", "naics3", "naics4", "naics6"]).collect()
-    Final.rename(columns={"ui_acct": "ui_acct"}, inplace=True)
-    return Final
+# Sample left and right DataFrames
+df1 = pl.DataFrame({
+    "UI": ["001", "002", "003"],
+    "state": ["NY", "CA", "TX"],
+    "wage": [50000, 60000, 55000]
+})
 
-
-
-def get_cohort(state, year, quarter):
-    f = US.get(state).lstrip('0')
-    params = {'state': US.get(state), 'year': year, 'qtr': quarter}
-    df = pl.read_database(query, consconn, **params)
-    df = df.with_columns(pl.col('STATE_CODE').cast(pl.Utf8))
-    df = df.with_columns( pl.col('STATE_CODE').map_elements( lambda code: fips2name(code), return_dtype=pl.Utf8 ).alias('state') )
-    df = df.with_columns( pl.col('UI').cast(pl.Utf8).str.zfill(10))
-    dom = DOM(year, quarter, f)
-
-    dom_df = pl.DataFrame({'UI': dom['UI']}).with_columns(pl.col('UI').cast(pl.Utf8).str.zfill(10))
-    
-
-    df1 = df.join(dom_df, on='UI', how='left', suffix='_dom')
-    
-    unknown_naics_counts = df1.filter(pl.col('UI_dom').is_null()).height
-    
-
-    df1 = df1.with_columns([
-        # Create merge indicator
-        pl.when(pl.col('UI_dom').is_not_null())
-        .then(pl.lit('both'))
-        .otherwise(pl.lit('left_only'))
-        .alias('_merge'),
-        
-        # Set naics6 values
-        pl.when(pl.col('UI_dom').is_not_null())
-        .then(pl.lit('999999'))
-        .otherwise(pl.col('naics6'))
-        .alias('naics6'),
-        
-        # Set naics4 values
-        pl.when(pl.col('UI_dom').is_not_null())
-        .then(pl.lit('9999'))
-        .otherwise(pl.col('naics4'))
-        .alias('naics4'),
-        
-        # Set naics3 values
-        pl.when(pl.col('UI_dom').is_not_null())
-        .then(pl.lit('999'))
-        .otherwise(pl.col('naics3'))
-        .alias('naics3'),
-        
-        # Set naics2 values
-        pl.when(pl.col('UI_dom').is_not_null())
-        .then(pl.lit('99'))
-        .otherwise(pl.col('naics2'))
-        .alias('naics2')
-    ])
-    
-    # Convert naics4 to integer
-    df1 = df1.with_columns(pl.col('naics4').cast(pl.Int64))
-    
-    # Apply lookup function to naics2 for sector
-    df1 = df1.with_columns(
-        pl.col('naics2').map_elements(
-            lambda x: lookup_naics2(x), return_dtype=pl.Utf8
-        ).alias('sector')
-    )
-    
-    # Handle sector categories and unknown values
-    df1 = df1.with_columns(
-        pl.when(pl.col('_merge') == 'both')
-        .then(pl.lit('00:Unknown'))
-        .otherwise(pl.col('sector'))
-        .alias('sector')
-    )
-    
-    # Remove duplicates
-    df1 = df1.unique()
-    
-    # Filter by WAGE > 0
-    df1 = df1.filter(pl.col('WAGE') > 0)
-    
-    # Create year-quarter column
-    df1 = df1.with_columns(
-        (pl.col('YR').cast(pl.Utf8) + ":" + pl.col('QTR').cast(pl.Utf8)).alias('yr_qtr')
-    )
-    
-    # Drop specified columns
-    columns_to_drop = [
-        'STATE_CODE', 'RUN', 'UI', 'QTR', 'EIN', 'SOCCODE', 
-        'HOURS', 'WEEKS', 'JOBTITLE', 'HOURLYRATE', 'STATUSUI', 
-        'UI_dom', '_merge'  # Also drop the join helper columns
-    ]
-    
-    existing_columns = df1.columns
-    columns_to_drop = [col for col in columns_to_drop if col in existing_columns]
-    df1 = df1.drop(columns_to_drop)
-    
-    return df1
-
-result_queue = Queue()
-
-def LOOK2_multithreaded(states, years, quarters, cohort, max_threads=4):
-    def thread_worker(state, year, quarter, cohort):
-        try:
-            print(f"Starting extraction for {state} {year} Q{quarter}")
-            extraction(US.get(state), year, quarter, cohort)
-            result_queue.put((state, year, quarter, "SWEET"))
-        except Exception as e:
-            print(f"Failed for {state} {year} Q{quarter}: {e}")
-            result_queue.put((state, year, quarter, "FAILED"))
-    
-    threads = []
-    
-    # Create and start threads
-    for state in states:
-        for year in years:
-            for quarter in quarters:
-                # Wait if we've reached max threads
-                while len([t for t in threads if t.is_alive()]) >= max_threads:
-                    threading.Event().wait(0.1)
-                
-                thread = threading.Thread(
-                    target=thread_worker, 
-                    args=(state, year, quarter, cohort)
-                )
-                thread.start()
-                threads.append(thread)
-    
-    # Wait for all threads to complete
-    for thread in threads:
-        thread.join()
-    
-    # Collect results
-    results = []
-    while not result_queue.empty():
-        results.append(result_queue.get())
-    
-    return results
-
-
-
+df2 = pl.DataFrame({
+    "UI": ["001", "003"],
+    "state": ["NY", "TX"],
+    "sector": ["Finance", "Healthcare"]
+})
 
 # Add indicator column to df2 before join
 df2 = df2.with_columns(pl.lit(True).alias("matched"))
@@ -157,3 +25,61 @@ joined = joined.with_columns(
 )
 
 print(joined)
+
+
+# Example DataFrames
+df1 = pl.DataFrame({
+    "UI": ["001", "002", "003"],
+    "state": ["NY", "CA", "TX"],
+    "wage": [50000, 60000, 55000]
+})
+
+df2 = pl.DataFrame({
+    "UI": ["001", "003"],
+    "state": ["NY", "TX"],
+    "sector": ["Finance", "Healthcare"]
+})
+
+# Left join on multiple keys
+joined = df1.join(df2, on=["UI", "state"], how="left")
+print(joined)
+
+
+import polars as pl
+import oracledb
+
+def WRfetch(state, year, quarter):
+    conn = oracledb.connect(user=USER, password=wrpass, dsn="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov")
+    query = """
+        SELECT * FROM wagerecusr.wage_data 
+        WHERE state_code = :state AND YR = :year AND qtr = :qtr
+    """
+    params = {'state': US.get(state), 'year': year, 'qtr': quarter}
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    columns = [col[0] for col in cursor.description]
+    rows = cursor.fetchall()
+    df = pl.DataFrame(rows, schema=columns)
+
+    total = df.shape[0]
+    df = df.with_columns([
+        pl.col('STATE_CODE').cast(pl.Utf8),
+        pl.col('UI').cast(pl.Utf8).str.zfill(10),
+        pl.col('YR').cast(pl.Utf8),
+        pl.col('QTR').cast(pl.Utf8),
+        (pl.col('YR') + "-" + pl.col('QTR')).alias('yr_qtr'),
+        pl.col('WAGE').cast(pl.Float64)
+    ])
+    df = df.with_columns([
+        pl.Series(name='state', values=[fips2name(code) for code in df['STATE_CODE']])
+    ])
+
+    zeros = df.filter(pl.col('WAGE') == 0).shape[0]
+    dups = df.select(pl.col('BLS_ID')).is_duplicated().sum()
+
+    df = df.drop(['STATE_CODE', 'YR', 'QTR', 'EIN', 'SOCODE', 'HOURS', 'WEEKS', 'JOBTITLE', 'HOURLYRATE', 'STATEUSE'])
+
+    print(f"{total} wage records found in {state} for {year}Q{quarter}")
+    print(f"{zeros} zero wages found & {dups} duplicate IDs")
+    
+    return df
