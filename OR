@@ -1,14 +1,13 @@
 import polars as pl
 import oracledb
 
-def get_state_year_quarter_combos(username, password, dsn, table_name, state_col, year_col, quarter_col):
-    query = f"""
-    SELECT {state_col}, {year_col}, {quarter_col}
-    FROM {table_name}
-    """
+def fetch_with_params(query: str, params: dict, conn) -> pl.DataFrame:
     try:
-        with oracledb.connect(user=username, password=password, dsn=dsn) as connection:
-            df = pl.read_database(query, connection)
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+            df = pl.DataFrame(rows, schema=columns)
             return df
     except oracledb.Error as e:
         print("Database error:", e)
@@ -17,88 +16,19 @@ def get_state_year_quarter_combos(username, password, dsn, table_name, state_col
 
 
 
-import polars as pl
+query = """
+SELECT BLS_ID, UI, state_col, year_col, quarter_col
+FROM your_table
+WHERE state_col = :state
+  AND year_col = :year
+  AND quarter_col = :quarter
+"""
 
-# Sample left and right DataFrames
-df1 = pl.DataFrame({
-    "UI": ["001", "002", "003"],
-    "state": ["NY", "CA", "TX"],
-    "wage": [50000, 60000, 55000]
-})
+params = {
+    "state": "NM",
+    "year": 2022,
+    "quarter": 4
+}
 
-df2 = pl.DataFrame({
-    "UI": ["001", "003"],
-    "state": ["NY", "TX"],
-    "sector": ["Finance", "Healthcare"]
-})
-
-# Add indicator column to df2 before join
-df2 = df2.with_columns(pl.lit(True).alias("matched"))
-
-# Left join
-joined = df1.join(df2, on=["UI", "state"], how="left")
-
-# Fill nulls in 'matched' with False to indicate no match
-joined = joined.with_columns(
-    pl.col("matched").fill_null(False)
-)
-
-print(joined)
-
-
-# Example DataFrames
-df1 = pl.DataFrame({
-    "UI": ["001", "002", "003"],
-    "state": ["NY", "CA", "TX"],
-    "wage": [50000, 60000, 55000]
-})
-
-df2 = pl.DataFrame({
-    "UI": ["001", "003"],
-    "state": ["NY", "TX"],
-    "sector": ["Finance", "Healthcare"]
-})
-
-# Left join on multiple keys
-joined = df1.join(df2, on=["UI", "state"], how="left")
-print(joined)
-
-
-import polars as pl
-import oracledb
-
-def WRfetch(state, year, quarter):
-    conn = oracledb.connect(user=USER, password=wrpass, dsn="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov")
-    query = """
-        SELECT * FROM wagerecusr.wage_data 
-        WHERE state_code = :state AND YR = :year AND qtr = :qtr
-    """
-    params = {'state': US.get(state), 'year': year, 'qtr': quarter}
-    cursor = conn.cursor()
-    cursor.execute(query, params)
-    columns = [col[0] for col in cursor.description]
-    rows = cursor.fetchall()
-    df = pl.DataFrame(rows, schema=columns)
-
-    total = df.shape[0]
-    df = df.with_columns([
-        pl.col('STATE_CODE').cast(pl.Utf8),
-        pl.col('UI').cast(pl.Utf8).str.zfill(10),
-        pl.col('YR').cast(pl.Utf8),
-        pl.col('QTR').cast(pl.Utf8),
-        (pl.col('YR') + "-" + pl.col('QTR')).alias('yr_qtr'),
-        pl.col('WAGE').cast(pl.Float64)
-    ])
-    df = df.with_columns([
-        pl.Series(name='state', values=[fips2name(code) for code in df['STATE_CODE']])
-    ])
-
-    zeros = df.filter(pl.col('WAGE') == 0).shape[0]
-    dups = df.select(pl.col('BLS_ID')).is_duplicated().sum()
-
-    df = df.drop(['STATE_CODE', 'YR', 'QTR', 'EIN', 'SOCODE', 'HOURS', 'WEEKS', 'JOBTITLE', 'HOURLYRATE', 'STATEUSE'])
-
-    print(f"{total} wage records found in {state} for {year}Q{quarter}")
-    print(f"{zeros} zero wages found & {dups} duplicate IDs")
-    
-    return df
+with oracledb.connect(user=username, password=password, dsn=dsn) as conn:
+    result_df = fetch_with_params(query, params, conn)
