@@ -1,4 +1,23 @@
 import polars as pl
+import oracledb
+
+def get_state_year_quarter_combos(username, password, dsn, table_name, state_col, year_col, quarter_col):
+    query = f"""
+    SELECT {state_col}, {year_col}, {quarter_col}
+    FROM {table_name}
+    """
+    try:
+        with oracledb.connect(user=username, password=password, dsn=dsn) as connection:
+            df = pl.read_database(query, connection)
+            return df
+    except oracledb.Error as e:
+        print("Database error:", e)
+        return pl.DataFrame()
+
+
+
+
+import polars as pl
 
 # Sample left and right DataFrames
 df1 = pl.DataFrame({
