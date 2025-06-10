@@ -11,12 +11,136 @@ def DOM(year, qtr, fips):
 
 
 
+def get_cohort(state, year, quarter):
+    f = US.get(state).lstrip('0')
+    params = {'state': US.get(state), 'year': year, 'qtr': quarter}
+    df = pl.read_database(query, consconn, **params)
+    df = df.with_columns(pl.col('STATE_CODE').cast(pl.Utf8))
+    df = df.with_columns( pl.col('STATE_CODE').map_elements( lambda code: fips2name(code), return_dtype=pl.Utf8 ).alias('state') )
+    df = df.with_columns( pl.col('UI').cast(pl.Utf8).str.zfill(10))
+    dom = DOM(year, quarter, f)
 
+    dom_df = pl.DataFrame({'UI': dom['UI']}).with_columns(pl.col('UI').cast(pl.Utf8).str.zfill(10))
+    
 
+    df1 = df.join(dom_df, on='UI', how='left', suffix='_dom')
+    
+    unknown_naics_counts = df1.filter(pl.col('UI_dom').is_null()).height
+    
 
+    df1 = df1.with_columns([
+        # Create merge indicator
+        pl.when(pl.col('UI_dom').is_not_null())
+        .then(pl.lit('both'))
+        .otherwise(pl.lit('left_only'))
+        .alias('_merge'),
+        
+        # Set naics6 values
+        pl.when(pl.col('UI_dom').is_not_null())
+        .then(pl.lit('999999'))
+        .otherwise(pl.col('naics6'))
+        .alias('naics6'),
+        
+        # Set naics4 values
+        pl.when(pl.col('UI_dom').is_not_null())
+        .then(pl.lit('9999'))
+        .otherwise(pl.col('naics4'))
+        .alias('naics4'),
+        
+        # Set naics3 values
+        pl.when(pl.col('UI_dom').is_not_null())
+        .then(pl.lit('999'))
+        .otherwise(pl.col('naics3'))
+        .alias('naics3'),
+        
+        # Set naics2 values
+        pl.when(pl.col('UI_dom').is_not_null())
+        .then(pl.lit('99'))
+        .otherwise(pl.col('naics2'))
+        .alias('naics2')
+    ])
+    
+    # Convert naics4 to integer
+    df1 = df1.with_columns(pl.col('naics4').cast(pl.Int64))
+    
+    # Apply lookup function to naics2 for sector
+    df1 = df1.with_columns(
+        pl.col('naics2').map_elements(
+            lambda x: lookup_naics2(x), return_dtype=pl.Utf8
+        ).alias('sector')
+    )
+    
+    # Handle sector categories and unknown values
+    df1 = df1.with_columns(
+        pl.when(pl.col('_merge') == 'both')
+        .then(pl.lit('00:Unknown'))
+        .otherwise(pl.col('sector'))
+        .alias('sector')
+    )
+    
+    # Remove duplicates
+    df1 = df1.unique()
+    
+    # Filter by WAGE > 0
+    df1 = df1.filter(pl.col('WAGE') > 0)
+    
+    # Create year-quarter column
+    df1 = df1.with_columns(
+        (pl.col('YR').cast(pl.Utf8) + ":" + pl.col('QTR').cast(pl.Utf8)).alias('yr_qtr')
+    )
+    
+    # Drop specified columns
+    columns_to_drop = [
+        'STATE_CODE', 'RUN', 'UI', 'QTR', 'EIN', 'SOCCODE', 
+        'HOURS', 'WEEKS', 'JOBTITLE', 'HOURLYRATE', 'STATUSUI', 
+        'UI_dom', '_merge'  # Also drop the join helper columns
+    ]
+    
+    existing_columns = df1.columns
+    columns_to_drop = [col for col in columns_to_drop if col in existing_columns]
+    df1 = df1.drop(columns_to_drop)
+    
+    return df1
 
+result_queue = Queue()
 
-
+def LOOK2_multithreaded(states, years, quarters, cohort, max_threads=4):
+    def thread_worker(state, year, quarter, cohort):
+        try:
+            print(f"Starting extraction for {state} {year} Q{quarter}")
+            extraction(US.get(state), year, quarter, cohort)
+            result_queue.put((state, year, quarter, "SWEET"))
+        except Exception as e:
+            print(f"Failed for {state} {year} Q{quarter}: {e}")
+            result_queue.put((state, year, quarter, "FAILED"))
+    
+    threads = []
+    
+    # Create and start threads
+    for state in states:
+        for year in years:
+            for quarter in quarters:
+                # Wait if we've reached max threads
+                while len([t for t in threads if t.is_alive()]) >= max_threads:
+                    threading.Event().wait(0.1)
+                
+                thread = threading.Thread(
+                    target=thread_worker, 
+                    args=(state, year, quarter, cohort)
+                )
+                thread.start()
+                threads.append(thread)
+    
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+    
+    # Collect results
+    results = []
+    while not result_queue.empty():
+        results.append(result_queue.get())
+    
+    return results
 
 
 
