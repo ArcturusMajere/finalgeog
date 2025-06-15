@@ -1,34 +1,19 @@
-import polars as pl
-import oracledb
 
-def fetch_with_params(query: str, params: dict, conn) -> pl.DataFrame:
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
-            df = pl.DataFrame(rows, schema=columns)
-            return df
-    except oracledb.Error as e:
-        print("Database error:", e)
-        return pl.DataFrame()
+def fuzzmatch(A, B):
+    def extract_substrings(s):return {s[i:i+7] for i in range(len(s) - 6)} if isinstance(s, str) and len(s) >= 7 else set()
+    A['UI_subs'] = A['UI'].apply(extract_substrings)
+    matches = []
+    for idx_b, row_b in B.iterrows():
+        ui_b = row_b['UI']
+        substrs_b = extract_substrings(ui_b)
+        for idx_a, row_a in A.iterrows():
+            if row_a['UI_subs'] & substrs_b:
+                merged_row = pd.concat([row_a.drop('UI_subs'), row_b])
+                matches.append(merged_row)
+    
+    if matches: merged_df = pd.DataFrame(matches)
+    else: merged_df = pd.DataFrame(columns=A.columns.drop('UI_subs').tolist() + B.columns.tolist())
+    return merged_df
 
-
-
-
-query = """
-SELECT BLS_ID, UI, state_col, year_col, quarter_col
-FROM your_table
-WHERE state_col = :state
-  AND year_col = :year
-  AND quarter_col = :quarter
-"""
-
-params = {
-    "state": "NM",
-    "year": 2022,
-    "quarter": 4
-}
-
-with oracledb.connect(user=username, password=password, dsn=dsn) as conn:
-    result_df = fetch_with_params(query, params, conn)
+if A['state'].eq('CT').any(): merged =fuzzmatch(A[A['state'] == 'CT'], B)
+else: merged = A.merge(B, on='UI', how='inner')
