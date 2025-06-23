@@ -1,12 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
-import pandas as pd
-
-def run_missing_multithread(states):
-    params = [(s, y, q) for s in states for y in range(2020, 2025) for q in range(1, 5)]
-    with ThreadPoolExecutor() as exe:
-        dfs = list(exe.map(lambda args: get_missing(*args), params))
-    return pd.concat(dfs, ignore_index=True)
-
-# example usage:
-states = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','IA','ID','IL','IN','KS','KY','LA','MA','MD','ME','MI','MN','MO','MS','MT','NC','ND','NE','NH','NJ','NM','NV','NY','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VA','VT','WA','WI','WV','WY']
-result_df = run_missing_multithread(states)
+df['col'] = df['col'].astype(str).str.replace(r'(.*)000$', r'000\1', regex=True)
+mask = df['col'].astype(str).str.endswith('000')
+df.loc[mask, 'col'] = '000' + df.loc[mask, 'col'].astype(str).str[:-3]
