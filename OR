@@ -1,3 +1,11 @@
-df['col'] = df['col'].astype(str).str.replace(r'(.*)000$', r'000\1', regex=True)
-mask = df['col'].astype(str).str.endswith('000')
-df.loc[mask, 'col'] = '000' + df.loc[mask, 'col'].astype(str).str[:-3]
+def run_stat(states):
+    params = [(s, y, q) for s in states for y in range(2020, 2025) for q in range(1, 5)]
+    def task(args):
+        s, y, q = args
+        missing_pct, dupes_pct = get_STAT(s, y, q)
+        return {'state': s, 'yr_qtr': f"{y}-{q}", 'missing_pct': missing_pct, 'dupes_pct': dupes_pct}
+    with ThreadPoolExecutor() as executor:
+        records = list(executor.map(task, params))
+    return pd.DataFrame(records)
+
+ stats = run_stat(states)
