@@ -1,6 +1,50 @@
-import pandas as pd
+
 
 def get_frequent_ids(year, qtr, threshold=15):
     df = extract(year, qtr)
     vc = df['id'].value_counts()
     return vc[vc >= threshold].index.tolist()
+
+
+import ibis
+
+
+def run_ibis_parallel(queries, states, yr_qtr_range, user, password, host, database, max_workers=4):
+    results = []
+    def worker(query, state, yr_qtr):
+        con = ibis.postgres.connect(host=host, user=user, password=password, database=database)
+        df = con.sql(query.format(state=state, yr_qtr=yr_qtr)).execute()
+        con.close()
+        return (state, yr_qtr, df)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(worker, q, s, y): (q, s, y)
+            for q in queries
+            for s in states
+            for y in yr_qtr_range
+        }
+        for fut in as_completed(futures):
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                q, s, y = futures[fut]
+                print(f"Failed {s} {y} for query {q}: {e}")
+    return results
+
+# example 
+if __name__ == "__main__":
+    queries = [
+        "SELECT * FROM sales WHERE state = '{state}' AND yr_qtr = '{yr_qtr}'",
+        "SELECT region, SUM(amount) FROM sales WHERE state = '{state}' AND yr_qtr = '{yr_qtr}' GROUP BY region"
+    ]
+    states = ["CA", "NY", "TX"]
+    yr_qtr_range = ["2020-1", "2020-2", "2020-3"]
+    results = run_ibis_parallel(
+        queries, states, yr_qtr_range,
+        user="myuser", password="mypassword",
+        host="db.mycompany.com", database="mydb",
+        max_workers=8
+    )
+    for state, yr_qtr, df in results:
+        print(state, yr_qtr, df.head())
+
