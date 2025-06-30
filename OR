@@ -8,42 +8,45 @@ def find_high_freq_ids_oracle(
     dsn: str,
     table: str,
     id_col: str = "ID",
-    yr_qtr_col: str = "yr_qtr",
+    year_col: str = "YEAR",
+    qtr_col: str = "QTR",
     min_count: int = 15,
     start_year: int = 2020,
     end_year: int = 2024,
+    quarters: list[int] = [1, 2, 3, 4],
     output_csv: str = "high_freq_ids.csv",
     max_workers: int = 4,
 ):
-    quarters = [f"{year}Q{q}" for year in range(start_year, end_year + 1) for q in range(1, 5)]
-    def _worker(yr_qtr: str) -> pd.DataFrame:
+    params = [(y, q) for y in range(start_year, end_year + 1) for q in quarters]
+    def _worker(year, qtr):
         conn = oracledb.connect(user=user, password=password, dsn=dsn)
         sql = f"""
             SELECT
-                :yr_qtr AS {yr_qtr_col},
+                :year || 'Q' || :qtr AS yr_qtr,
                 {id_col} AS id,
                 COUNT(*) AS count
             FROM {table}
-            WHERE {yr_qtr_col} = :yr_qtr
+            WHERE {year_col} = :year
+              AND {qtr_col} = :qtr
             GROUP BY {id_col}
             HAVING COUNT(*) >= :min_count
         """
         cur = conn.cursor()
-        cur.execute(sql, {"yr_qtr": yr_qtr, "min_count": min_count})
+        cur.execute(sql, {"year": year, "qtr": qtr, "min_count": min_count})
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        return pd.DataFrame(rows, columns=[yr_qtr_col, "id", "count"])
+        return pd.DataFrame(rows, columns=["yr_qtr", "id", "count"])
     dfs = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_worker, q): q for q in quarters}
+        futures = {executor.submit(_worker, y, q): (y, q) for y, q in params}
         for fut in as_completed(futures):
-            q = futures[fut]
             try:
                 dfs.append(fut.result())
             except Exception as e:
-                print(f"⚠️ Failed for {q}: {e}")
-    out = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=[yr_qtr_col, "id", "count"])
+                y, q = futures[fut]
+                print(f"Failed for {y}Q{q}: {e}")
+    out = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=["yr_qtr","id","count"])
     out.to_csv(output_csv, index=False)
     return out
 
@@ -54,10 +57,12 @@ if __name__ == "__main__":
         dsn="db.host.com:1521/ORCLPDB1",
         table="YOUR_TABLE",
         id_col="ID",
-        yr_qtr_col="YR_QTR",
+        year_col="YR",
+        qtr_col="QTR",
         min_count=15,
         start_year=2020,
         end_year=2024,
+        quarters=[1,2,3,4],
         output_csv="high_freq_ids.csv",
         max_workers=8,
     )
