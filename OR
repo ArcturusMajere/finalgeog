@@ -103,3 +103,17 @@ def animate_snake_lines(stats_df, value_col="missing_pct"):
 
 anim = animate_snake_lines(stats_df, value_col="missing_pct")
 anim
+
+
+
+
+# 1) Generate anim
+anim = animate_snake_lines(stats_df, value_col="missing_pct")
+
+# 2) Convert to HTML
+html_string = anim.to_jshtml()
+
+# 3) Save out
+with open("snake_animation.html", "w") as f:
+    f.write(html_string)
+
