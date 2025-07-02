@@ -1,78 +1,8 @@
-import matplotlib.pyplot as plt
+from concurrent.futures import ThreadPoolExecutor
 
-def visualize_stats(df):
-    """
-    Visualize missing_pct and dupes_pct for each state over quarters as heatmaps.
-    
-    Parameters:
-    - df: DataFrame with columns ['state', 'yr_qtr', 'missing_pct', 'dupes_pct']
-    """
-    # Pivot data for heatmap visualization
-    pivot_missing = df.pivot(index='state', columns='yr_qtr', values='missing_pct')
-    pivot_dupes = df.pivot(index='state', columns='yr_qtr', values='dupes_pct')
-    
-    # Plot missing_pct heatmap
-    plt.figure()
-    plt.imshow(pivot_missing, aspect='auto')
-    plt.title('Missing Percentage by State and Quarter')
-    plt.ylabel('State')
-    plt.xlabel('Yr_Qtr')
-    plt.xticks(range(len(pivot_missing.columns)), pivot_missing.columns, rotation=90)
-    plt.yticks(range(len(pivot_missing.index)), pivot_missing.index)
-    plt.tight_layout()
-    plt.show()
-    
-    # Plot dupes_pct heatmap
-    plt.figure()
-    plt.imshow(pivot_dupes, aspect='auto')
-    plt.title('Dupes Percentage by State and Quarter')
-    plt.ylabel('State')
-    plt.xlabel('Yr_Qtr')
-    plt.xticks(range(len(pivot_dupes.columns)), pivot_dupes.columns, rotation=90)
-    plt.yticks(range(len(pivot_dupes.index)), pivot_dupes.index)
-    plt.tight_layout()
-    plt.show()
-
-# To visualize your stats, call:
-# visualize_stats(stats_df)
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from IPython.display import HTML
-
-def animate_missing_pct(stats_df):
-    quarters = sorted(stats_df['yr_qtr'].unique())
-    states   = sorted(stats_df['state'].unique())
-    fig, ax = plt.subplots(figsize=(8,12))
-
-    def update(i):
-        ax.clear()
-        q = quarters[i]
-        data = stats_df[stats_df['yr_qtr']==q]\
-                   .set_index('state')['missing_pct']\
-                   .reindex(states)
-        ax.barh(states, data)
-        ax.set_xlim(0, stats_df['missing_pct'].max())
-        ax.set_title(f"Missing % by State — {q}")
-        ax.set_xlabel("Missing %")
-        ax.tick_params(axis='y', labelsize=6)
-
-    anim = FuncAnimation(fig, update, frames=len(quarters), interval=800, repeat=True)
-    return anim
-
-anim = animate_missing_pct(stats_df)
-HTML(anim.to_jshtml())   # embeds the animation in JupyterLab
-
-
-import plotly.express as px
-
-fig = px.bar(
-    stats_df,
-    x='missing_pct',
-    y='state',
-    orientation='h',
-    animation_frame='yr_qtr',
-    range_x=[0, stats_df['missing_pct'].max()],
-    title="Missing % by State Over Time",
-)
-fig.update_layout(height=800, yaxis=dict(tickfont=dict(size=6)))
-fig.show()
+def run_stat_multithread(states, start_year=2020, end_year=2024, quarters=(1, 2, 3, 4)):
+    params = [(s, y, q) for s in states 
+                       for y in range(start_year, end_year + 1) 
+                       for q in quarters]
+    with ThreadPoolExecutor() as executor:
+        executor.map(lambda args: get_STAT(*args), params)
