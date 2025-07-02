@@ -1,8 +1,26 @@
 from concurrent.futures import ThreadPoolExecutor
+import os
 
-def run_stat_multithread(states, start_year=2020, end_year=2024, quarters=(1, 2, 3, 4)):
-    params = [(s, y, q) for s in states 
-                       for y in range(start_year, end_year + 1) 
-                       for q in quarters]
+def run_stat_multithread(
+    states,
+    start_year: int = 2020,
+    end_year:   int = 2024,
+    quarters:  tuple = (1, 2, 3, 4),
+    output_dir: str   = "."):
+
+    os.makedirs(output_dir, exist_ok=True)
+    params = [
+        (state, year, qtr)
+        for state in states
+        for year  in range(start_year, end_year + 1)
+        for qtr   in quarters
+    ]
+
+    def task(state, year, qtr):
+        df = get_STAT(state, year, qtr)  # now returns a DataFrame
+        fname = f"{year}_Q{qtr}_{state}.csv"
+        path  = os.path.join(output_dir, fname)
+        df.to_csv(path, index=False)
+
     with ThreadPoolExecutor() as executor:
-        executor.map(lambda args: get_STAT(*args), params)
+        executor.map(lambda args: task(*args), params)
