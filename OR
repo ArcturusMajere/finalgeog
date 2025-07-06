@@ -1,4 +1,37 @@
 import pandas as pd
+import plotly.express as px
+
+# Load your data
+df = pd.read_excel("your_file.xlsx")  # Replace with your file name
+
+# Select parameter to visualize
+param = "bogus percent"
+
+# Create new column for animation frame (just yr_qtr)
+df['yr_qtr_str'] = df['yr_qtr'].astype(str)
+
+# Create heatmap as a scatter plot with 'state' on x, 'parameter' on color
+fig = px.density_heatmap(
+    df,
+    x='state',
+    y='yr_qtr_str',
+    z=param,
+    animation_frame='yr_qtr_str',
+    color_continuous_scale='Viridis',
+    title=f"Animated Heatmap of {param} by State and Year-Quarter",
+    labels={'state': 'State', 'yr_qtr_str': 'Year-Quarter', param: param}
+)
+
+fig.update_layout(yaxis={'categoryorder': 'category ascending'})
+fig.update_traces(hoverongaps=False)
+
+# Save as interactive HTML
+fig.write_html("animated_heatmap.html")
+
+# Show inline if running in notebook
+fig.show()
+
+import pandas as pd
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output
