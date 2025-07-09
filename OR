@@ -28,3 +28,4 @@ national_cohort = national_df.groupby(['yr_qtr', 'sector_bin'], as_index=False)[
 
 # Preview
 print(national_cohort)
+df['sector_bin'] = df['sector'].apply(lambda x: 'Accommodations' if x == 'Acc' else 'Non-Accommodations')
