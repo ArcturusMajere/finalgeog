@@ -1,5 +1,13 @@
-
-def plot_visualizations(df):
+def plot_ten_visualizations_with_interactive_animation(df):
+    """
+    Generate 10 colorful visualizations, including one interactive animated Plotly plot,
+    for a DataFrame with columns: yr_qtr, sector, meanwage, count. The animated plot
+    is saved as an HTML file.
+    
+    Parameters:
+    df (pandas.DataFrame): DataFrame with columns yr_qtr, sector, meanwage, count
+    """
+    # Set Seaborn style for static plots
     sns.set_style("whitegrid")
     
     # 1. Line Plot: Mean Wage Over Time by Sector
@@ -97,13 +105,89 @@ def plot_visualizations(df):
     plt.tight_layout()
     plt.show()
 
-    # 10. Point Plot: Mean Wage with Error Bars by Sector
-    plt.figure(figsize=(10, 6))
-    sns.pointplot(data=df, x='sector', y='meanwage', hue='yr_qtr', palette='Spectral')
-    plt.title('10. Mean Wage by Sector with Year-Quarter', fontsize=16)
-    plt.xlabel('Sector', fontsize=12)
-    plt.ylabel('Mean Wage ($)', fontsize=12)
-    plt.legend(title='Year-Quarter')
-    plt.tight_layout()
-    plt.show()
+    # 10. Interactive Animated Line Plot: Mean Wage Over Time by Sector
+    fig = go.Figure()
+    sectors = df['sector'].unique()
+    quarters = df['yr_qtr'].unique()
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'][:len(sectors)]  # Custom colors
+
+    # Prepare frames for animation
+    frames = []
+    for i, qtr in enumerate(quarters):
+        frame_data = []
+        for j, sector in enumerate(sectors):
+            sector_data = df[df['sector'] == sector].iloc[:i + 1]
+            frame_data.append(go.Sclatter(
+                x=sector_data['yr_qtr'],
+                y=sector_data['meanwage'],
+                mode='lines+markers',
+                name=sector,
+                line=dict(color=colors[j], width=3),
+                marker=dict(size=8),
+                hovertemplate=f'{sector}<br>Year-Quarter: %{{x}}<br>Mean Wage: $%{{y:,.0f}}'
+            ))
+        frames.append(go.Frame(data=frame_data, name=qtr))
+
+    # Initial plot (empty)
+    for sector, color in zip(sectors, colors):
+        fig.add_trace(go.Scatter(
+            x=[],
+            y=[],
+            mode='lines+markers',
+            name=sector,
+            line=dict(color=color, width=3),
+            marker=dict(size=8),
+            hovertemplate=f'{sector}<br>Year-Quarter: %{{x}}<br>Mean Wage: $%{{y:,.0f}}'
+        ))
+
+    # Update layout and add animation
+    fig.update_layout(
+        title='10. Interactive Animated Mean Wage Trends by Sector',
+        xaxis_title='Year-Quarter',
+        yaxis_title='Mean Wage ($)',
+        xaxis=dict(tickangle=45),
+        legend_title='Sector',
+        showlegend=True,
+        template='plotly_white',
+        updatemenus=[{
+            'type': 'buttons',
+            'buttons': [
+                {
+                    'label': 'Play',
+                    'method': 'animate',
+                    'args': [None, {'frame': {'duration': 500, 'redraw': True}, 'fromcurrent': True}]
+                },
+                {
+                    'label': 'Pause',
+                    'method': 'animate',
+                    'args': [[None], {'frame': {'duration': 0, 'redraw': False}, 'mode': 'immediate'}]
+                }
+            ],
+            'direction': 'left',
+            'pad': {'r': 10, 't': 87},
+            'showactive': True,
+            'x': 0.1,
+            'xanchor': 'left',
+            'y': 0,
+            'yanchor': 'top'
+        }],
+        sliders=[{
+            'steps': [
+                {'args': [[qtr], {'frame': {'duration': 500, 'redraw': True}, 'mode': 'immediate'}],
+                 'label': qtr,
+                 'method': 'animate'} for qtr in quarters
+            ],
+            'x': 0.1,
+            'len': 0.9,
+            'xanchor': 'left',
+            'yanchor': 'top',
+            'pad': {'b': 10, 't': 50},
+            'currentvalue': {'xanchor': 'right', 'prefix': 'Year-Quarter: ', 'font': {'size': 12}}
+        }]
+    )
+    fig.frames = frames
+
+    # Save as HTML and display
+    fig.write_html('animated_mean_wage.html', auto_play=False)
+    fig.show()
 
