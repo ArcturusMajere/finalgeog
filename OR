@@ -1,10 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
 
-
-base = df.loc[df.yr_qtr == '2020-1', 'count'].sum()
-tot = df.groupby('yr_qtr', as_index=False)['count'].sum()
-tot = tot[tot.yr_qtr != '2020-1']
-tot['count'] = base - tot['count']
-tot['sector'] = 'unfound'
-tot['wage'] = 0
-
-df = pd.concat([df, tot], ignore_index=True)
+def collect_counts_multithreaded(STATES):
+    def task(state):
+        count = DOM(state)
+        return {'state': state, 'count': count}
+    
+    with ThreadPoolExecutor() as executor:
+        results = list(executor.map(task, STATES))
+    
+    return pd.DataFrame(results)
