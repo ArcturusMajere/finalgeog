@@ -1,19 +1,16 @@
+import pandas as pd
 
+# baseline total in 2020-1
+base = df.loc[df.yr_qtr == '2020-1', 'count'].sum()
 
-conn = oracledb.connect(user="your_user", password="your_pw", dsn="exp")
+# total counts by quarter (excluding the baseline itself)
+tot = df.groupby('yr_qtr', as_index=False)['count'].sum()
+tot = tot[tot.yr_qtr != '2020-1']
 
-state = "NM"
-year = 2022
-quarter = 3
-sectors = ["6244", "7225"]
+# compute unfound, set sector and wage
+tot['count'] = base - tot['count']
+tot['sector'] = 'unfound'
+tot['wage'] = 0
 
-placeholders = ', '.join([f':{i+4}' for i in range(len(sectors))])
-sql = f""" SELECT *
-FROM your_table
-WHERE state = :1 AND year = :2 AND quarter = :3 AND sector IN ({placeholders})
-"""
-
-params = [state, year, quarter] + sectors
-cursor = conn.cursor()
-cursor.execute(sql, params)
-rows = cursor.fetchall()
+# merge back
+df = pd.concat([df, tot], ignore_index=True)
