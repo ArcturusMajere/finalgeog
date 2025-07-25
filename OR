@@ -1,16 +1,11 @@
-import pandas as pd
+import pyarrow.dataset as ds
 
-# baseline total in 2020-1
-base = df.loc[df.yr_qtr == '2020-1', 'count'].sum()
-
-# total counts by quarter (excluding the baseline itself)
-tot = df.groupby('yr_qtr', as_index=False)['count'].sum()
-tot = tot[tot.yr_qtr != '2020-1']
-
-# compute unfound, set sector and wage
-tot['count'] = base - tot['count']
-tot['sector'] = 'unfound'
-tot['wage'] = 0
-
-# merge back
-df = pd.concat([df, tot], ignore_index=True)
+def read_parquet_from_wang(return_type="pandas"):
+    table = ds.dataset("WANG", format="parquet").to_table()
+    if return_type == "pandas":
+        return table.to_pandas()
+    elif return_type == "polars":
+        import polars as pl
+        return pl.from_arrow(table)
+    else:
+        raise ValueError("return_type must be 'pandas' or 'polars'")
