@@ -1,22 +1,33 @@
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+import pandas as pd
 
-def NationalCohort(fiplist, year, quarter, max_workers=8):
-    def task(fips):
+def ThreadedExtractionOverTime(fipslist, cohort, max_threads=8):
+    def task(fips, year, quarter):
         try:
-            df = NukeCohort(fips, year, quarter)
+            df = extract(fips, year, quarter, cohort)
             if df is not None and not df.empty:
+                df['yr_qtr'] = f"{year}-{quarter}"
+                df['fips'] = fips
                 return df
         except Exception as e:
-            print(f"Failed for {fips}: {e}")
+            print(f"Failed for {fips} {year} Q{quarter}: {e}")
         return None
 
+    params = [(fips, year, qtr) 
+              for fips in fipslist
+              for year in range(2020, 2025)
+              for qtr in range(1, 5) 
+              if not (year == 2020 and qtr == 1)]  # skip 2020Q1
+
     results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(task, fips): fips for fips in fiplist}
-        for future in tqdm(as_completed(futures), total=len(fiplist), desc=f"Processing {year} Q{quarter}"):
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+        futures = {executor.submit(task, fips, year, quarter): (fips, year, quarter) 
+                   for (fips, year, quarter) in params}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Tracking cohort forward"):
             result = future.result()
             if result is not None:
                 results.append(result)
 
     return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+tracked_df = ThreadedExtractionOverTime(fipslist, cohort_df, max_threads=12)
