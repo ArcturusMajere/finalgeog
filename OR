@@ -1,11 +1,24 @@
-import pyarrow.dataset as ds
 
-def read_parquet_from_wang(return_type="pandas"):
-    table = ds.dataset("WANG", format="parquet").to_table()
-    if return_type == "pandas":
-        return table.to_pandas()
-    elif return_type == "polars":
-        import polars as pl
-        return pl.from_arrow(table)
-    else:
-        raise ValueError("return_type must be 'pandas' or 'polars'")
+
+def NationalCohort_Threaded(fiplist, year, quarter, max_workers=8):
+    def task(fips):
+        try:
+            df = NukeCohort(fips, year, quarter)
+            if df is not None and not df.empty:
+                return df
+        except Exception as e:
+            print(f"Failed for {fips}: {e}")
+        return None
+
+    results = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(task, fips) for fips in fiplist]
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                results.append(result)
+
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+
+
+national_df = NationalCohort_Threaded(fiplist, 2022, 1)
