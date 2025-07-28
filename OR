@@ -22,3 +22,5 @@ def ThreadedFury(fipslist, cohort, max_threads=8):
             results.append((label, status))
 
     return results
+
+log = ThreadedExtractToDisk(fipslist, cohort_df, max_threads=12)
