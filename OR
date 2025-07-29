@@ -1,26 +1,27 @@
 
+def summarize(directory):
+    summary = { 'file_name': [],   'yr_qtr': [],  'total_records': [], 'zero_wages': [],   'duplicate_ids': [],   'unknown_naics': [],  'cleaned_records': [] }
 
-def ThreadedFury(fipslist, cohort, max_threads=8):
-    def task(fips, year, quarter):
-        try:
-            extract(fips, year, quarter, cohort)
-            return f"{fips}_{year}_Q{quarter}", "success"
-        except Exception as e:
-            return f"{fips}_{year}_Q{quarter}", f"error: {e}"
+    for file in sorted(os.listdir(directory)):
+        if file.endswith('.csv'):
+            filepath = os.path.join(directory, file)
+            df = pd.read_csv(filepath)
+            yr_qtr = file.replace('.csv', '').split('_')[-2] + '.' + file.replace('.csv', '').split('_')[-1]
+            total = len(df)
+            zero_wage = (df['wage'] == 0).sum() if 'wage' in df.columns else 0
+            dup_ids = df.duplicated('id').sum() if 'id' in df.columns else 0
+            unknown_naics = df['naics'].isna().sum() if 'naics' in df.columns else 0
+            cleaned = total - zero_wage - dup_ids - unknown_naics
+            summary['file_name'].append(file)
+            summary['yr_qtr'].append(yr_qtr)
+            summary['total_records'].append(total)
+            summary['zero_wages'].append(zero_wage)
+            summary['duplicate_ids'].append(dup_ids)
+            summary['unknown_naics'].append(unknown_naics)
+            summary['cleaned_records'].append(cleaned)
+    return pd.DataFrame(summary)
 
-    params = [(fips, year, qtr) 
-              for fips in fipslist
-              for year in range(2020, 2025)
-              for qtr in range(1, 5)
-              if not (year == 2020 and qtr == 1)]
 
-    results = []
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
-        futures = {executor.submit(task, fips, year, qtr): (fips, year, qtr) for (fips, year, qtr) in params}
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Extracting to disk"):
-            label, status = future.result()
-            results.append((label, status))
-
-    return results
-
-log = ThreadedExtractToDisk(fipslist, cohort_df, max_threads=12)
+directory = 'path'
+summary_df = summarize(directory)
+summary_df.to_excel('csv_summary.xlsx', index=False)
