@@ -1,27 +1,19 @@
 
-def summarize(directory):
-    summary = { 'file_name': [],   'yr_qtr': [],  'total_records': [], 'zero_wages': [],   'duplicate_ids': [],   'unknown_naics': [],  'cleaned_records': [] }
-
-    for file in sorted(os.listdir(directory)):
-        if file.endswith('.csv'):
-            filepath = os.path.join(directory, file)
-            df = pd.read_csv(filepath)
-            yr_qtr = file.replace('.csv', '').split('_')[-2] + '.' + file.replace('.csv', '').split('_')[-1]
-            total = len(df)
-            zero_wage = (df['wage'] == 0).sum() if 'wage' in df.columns else 0
-            dup_ids = df.duplicated('id').sum() if 'id' in df.columns else 0
-            unknown_naics = df['naics'].isna().sum() if 'naics' in df.columns else 0
-            cleaned = total - zero_wage - dup_ids - unknown_naics
-            summary['file_name'].append(file)
-            summary['yr_qtr'].append(yr_qtr)
-            summary['total_records'].append(total)
-            summary['zero_wages'].append(zero_wage)
-            summary['duplicate_ids'].append(dup_ids)
-            summary['unknown_naics'].append(unknown_naics)
-            summary['cleaned_records'].append(cleaned)
-    return pd.DataFrame(summary)
-
-
-directory = 'path'
-summary_df = summarize(directory)
-summary_df.to_excel('csv_summary.xlsx', index=False)
+def add_unfound_sector(df, cohort_yr_qtr='2020-1'):
+    base = df[df['yr_qtr'] == cohort_yr_qtr].groupby('naics6')['ID_counts'].sum()
+    result = df.copy()
+    for yq in df['yr_qtr'].unique():
+        if yq == cohort_yr_qtr:
+            continue
+        current = df[df['yr_qtr'] == yq].groupby('naics6')['ID_counts'].sum()
+        missing = (base - current).clip(lower=0)
+        if not missing.empty:
+            unfound_rows = pd.DataFrame({
+                'yr_qtr': yq,
+                'naics6': missing.index,
+                'sector': 'Unfound',
+                'ID_counts': missing.values,
+                'UI_counts': 0
+            })
+            result = pd.concat([result, unfound_rows], ignore_index=True)
+    return result
