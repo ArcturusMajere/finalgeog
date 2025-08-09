@@ -1,19 +1,78 @@
+import oracledb
 
-def add_unfound_sector(df, cohort_yr_qtr='2020-1'):
-    base = df[df['yr_qtr'] == cohort_yr_qtr].groupby('naics6')['ID_counts'].sum()
-    result = df.copy()
-    for yq in df['yr_qtr'].unique():
-        if yq == cohort_yr_qtr:
-            continue
-        current = df[df['yr_qtr'] == yq].groupby('naics6')['ID_counts'].sum()
-        missing = (base - current).clip(lower=0)
-        if not missing.empty:
-            unfound_rows = pd.DataFrame({
-                'yr_qtr': yq,
-                'naics6': missing.index,
-                'sector': 'Unfound',
-                'ID_counts': missing.values,
-                'UI_counts': 0
-            })
-            result = pd.concat([result, unfound_rows], ignore_index=True)
-    return result
+conn = oracledb.connect(user="username", password="password", dsn="host:port/service")
+cur = conn.cursor()
+
+id_list = [101, 205, 309]
+start_year, start_qtr = 2023, 1
+end_year, end_qtr = 2024, 2
+
+id_placeholders = ",".join([f":id{i}" for i in range(len(id_list))])
+params = {f"id{i}": v for i, v in enumerate(id_list)}
+params.update({
+    "start_year": start_year,
+    "start_qtr": start_qtr,
+    "end_year": end_year,
+    "end_qtr": end_qtr
+})
+
+sql = f"""
+SELECT id,
+       fips,
+       UI,
+       run,
+       (TO_CHAR(year) || '-' || TO_CHAR(qtr)) AS yr_qtr
+FROM your_table
+WHERE id IN ({id_placeholders})
+  AND (
+        year > :start_year 
+        OR (year = :start_year AND qtr >= :start_qtr)
+      )
+  AND (
+        year < :end_year 
+        OR (year = :end_year AND qtr <= :end_qtr)
+      )
+"""
+
+cur.execute(sql, params)
+rows = cur.fetchall()
+for r in rows:
+    print(r)
+
+cur.close()
+conn.close()
+
+
+#$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+import oracledb,math
+from concurrent.futures import ThreadPoolExecutor,as_completed
+
+def query_ids_year_qtr(ids,start_year,start_qtr,end_year,end_qtr,dsn,user,password,workers=6,chunk_size=1000):
+    pool=oracledb.SessionPool(user=user,password=password,dsn=dsn,min=workers,max=workers,increment=0,homogeneous=True,timeout=60,getmode=oracledb.SPOOL_ATTRVAL_WAIT)
+    def run_chunk(id_chunk):
+        if not id_chunk: return []
+        ph=",".join([f":id{i}" for i in range(len(id_chunk))])
+        params={f"id{i}":v for i,v in enumerate(id_chunk)}
+        params.update({"sy":start_year,"sq":start_qtr,"ey":end_year,"eq":end_qtr})
+        sql=f"""
+        SELECT id,fips,UI,run,(TO_CHAR(year)||'-'||TO_CHAR(qtr)) yr_qtr
+        FROM your_table
+        WHERE id IN ({ph})
+          AND (year>:sy OR (year=:sy AND qtr>=:sq))
+          AND (year<:ey OR (year=:ey AND qtr<=:eq))
+        """
+        with pool.acquire() as conn:
+            cur=conn.cursor()
+            cur.execute(sql,params)
+            return cur.fetchall()
+    chunks=[ids[i:i+chunk_size] for i in range(0,len(ids),chunk_size)]
+    out=[]
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs=[ex.submit(run_chunk,ch) for ch in chunks]
+        for f in as_completed(futs): out.extend(f.result())
+    pool.close()
+    return out
+
+# example
+# rows=query_ids_year_qtr(ids=[101,205,309],start_year=2023,start_qtr=1,end_year=2024,end_qtr=2,dsn="host:port/service",user="u",password="p")
+# print(rows)
