@@ -99,3 +99,85 @@ def query_ids_year_qtr(ids, start_year, start_qtr, end_year, end_qtr,
 # )
 # print(rows)
 
+def query_ids_year_qtr(
+    ids,
+    start_year,
+    start_qtr,
+    end_year,
+    end_qtr,
+    dsn,
+    user,
+    password,
+    workers=6,
+    chunk_size=1000
+):
+    """
+    Retrieve records for specific IDs within a year–quarter timeframe using multithreaded Oracle DB queries.
+
+    This function connects to an Oracle database via a session pool, splits the input IDs into chunks,
+    and queries each chunk in parallel threads. It returns all rows from the table that match both:
+      1) The IDs provided in `ids`
+      2) The timeframe specified by (start_year, start_qtr) through (end_year, end_qtr)
+
+    Each row returned includes:
+      - id     : ID from the input list
+      - fips   : Geographic FIPS code from the database
+      - UI     : Unemployment Insurance account number
+      - run    : Processing run identifier
+      - wage   : Wage value
+      - yr_qtr : Concatenated "YYYY-Q" string representing year and quarter
+
+    Parameters
+    ----------
+    ids : list[int] or list[str]
+        The list of IDs to match against the `id` column in the database.
+        Can be very large; duplicates can be removed before calling to improve efficiency.
+
+    start_year : int
+        The first year of the timeframe filter (inclusive).
+        Example: 2023
+
+    start_qtr : int
+        The first quarter of the timeframe filter within `start_year` (1–4).
+
+    end_year : int
+        The last year of the timeframe filter (inclusive).
+
+    end_qtr : int
+        The last quarter of the timeframe filter within `end_year` (1–4).
+
+    dsn : str
+        Oracle Data Source Name, in the format "host:port/service_name".
+        Example: "dbserver.example.com:1521/ORCLPDB1"
+
+    user : str
+        Oracle database username.
+
+    password : str
+        Oracle database password.
+
+    workers : int, default=6
+        Number of parallel threads to run.
+        Must be ≤ the max size of the SessionPool.
+
+    chunk_size : int, default=1000
+        Number of IDs per SQL query chunk.
+        Oracle typically handles IN lists up to ~1000 items reliably.
+
+    Returns
+    -------
+    list[tuple]
+        A list of tuples, each containing:
+        (id, fips, UI, run, wage, yr_qtr)
+        Example:
+        [
+            (101, '12345', 'UI001', 'run1', 55000, '2023-1'),
+            (205, '67890', 'UI002', 'run2', 62000, '2024-2')
+        ]
+
+    Notes
+    -----
+    - Filtering is done at numeric (year, qtr) level to ensure correct ordering across years.
+    - `yr_qtr` is formatted as "YYYY-Q", but can be zero-padded (YYYY-01) if required for sorting.
+    - Performance depends on `chunk_size`, `workers`, and database capacity.
+    """
