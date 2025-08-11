@@ -1,3 +1,104 @@
+import os
+import subprocess
+import sys
+
+# Try to import psutil for more detailed CPU info
+# If psutil is not installed, it will fall back to os.cpu_count()
+try:
+    import psutil
+except ImportError:
+    psutil = None
+    print("Warning: psutil not found. Install with 'pip install psutil' for more detailed CPU info.")
+
+def get_system_info():
+    """
+    Retrieves the number of logical CPU cores, physical CPU cores (if psutil is available),
+    and a list of unique usernames currently logged into the system.
+    """
+    # 1. Get CPU Core Information
+    num_logical_cores = os.cpu_count()
+    
+    num_physical_cores = None
+    if psutil:
+        num_physical_cores = psutil.cpu_count(logical=False)
+    else:
+        num_physical_cores = "N/A (psutil not installed)"
+
+    # 2. Get Logged-in Users Information
+    logged_in_users = []
+    try:
+        # Run the 'who' command on Linux
+        # capture_output=True captures stdout and stderr
+        # text=True decodes output as text
+        # check=True raises an error for non-zero exit codes
+        result = subprocess.run(['who'], capture_output=True, text=True, check=True)
+        output_lines = result.stdout.strip().split('\n')
+
+        # Filter out empty lines and ensure there's actual content
+        if output_lines and any(output_lines):
+            # Extract usernames (first word of each line) and get unique names
+            # Handles cases where 'who' might return empty string on no logins
+            users = set(line.split()[0] for line in output_lines if line.strip())
+            logged_in_users = list(users)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running 'who' command: {e.stderr}", file=sys.stderr)
+        logged_in_users = []
+    except FileNotFoundError:
+        print(f"Error: 'who' command not found. Is it in your system's PATH?", file=sys.stderr)
+        logged_in_users = []
+    except Exception as e:
+        print(f"An unexpected error occurred while getting users: {e}", file=sys.stderr)
+        logged_in_users = []
+
+    return num_logical_cores, num_physical_cores, logged_in_users
+
+if __name__ == "__main__":
+    logical_cores, physical_cores, current_users = get_system_info()
+
+    print("--- System Information ---")
+    print(f"Number of logical CPU cores: {logical_cores}")
+    print(f"Number of physical CPU cores: {physical_cores}")
+    print(f"Currently logged-in users: {', '.join(current_users) if current_users else 'None'}")
+    print(f"Number of logged-in users (unique): {len(current_users)}")
+
+    # Heuristic Suggestion for 'workers' on a Shared Linux Server (32 cores)
+    # This is a starting point, actual optimal value requires monitoring and testing.
+    # Considerations:
+    # 1. We are on a 32-core machine, I/O bound tasks can leverage more threads than cores due to GIL.
+    # 2. It's a shared server, so don't be a resource hog.
+    # 3. Avoid excessive context switching by not setting it too high.
+
+    suggested_workers = logical_cores # Start with the number of logical cores
+
+    if logical_cores and len(current_users) > 0:
+        # If there are other users, be more conservative.
+        # This is a very simple heuristic. For example, divide cores among users,
+        # but with a floor to ensure the app still gets reasonable parallelism.
+        # Or, cap at a certain multiple of cores, even with other users.
+        # A common practice is to go slightly above cores for I/O bound tasks
+        # but be careful on shared systems.
+        
+        # Option A: Be very conservative, share cores roughly
+        # Each active user gets a share of the cores
+        # suggested_workers = max(1, logical_cores // (len(current_users) + 1)) 
+
+        # Option B: Aim for 1.5x cores, but don't exceed a safe upper limit for shared use
+        # Let's say max 48 workers on a 32-core shared machine,
+        # even if only you are logged in, to be safe.
+        safe_max_workers_on_shared = min(logical_cores * 1.5, 48) # Limit to 48 for 32 cores
+        suggested_workers = min(suggested_workers * 1.5, safe_max_workers_on_shared)
+        suggested_workers = int(max(1, suggested_workers)) # Ensure at least 1 worker
+
+    elif logical_cores: # Only you are potentially using the server or minimal other users
+        # For I/O bound, often 1.5x to 2x logical cores is a good starting point
+        # on an otherwise idle server you control.
+        suggested_workers = int(max(1, logical_cores * 1.5))
+
+    print(f"\n--- Worker Suggestion ---")
+    print(f"Suggested starting point for 'workers': {suggested_workers}")
+    print(f"Recommendation: Start with this value and monitor system resources ({', '.join(current_users)}) like CPU, I/O, and memory (using `htop`, `iostat`, `vmstat`) during execution. Adjust incrementally based on observed performance and resource impact.")
+
+
 # Make sure your original query_ids_year_qtr function is imported or defined first
 
 import time, statistics
