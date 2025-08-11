@@ -1,3 +1,62 @@
+import oracledb, math, csv
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def query_ids_year_qtr(ids, start_year, start_qtr, end_year, end_qtr,
+                       dsn, user, password, file_dir,
+                       workers=6, chunk_size=1000):
+    pool = oracledb.create_pool(user=user, password=password, dsn=dsn,
+                                min=workers, max=workers, increment=0,
+                                homogeneous=True, timeout=60,
+                                getmode=oracledb.POOL_GETMODE_WAIT)
+    def run_chunk(id_chunk):
+        if not id_chunk:
+            return []
+        ph = ",".join([f":id{i}" for i in range(len(id_chunk))])
+        params = {f"id{i}": v for i, v in enumerate(id_chunk)}
+        params.update({"sy": start_year, "sq": start_qtr,
+                       "ey": end_year, "eq": end_qtr})
+        sql = f"""
+        SELECT id,
+               fips,
+               UI,
+               run,
+               wage,
+               (TO_CHAR(year) || '-' || TO_CHAR(qtr)) AS yr_qtr
+        FROM your_table
+        WHERE id IN ({ph})
+          AND (year > :sy OR (year = :sy AND qtr >= :sq))
+          AND (year < :ey OR (year = :ey AND qtr <= :eq))
+        """
+        with pool.acquire() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    chunks = [ids[i:i + chunk_size] for i in range(0, len(ids), chunk_size)]
+    out = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(run_chunk, ch) for ch in chunks]
+        for f in as_completed(futs):
+            out.extend(f.result())
+
+    pool.close()
+
+    with open(file_dir, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "fips", "UI", "run", "wage", "yr_qtr"])
+        writer.writerows(out)
+
+# Example usage (as provided in the original code):
+# query_ids_year_qtr(
+#     ids=[101, 205, 309],
+#     start_year=2023, start_qtr=1,
+#     end_year=2024, end_qtr=2,
+#     dsn="host:port/service",
+#     user="u", password="p",
+#     file_dir="output.csv"
+# )
+
+##################################################
 import oracledb
 
 conn = oracledb.connect(user="username", password="password", dsn="host:port/service")
