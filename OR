@@ -1,25 +1,54 @@
+# Make sure your original query_ids_year_qtr function is imported or defined first
+
 import time, statistics
+from itertools import product
 
 def bench(run_fn, ids, tries=2):
-    t=[]
+    times = []
     for _ in range(tries):
-        s=time.time(); run_fn(ids); t.append(time.time()-s)
-    return statistics.median(t)
+        start = time.time()
+        run_fn(ids)
+        times.append(time.time() - start)
+    return statistics.median(times)
 
 def tune(ids, start_year, start_qtr, end_year, end_qtr, dsn, user, password):
-    from itertools import product
-    worker_opts=[2,4,6,8]
-    chunk_opts=[250,500,800,1000]
-    results=[]
-    sample=ids[:100000]
-    for w,c in product(worker_opts,chunk_opts):
+    worker_opts = [2, 4, 6, 8]
+    chunk_opts = [250, 500, 800, 1000]
+    results = []
+    
+    # Take a subset for testing so it runs quickly
+    sample = ids[:100000]
+    
+    for w, c in product(worker_opts, chunk_opts):
         def runner(x):
-            query_ids_year_qtr(x,start_year,start_qtr,end_year,end_qtr,dsn,user,password,workers=w,chunk_size=c,file_dir="/dev/null")
-        t=bench(runner,sample)
-        rows_per_sec=len(sample)/t
-        results.append((rows_per_sec,w,c,t))
+            query_ids_year_qtr(
+                x,
+                start_year, start_qtr,
+                end_year, end_qtr,
+                dsn, user, password,
+                file_dir="/dev/null",  # discard output for speed test
+                workers=w, chunk_size=c
+            )
+        median_time = bench(runner, sample)
+        rows_per_sec = len(sample) / median_time
+        results.append((rows_per_sec, w, c, median_time))
+    
     results.sort(reverse=True)
-    return results[:5]
+    return results
+
+# Example usage:
+ids_list = [i for i in range(1, 500000)]  # replace with your actual IDs
+best_results = tune(
+    ids_list,
+    start_year=2023, start_qtr=1,
+    end_year=2024, end_qtr=2,
+    dsn="host:port/service",
+    user="u", password="p"
+)
+
+print("Top configurations by rows/sec:")
+for rps, w, c, t in best_results[:5]:
+    print(f"Workers={w}, Chunk={c}, Rows/sec={rps:.0f}, Time={t:.2f}s")
 
 
 
