@@ -1,3 +1,30 @@
+import time, statistics
+
+def bench(run_fn, ids, tries=2):
+    t=[]
+    for _ in range(tries):
+        s=time.time(); run_fn(ids); t.append(time.time()-s)
+    return statistics.median(t)
+
+def tune(ids, start_year, start_qtr, end_year, end_qtr, dsn, user, password):
+    from itertools import product
+    worker_opts=[2,4,6,8]
+    chunk_opts=[250,500,800,1000]
+    results=[]
+    sample=ids[:100000]
+    for w,c in product(worker_opts,chunk_opts):
+        def runner(x):
+            query_ids_year_qtr(x,start_year,start_qtr,end_year,end_qtr,dsn,user,password,workers=w,chunk_size=c,file_dir="/dev/null")
+        t=bench(runner,sample)
+        rows_per_sec=len(sample)/t
+        results.append((rows_per_sec,w,c,t))
+    results.sort(reverse=True)
+    return results[:5]
+
+
+
+
+
 import oracledb
 import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
