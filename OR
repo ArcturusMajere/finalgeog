@@ -1,539 +1,120 @@
-import os
-import subprocess
-import sys
-
-# Try to import psutil for more detailed CPU info
-# If psutil is not installed, it will fall back to os.cpu_count()
-try:
-    import psutil
-except ImportError:
-    psutil = None
-    print("Warning: psutil not found. Install with 'pip install psutil' for more detailed CPU info.")
-
-def get_system_info():
-    """
-    Retrieves the number of logical CPU cores, physical CPU cores (if psutil is available),
-    and a list of unique usernames currently logged into the system.
-    """
-    # 1. Get CPU Core Information
-    num_logical_cores = os.cpu_count()
-    
-    num_physical_cores = None
-    if psutil:
-        num_physical_cores = psutil.cpu_count(logical=False)
-    else:
-        num_physical_cores = "N/A (psutil not installed)"
-
-    # 2. Get Logged-in Users Information
-    logged_in_users = []
-    try:
-        # Run the 'who' command on Linux
-        # capture_output=True captures stdout and stderr
-        # text=True decodes output as text
-        # check=True raises an error for non-zero exit codes
-        result = subprocess.run(['who'], capture_output=True, text=True, check=True)
-        output_lines = result.stdout.strip().split('\n')
-
-        # Filter out empty lines and ensure there's actual content
-        if output_lines and any(output_lines):
-            # Extract usernames (first word of each line) and get unique names
-            # Handles cases where 'who' might return empty string on no logins
-            users = set(line.split()[0] for line in output_lines if line.strip())
-            logged_in_users = list(users)
-    except subprocess.CalledProcessError as e:
-        print(f"Error running 'who' command: {e.stderr}", file=sys.stderr)
-        logged_in_users = []
-    except FileNotFoundError:
-        print(f"Error: 'who' command not found. Is it in your system's PATH?", file=sys.stderr)
-        logged_in_users = []
-    except Exception as e:
-        print(f"An unexpected error occurred while getting users: {e}", file=sys.stderr)
-        logged_in_users = []
-
-    return num_logical_cores, num_physical_cores, logged_in_users
-
-if __name__ == "__main__":
-    logical_cores, physical_cores, current_users = get_system_info()
-
-    print("--- System Information ---")
-    print(f"Number of logical CPU cores: {logical_cores}")
-    print(f"Number of physical CPU cores: {physical_cores}")
-    print(f"Currently logged-in users: {', '.join(current_users) if current_users else 'None'}")
-    print(f"Number of logged-in users (unique): {len(current_users)}")
-
-    # Heuristic Suggestion for 'workers' on a Shared Linux Server (32 cores)
-    # This is a starting point, actual optimal value requires monitoring and testing.
-    # Considerations:
-    # 1. We are on a 32-core machine, I/O bound tasks can leverage more threads than cores due to GIL.
-    # 2. It's a shared server, so don't be a resource hog.
-    # 3. Avoid excessive context switching by not setting it too high.
-
-    suggested_workers = logical_cores # Start with the number of logical cores
-
-    if logical_cores and len(current_users) > 0:
-        # If there are other users, be more conservative.
-        # This is a very simple heuristic. For example, divide cores among users,
-        # but with a floor to ensure the app still gets reasonable parallelism.
-        # Or, cap at a certain multiple of cores, even with other users.
-        # A common practice is to go slightly above cores for I/O bound tasks
-        # but be careful on shared systems.
-        
-        # Option A: Be very conservative, share cores roughly
-        # Each active user gets a share of the cores
-        # suggested_workers = max(1, logical_cores // (len(current_users) + 1)) 
-
-        # Option B: Aim for 1.5x cores, but don't exceed a safe upper limit for shared use
-        # Let's say max 48 workers on a 32-core shared machine,
-        # even if only you are logged in, to be safe.
-        safe_max_workers_on_shared = min(logical_cores * 1.5, 48) # Limit to 48 for 32 cores
-        suggested_workers = min(suggested_workers * 1.5, safe_max_workers_on_shared)
-        suggested_workers = int(max(1, suggested_workers)) # Ensure at least 1 worker
-
-    elif logical_cores: # Only you are potentially using the server or minimal other users
-        # For I/O bound, often 1.5x to 2x logical cores is a good starting point
-        # on an otherwise idle server you control.
-        suggested_workers = int(max(1, logical_cores * 1.5))
-
-    print(f"\n--- Worker Suggestion ---")
-    print(f"Suggested starting point for 'workers': {suggested_workers}")
-    print(f"Recommendation: Start with this value and monitor system resources ({', '.join(current_users)}) like CPU, I/O, and memory (using `htop`, `iostat`, `vmstat`) during execution. Adjust incrementally based on observed performance and resource impact.")
-
-
-# Make sure your original query_ids_year_qtr function is imported or defined first
-
-import time, statistics
-from itertools import product
-
-def bench(run_fn, ids, tries=2):
-    times = []
-    for _ in range(tries):
-        start = time.time()
-        run_fn(ids)
-        times.append(time.time() - start)
-    return statistics.median(times)
-
-def tune(ids, start_year, start_qtr, end_year, end_qtr, dsn, user, password):
-    worker_opts = [2, 4, 6, 8]
-    chunk_opts = [250, 500, 800, 1000]
-    results = []
-    
-    # Take a subset for testing so it runs quickly
-    sample = ids[:100000]
-    
-    for w, c in product(worker_opts, chunk_opts):
-        def runner(x):
-            query_ids_year_qtr(
-                x,
-                start_year, start_qtr,
-                end_year, end_qtr,
-                dsn, user, password,
-                file_dir="/dev/null",  # discard output for speed test
-                workers=w, chunk_size=c
-            )
-        median_time = bench(runner, sample)
-        rows_per_sec = len(sample) / median_time
-        results.append((rows_per_sec, w, c, median_time))
-    
-    results.sort(reverse=True)
-    return results
-
-# Example usage:
-ids_list = [i for i in range(1, 500000)]  # replace with your actual IDs
-best_results = tune(
-    ids_list,
-    start_year=2023, start_qtr=1,
-    end_year=2024, end_qtr=2,
-    dsn="host:port/service",
-    user="u", password="p"
-)
-
-print("Top configurations by rows/sec:")
-for rps, w, c, t in best_results[:5]:
-    print(f"Workers={w}, Chunk={c}, Rows/sec={rps:.0f}, Time={t:.2f}s")
-
-
-
-
-
 import oracledb
-import csv
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor,as_completed
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
 
-def query_ids_year_qtr_concurrent(ids, start_year, start_qtr, end_year, end_qtr,
-                                   dsn, user, password, file_dir,
-                                   workers=6, chunk_size=1000):
-    """
-    Executes concurrent Oracle database queries using connection pooling and
-    ThreadPoolExecutor to fetch data for given IDs within a specified year and quarter range.
-
-    Args:
-        ids (list): A list of IDs to query for.
-        start_year (int): The starting year for the query.
-        start_qtr (int): The starting quarter for the query.
-        end_year (int): The ending year for the query.
-        end_qtr (int): The ending quarter for the query.
-        dsn (str): The Oracle Database DSN (Data Source Name).
-        user (str): The Oracle Database username.
-        password (str): The Oracle Database password.
-        file_dir (str): The directory path to save the CSV output.
-        workers (int): The number of worker threads to use in the ThreadPoolExecutor.
-        chunk_size (int): The number of IDs to process in each query chunk.
-    """
-
-    # 1. Create the Oracle Connection Pool
-    # Using oracledb.create_pool for the new connection pooling API.
-    # It's recommended to set min and max to the same value for fixed-size pools, 
-    # {Link: according to the oracledb Documentation https://python-oracledb.readthedocs.io/en/v2.4.1/user_guide/connection_handling.html}. 
-    # Using POOL_GETMODE_WAIT ensures threads wait for an available connection if none are free.
-    pool = oracledb.create_pool(user=user, password=password, dsn=dsn,
-                                min=workers, max=workers, increment=0,
-                                homogeneous=True, timeout=60, # Timeout for connections in the pool
-                                getmode=oracledb.POOL_GETMODE_WAIT) # Wait for a connection if none are available
-
-    # 2. Define the function to run in each thread (querying a chunk of IDs)
+def cohort_presence_gaps_and_plots(cohortlist,fiplist,start_year,start_qtr,end_year,end_qtr,dsn,user,password,table_name="your_table",workers=6,chunk_size=1000,save_presence_csv=None,save_summary_csv=None,save_per_state_csv=None,save_longest_plot=None,save_distribution_plot=None,show_plots=False):
+    def periods(sy,sq,ey,eq):
+        out=[];y,q=sy,sq
+        while (y<ey) or (y==ey and q<=eq):
+            out.append((y,q,f"{y}-{q:02d}"))
+            q+=1
+            if q==5: q=1; y+=1
+        return out
+    per=periods(start_year,start_qtr,end_year,end_qtr)
+    pool=oracledb.SessionPool(user=user,password=password,dsn=dsn,min=workers,max=workers,increment=0,homogeneous=True,timeout=60,getmode=oracledb.SPOOL_ATTRVAL_WAIT)
     def run_chunk(id_chunk):
-        """
-        Queries the database for a chunk of IDs within the specified year and quarter range.
-        Acquires a connection from the pool and releases it back upon completion.
-        """
-        if not id_chunk:
-            return []
-
-        # Constructing the placeholder string for IN clause efficiently
-        # Example: if id_chunk is [1, 2, 3], ph becomes ":id0,:id1,:id2"
-        ph = ",".join([f":id{i}" for i in range(len(id_chunk))])
-        params = {f"id{i}": v for i, v in enumerate(id_chunk)}
-        params.update({"sy": start_year, "sq": start_qtr,
-                       "ey": end_year, "eq": end_qtr})
-
-        # The SQL query to retrieve data
-        # Note: Replace 'your_table' with your actual table name
-        sql = f"""
-        SELECT id,
-               fips,
-               UI,
-               run,
-               wage,
-               (TO_CHAR(year) || '-' || TO_CHAR(qtr)) AS yr_qtr
-        FROM your_table
-        WHERE id IN ({ph})
-          AND (year > :sy OR (year = :sy AND qtr >= :sq))
-          AND (year < :ey OR (year = :ey AND qtr <= :eq))
-        """
-        
-        # Acquire a connection from the pool using a context manager for automatic release
-        with pool.acquire() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, params)
-            return cur.fetchall()
-
-    # 3. Divide the IDs into chunks for parallel processing
-    chunks = [ids[i:i + chunk_size] for i in range(0, len(ids), chunk_size)]
-    out = []
-
-    # 4. Use ThreadPoolExecutor for concurrent execution of chunks
-    # max_workers is set to 'workers' to utilize the specified number of threads.
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        # Submit each chunk to the executor for processing
-        futs = [ex.submit(run_chunk, ch) for ch in chunks]
-        # Iterate over completed futures and extend the results list
-        for f in as_completed(futs):
-            # as_completed() yields futures as they complete, allowing
-            # results to be collected as soon as they are ready.
-            out.extend(f.result())
-
-    # 5. Close the connection pool when all tasks are complete
-    pool.close()
-
-    # 6. Save the results to a CSV file
-    with open(file_dir, mode="w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["id", "fips", "UI", "run", "wage", "yr_qtr"]) # Header row
-        writer.writerows(out)
-
-# Example Usage:
-if __name__ == "__main__":
-    # Replace these with your actual database connection details and IDs
-    sample_ids = list(range(1, 10001)) # Example: 10,000 IDs
-    start_year = 2023
-    start_qtr = 1
-    end_year = 2024
-    end_qtr = 2
-    dsn = "hostname:port/service_name"  # e.g., "localhost:1521/XE"
-    user = "your_username"
-    password = "your_password"
-    output_file = "output.csv"
-
-    print("Starting concurrent database query...")
-    query_ids_year_qtr_concurrent(
-        ids=sample_ids,
-        start_year=start_year,
-        start_qtr=start_qtr,
-        end_year=end_year,
-        end_qtr=end_qtr,
-        dsn=dsn,
-        user=user,
-        password=password,
-        file_dir=output_file,
-        workers=8, # Adjust the number of workers based on your system and database capacity
-        chunk_size=500 # Adjust chunk size for optimal performance
-    )
-    print(f"Query complete. Results saved to {output_file}")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import oracledb, math, csv
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-def query_ids_year_qtr(ids, start_year, start_qtr, end_year, end_qtr,
-                       dsn, user, password, file_dir,
-                       workers=6, chunk_size=1000):
-    pool = oracledb.create_pool(user=user, password=password, dsn=dsn,
-                                min=workers, max=workers, increment=0,
-                                homogeneous=True, timeout=60,
-                                getmode=oracledb.POOL_GETMODE_WAIT)
-    def run_chunk(id_chunk):
-        if not id_chunk:
-            return []
-        ph = ",".join([f":id{i}" for i in range(len(id_chunk))])
-        params = {f"id{i}": v for i, v in enumerate(id_chunk)}
-        params.update({"sy": start_year, "sq": start_qtr,
-                       "ey": end_year, "eq": end_qtr})
-        sql = f"""
-        SELECT id,
-               fips,
-               UI,
-               run,
-               wage,
-               (TO_CHAR(year) || '-' || TO_CHAR(qtr)) AS yr_qtr
-        FROM your_table
-        WHERE id IN ({ph})
-          AND (year > :sy OR (year = :sy AND qtr >= :sq))
-          AND (year < :ey OR (year = :ey AND qtr <= :eq))
+        if not id_chunk: return []
+        iph=",".join([f":i{k}" for k in range(len(id_chunk))])
+        fph=",".join([f":f{k}" for k in range(len(fiplist))])
+        params={f"i{k}":v for k,v in enumerate(id_chunk)}
+        params.update({f"f{k}":str(v).zfill(2) for k,v in enumerate(fiplist)})
+        params.update({"sy":start_year,"sq":start_qtr,"ey":end_year,"eq":end_qtr})
+        sql=f"""
+        SELECT id,fips,year,qtr
+        FROM {table_name}
+        WHERE id IN ({iph})
+          AND fips IN ({fph})
+          AND (year>:sy OR (year=:sy AND qtr>=:sq))
+          AND (year<:ey OR (year=:ey AND qtr<=:eq))
         """
         with pool.acquire() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, params)
+            cur=conn.cursor()
+            cur.execute(sql,params)
             return cur.fetchall()
-
-    chunks = [ids[i:i + chunk_size] for i in range(0, len(ids), chunk_size)]
-    out = []
+    chunks=[cohortlist[i:i+chunk_size] for i in range(0,len(cohortlist),chunk_size)]
+    hits=[]
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(run_chunk, ch) for ch in chunks]
-        for f in as_completed(futs):
-            out.extend(f.result())
-
+        futs=[ex.submit(run_chunk,ch) for ch in chunks]
+        for f in as_completed(futs): hits.extend(f.result())
     pool.close()
-
-    with open(file_dir, mode="w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["id", "fips", "UI", "run", "wage", "yr_qtr"])
-        writer.writerows(out)
-
-# Example usage (as provided in the original code):
-# query_ids_year_qtr(
-#     ids=[101, 205, 309],
-#     start_year=2023, start_qtr=1,
-#     end_year=2024, end_qtr=2,
-#     dsn="host:port/service",
-#     user="u", password="p",
-#     file_dir="output.csv"
-# )
-
-##################################################
-import oracledb
-
-conn = oracledb.connect(user="username", password="password", dsn="host:port/service")
-cur = conn.cursor()
-
-id_list = [101, 205, 309]
-start_year, start_qtr = 2023, 1
-end_year, end_qtr = 2024, 2
-
-id_placeholders = ",".join([f":id{i}" for i in range(len(id_list))])
-params = {f"id{i}": v for i, v in enumerate(id_list)}
-params.update({
-    "start_year": start_year,
-    "start_qtr": start_qtr,
-    "end_year": end_year,
-    "end_qtr": end_qtr
-})
-
-sql = f"""
-SELECT id,
-       fips,
-       UI,
-       run,
-       wage,
-       (TO_CHAR(year) || '-' || TO_CHAR(qtr)) AS yr_qtr
-FROM your_table
-WHERE id IN ({id_placeholders})
-  AND (
-        year > :start_year 
-        OR (year = :start_year AND qtr >= :start_qtr)
-      )
-  AND (
-        year < :end_year 
-        OR (year = :end_year AND qtr <= :end_qtr)
-      )
-"""
-
-cur.execute(sql, params)
-rows = cur.fetchall()
-for r in rows:
-    print(r)
-
-cur.close()
-conn.close()
-
-
-#$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-import oracledb, math
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-def query_ids_year_qtr(ids, start_year, start_qtr, end_year, end_qtr,
-                       dsn, user, password, workers=6, chunk_size=1000):
-    pool = oracledb.SessionPool(user=user, password=password, dsn=dsn,
-                                min=workers, max=workers, increment=0,
-                                homogeneous=True, timeout=60,
-                                getmode=oracledb.SPOOL_ATTRVAL_WAIT)
-
-    def run_chunk(id_chunk):
-        if not id_chunk:
-            return []
-        ph = ",".join([f":id{i}" for i in range(len(id_chunk))])
-        params = {f"id{i}": v for i, v in enumerate(id_chunk)}
-        params.update({"sy": start_year, "sq": start_qtr,
-                       "ey": end_year, "eq": end_qtr})
-        sql = f"""
-        SELECT id,
-               fips,
-               UI,
-               run,
-               wage,
-               (TO_CHAR(year) || '-' || TO_CHAR(qtr)) AS yr_qtr
-        FROM your_table
-        WHERE id IN ({ph})
-          AND (year > :sy OR (year = :sy AND qtr >= :sq))
-          AND (year < :ey OR (year = :ey AND qtr <= :eq))
-        """
-        with pool.acquire() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, params)
-            return cur.fetchall()
-
-    chunks = [ids[i:i + chunk_size] for i in range(0, len(ids), chunk_size)]
-    out = []
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(run_chunk, ch) for ch in chunks]
-        for f in as_completed(futs):
-            out.extend(f.result())
-
-    pool.close()
-    return out
-
-# Example usage:
-# rows = query_ids_year_qtr(
-#     ids=[101, 205, 309],
-#     start_year=2023, start_qtr=1,
-#     end_year=2024, end_qtr=2,
-#     dsn="host:port/service",
-#     user="u", password="p"
-# )
-# print(rows)
-
-def query_ids_year_qtr(
-    ids,
-    start_year,
-    start_qtr,
-    end_year,
-    end_qtr,
-    dsn,
-    user,
-    password,
-    workers=6,
-    chunk_size=1000
-):
-    """
-    Retrieve records for specific IDs within a year–quarter timeframe using multithreaded Oracle DB queries.
-
-    This function connects to an Oracle database via a session pool, splits the input IDs into chunks,
-    and queries each chunk in parallel threads. It returns all rows from the table that match both:
-      1) The IDs provided in `ids`
-      2) The timeframe specified by (start_year, start_qtr) through (end_year, end_qtr)
-
-    Each row returned includes:
-      - id     : ID from the input list
-      - fips   : Geographic FIPS code from the database
-      - UI     : Unemployment Insurance account number
-      - run    : Processing run identifier
-      - wage   : Wage value
-      - yr_qtr : Concatenated "YYYY-Q" string representing year and quarter
-
-    Parameters
-    ----------
-    ids : list[int] or list[str]
-        The list of IDs to match against the `id` column in the database.
-        Can be very large; duplicates can be removed before calling to improve efficiency.
-
-    start_year : int
-        The first year of the timeframe filter (inclusive).
-        Example: 2023
-
-    start_qtr : int
-        The first quarter of the timeframe filter within `start_year` (1–4).
-
-    end_year : int
-        The last year of the timeframe filter (inclusive).
-
-    end_qtr : int
-        The last quarter of the timeframe filter within `end_year` (1–4).
-
-    dsn : str
-        Oracle Data Source Name, in the format "host:port/service_name".
-        Example: "dbserver.example.com:1521/ORCLPDB1"
-
-    user : str
-        Oracle database username.
-
-    password : str
-        Oracle database password.
-
-    workers : int, default=6
-        Number of parallel threads to run.
-        Must be ≤ the max size of the SessionPool.
-
-    chunk_size : int, default=1000
-        Number of IDs per SQL query chunk.
-        Oracle typically handles IN lists up to ~1000 items reliably.
-
-    Returns
-    -------
-    list[tuple]
-        A list of tuples, each containing:
-        (id, fips, UI, run, wage, yr_qtr)
-        Example:
-        [
-            (101, '12345', 'UI001', 'run1', 55000, '2023-1'),
-            (205, '67890', 'UI002', 'run2', 62000, '2024-2')
-        ]
-
-    Notes
-    -----
-    - Filtering is done at numeric (year, qtr) level to ensure correct ordering across years.
-    - `yr_qtr` is formatted as "YYYY-Q", but can be zero-padded (YYYY-01) if required for sorting.
-    - Performance depends on `chunk_size`, `workers`, and database capacity.
-    """
+    seen=set((str(r[0]),str(r[1]).zfill(2),int(r[2]),int(r[3])) for r in hits)
+    rows=[]
+    for cid in cohortlist:
+        scid=str(cid)
+        for f in fiplist:
+            sf=str(f).zfill(2)
+            for y,q,lab in per:
+                rows.append((scid,sf,lab,1 if (scid,sf,y,q) in seen else 0))
+    presence=pd.DataFrame(rows,columns=["id","fips","yr_qtr","found"])
+    agg_any=presence.groupby(["id","yr_qtr"],as_index=False)["found"].max().rename(columns={"found":"found_any"})
+    per_index={lab:i for i,(_,_,lab) in enumerate(per)}
+    agg_any["order"]=agg_any["yr_qtr"].map(per_index.get)
+    agg_any=agg_any.sort_values(["id","order"])
+    def longest_gap(z):
+        m=0;c=0;s=None;best=(0,None,None)
+        idx=list(z.index)
+        for i,v in zip(idx,z.values):
+            if v==0:
+                c+=1
+                if c==1: s=i
+            else:
+                if c>m: m=c; best=(m,s,s+c-1)
+                c=0; s=None
+        if c>m: m=c; best=(m,s,s+c-1)
+        return best
+    res_any=[]
+    for k,df in agg_any.groupby("id"):
+        mlen,s,e=longest_gap((1-df["found_any"]).astype(int))
+        s_lab=per[s][2] if s is not None and mlen>0 else None
+        e_lab=per[e][2] if e is not None and mlen>0 else None
+        res_any.append((k,mlen,s_lab,e_lab))
+    summary=pd.DataFrame(res_any,columns=["id","longest_not_found_len","start_yr_qtr","end_yr_qtr"])
+    pres_state=presence.copy()
+    pres_state["order"]=pres_state["yr_qtr"].map(per_index.get)
+    pres_state=pres_state.sort_values(["id","fips","order"])
+    res_state=[]
+    for (cid,fips),df in pres_state.groupby(["id","fips"]):
+        mlen,s,e=longest_gap((1-df["found"]).astype(int))
+        s_lab=per[s][2] if s is not None and mlen>0 else None
+        e_lab=per[e][2] if e is not None and mlen>0 else None
+        res_state.append((cid,fips,mlen,s_lab,e_lab))
+    per_state_summary=pd.DataFrame(res_state,columns=["id","fips","longest_not_found_len","start_yr_qtr","end_yr_qtr"])
+    if save_presence_csv: presence.to_csv(save_presence_csv,index=False)
+    if save_summary_csv: summary.to_csv(save_summary_csv,index=False)
+    if save_per_state_csv: per_state_summary.to_csv(save_per_state_csv,index=False)
+    if save_longest_plot or show_plots:
+        df=summary.sort_values("longest_not_found_len",ascending=False)
+        ids=df["id"].astype(str).values
+        vals=df["longest_not_found_len"].values
+        s=df["start_yr_qtr"].fillna("").values
+        e=df["end_yr_qtr"].fillna("").values
+        h=max(6,len(df)*0.22)
+        plt.figure(figsize=(12,h))
+        y=np.arange(len(df))
+        plt.barh(y,vals)
+        plt.yticks(y,ids)
+        plt.xlabel("quarters")
+        plt.title("Longest consecutive not-found by ID")
+        plt.gca().invert_yaxis()
+        for i,v in enumerate(vals):
+            lbl=str(v) if v==0 or s[i]=="" else f"{v} ({s[i]}→{e[i]})"
+            plt.text(v+0.05,i,lbl,va="center")
+        plt.tight_layout()
+        if save_longest_plot: plt.savefig(save_longest_plot,bbox_inches="tight",dpi=200)
+        if show_plots: plt.show()
+        plt.close()
+    if save_distribution_plot or show_plots:
+        vals=summary["longest_not_found_len"].values
+        plt.figure(figsize=(8,5))
+        plt.hist(vals,bins=range(0,(int(vals.max()) if len(vals)>0 else 0)+2),edgecolor="black",align="left")
+        plt.xlabel("Longest not-found streak length (quarters)")
+        plt.ylabel("Number of IDs")
+        plt.title("Distribution of Longest Not-Found Streak Lengths")
+        if len(vals)>0: plt.xticks(range(0,int(vals.max())+1))
+        plt.tight_layout()
+        if save_distribution_plot: plt.savefig(save_distribution_plot,bbox_inches="tight",dpi=200)
+        if show_plots: plt.show()
+        plt.close()
+    return presence,summary,per_state_summary
