@@ -3,17 +3,26 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 def id_presence_heatmap(df, ids=None, yr_qtrs=None):
-    if ids is None: ids = df['ID'].unique()
+    # shorten IDs to last 5 digits
+    df = df.copy()
+    df['ID_enc'] = df['ID'].astype(str).str[-5:]
+
+    if ids is None: ids = df['ID_enc'].unique()
+    else: ids = [str(i)[-5:] for i in ids]
+
     if yr_qtrs is None: yr_qtrs = sorted(df['yr_qtr'].unique())
+
     mat = pd.DataFrame(0, index=yr_qtrs, columns=ids)
     for _, r in df.iterrows():
-        if r['ID'] in ids and r['yr_qtr'] in yr_qtrs:
-            mat.loc[r['yr_qtr'], r['ID']] = 1
+        if r['ID_enc'] in ids and r['yr_qtr'] in yr_qtrs:
+            mat.loc[r['yr_qtr'], r['ID_enc']] = 1
+
     plt.figure(figsize=(len(ids)/3, len(yr_qtrs)/3))
-    sns.heatmap(mat, cmap=sns.color_palette(["red","green"]), cbar=False)
-    plt.xlabel("ID")
+    sns.heatmap(mat, cmap=sns.color_palette(["black","green"]), cbar=False)
+    plt.xlabel("Encrypted ID (last 5 digits)")
     plt.ylabel("yr_qtr")
     plt.show()
+
 
 
 import pandas as pd
