@@ -1,111 +1,52 @@
-plt.title(f"Average longest gap length: {avg_gap:.2f} | IDs without gap: {(sum(v==0 for v in longest_gaps.values()))}")
-
-
-
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 
-def id_presence_heatmap(df, ids=None, yr_qtrs=None):
-    df=df.copy()
-    df['ID_enc']=df['ID'].astype(str).str[-5:]
-    if ids is None: ids=df['ID_enc'].unique()
-    else: ids=[str(i)[-5:] for i in ids]
-    if yr_qtrs is None: yr_qtrs=sorted(df['yr_qtr'].unique())
-    mat=pd.DataFrame(0,index=yr_qtrs,columns=ids)
-    for _,r in df.iterrows():
-        if r['ID_enc'] in ids and r['yr_qtr'] in yr_qtrs:
-            mat.loc[r['yr_qtr'],r['ID_enc']]=1
+def id_presence_heatmap(df, ids=None, yr_qtrs=None, batch_size=100):
+    if ids is None: 
+        ids_all = df['ID'].unique()
+    else: 
+        ids_all = pd.Index(ids).unique()
+    if yr_qtrs is None: 
+        yr_qtrs = sorted(df['yr_qtr'].unique())
 
-    longest_gaps={}
-    for col in mat.columns:
-        arr=mat[col].values
-        gaps=[]
-        c=0
-        for v in arr:
-            if v==0: c+=1
-            else:
-                gaps.append(c)
-                c=0
-        gaps.append(c)
-        longest_gaps[col]=max(gaps)
-    avg_gap=np.mean(list(longest_gaps.values()))
+    n_batches = (len(ids_all) + batch_size - 1) // batch_size
 
-    plt.figure(figsize=(len(ids)/3,len(yr_qtrs)/3))
-    ax=sns.heatmap(mat,cmap=sns.color_palette(["black","green"]),cbar=False,annot=False)
-    for j,col in enumerate(mat.columns):
-        arr=mat[col].values
-        c=0
-        best=0
-        end=-1
-        for i,v in enumerate(arr):
-            if v==0:
-                c+=1
-                if c>best:
-                    best=c
-                    end=i
-            else: c=0
-        if best>0:
-            start=end-best+1
-            ax.text(j+0.5,start+best/2,str(best),ha='center',va='center',color='white')
-    plt.title(f"Average longest gap length: {avg_gap:.2f}")
-    plt.xlabel("Encrypted ID (last 5 digits)")
-    plt.ylabel("yr_qtr")
-    plt.show()
+    for batch_idx in range(n_batches):
+        start = batch_idx * batch_size
+        end = min(start + batch_size, len(ids_all))
+        ids_batch = ids_all[start:end]
 
+        mat = pd.DataFrame(0, index=yr_qtrs, columns=ids_batch)
+        for _, r in df.iterrows():
+            if r['ID'] in ids_batch and r['yr_qtr'] in yr_qtrs:
+                mat.loc[r['yr_qtr'], r['ID']] = 1
 
+        # compute longest gap per ID
+        longest_gaps = {}
+        for col in mat.columns:
+            arr = mat[col].values
+            gaps, c = [], 0
+            for v in arr:
+                if v == 0:
+                    c += 1
+                else:
+                    gaps.append(c)
+                    c = 0
+            gaps.append(c)
+            longest_gaps[col] = max(gaps)
+        avg_gap = np.mean(list(longest_gaps.values()))
+        ids_no_gap = sum(v == 0 for v in longest_gaps.values())
 
+        plt.figure(figsize=(max(len(ids_batch),1)/3, max(len(yr_qtrs),1)/3))
+        sns.heatmap(mat, cmap=sns.color_palette(["red","green"]), cbar=False)
+        plt.title(f"IDs {start}-{end} of {len(ids_all)} | "
+                  f"Average longest gap length: {avg_gap:.2f} | "
+                  f"IDs without gap: {ids_no_gap}")
+        plt.xlabel("ID")
+        plt.ylabel("yr_qtr")
+        plt.show()
 
-
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-
-def id_presence_heatmap(df, ids=None, yr_qtrs=None):
-    # shorten IDs to last 5 digits
-    df = df.copy()
-    df['ID_enc'] = df['ID'].astype(str).str[-5:]
-
-    if ids is None: ids = df['ID_enc'].unique()
-    else: ids = [str(i)[-5:] for i in ids]
-
-    if yr_qtrs is None: yr_qtrs = sorted(df['yr_qtr'].unique())
-
-    mat = pd.DataFrame(0, index=yr_qtrs, columns=ids)
-    for _, r in df.iterrows():
-        if r['ID_enc'] in ids and r['yr_qtr'] in yr_qtrs:
-            mat.loc[r['yr_qtr'], r['ID_enc']] = 1
-
-    plt.figure(figsize=(len(ids)/3, len(yr_qtrs)/3))
-    sns.heatmap(mat, cmap=sns.color_palette(["black","green"]), cbar=False)
-    plt.xlabel("Encrypted ID (last 5 digits)")
-    plt.ylabel("yr_qtr")
-    plt.show()
-
-
-
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-
-def id_wage_heatmap(df, ids=None, yr_qtrs=None):
-    if ids is None: ids = df['ID'].unique()
-    if yr_qtrs is None: yr_qtrs = sorted(df['yr_qtr'].unique())
-
-    mat = pd.DataFrame(float('nan'), index=yr_qtrs, columns=ids)
-
-    # fill with wages where ID/yr_qtr exists
-    for _, r in df.iterrows():
-        if r['ID'] in ids and r['yr_qtr'] in yr_qtrs:
-            mat.loc[r['yr_qtr'], r['ID']] = r['WAGE']
-
-    # mask for black (not found)
-    mask = mat.isna()
-
-    plt.figure(figsize=(len(ids)/3, len(yr_qtrs)/3))
-    sns.heatmap(mat, cmap="YlOrBr", mask=mask, cbar_kws={'label': 'WAGE'})
-    sns.heatmap(mask, cmap=["black","white"], alpha=0.5, cbar=False)
-    plt.xlabel("ID")
-    plt.ylabel("yr_qtr")
-    plt.show()
+        time.sleep(1)  # pause between plots
