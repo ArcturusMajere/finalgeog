@@ -1,7 +1,90 @@
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-def subset_ids(df, start_qtr="2006-1", end_qtr="2024-4"):
-    ids_start = set(df.loc[df['yr_qtr'] == start_qtr, 'ID'])
-    ids_end = set(df.loc[df['yr_qtr'] == end_qtr, 'ID'])
-    ids_both = ids_start & ids_end
-    return df[df['ID'].isin(ids_both)]
+def get_gaps_and_wages(df, ids=None, yr_qtrs=None):
+    if ids is None:
+        ids = df['ID'].unique()
+    if yr_qtrs is None:
+        yr_qtrs = sorted(df['yr_qtr'].unique())
+
+    # dictionary to hold longest gap length per ID
+    longest_gap = {}
+    # dictionaries for median wages before/after longest gap
+    median_wage_before = {}
+    median_wage_after = {}
+
+    for uid in ids:
+        sub = df[df['ID'] == uid].sort_values('yr_qtr')
+        present_qtrs = sub['yr_qtr'].tolist()
+        wages = dict(zip(sub['yr_qtr'], sub['wage']))
+
+        gaps = []
+        gap = 0
+        for yq in yr_qtrs:
+            if yq in present_qtrs:
+                if gap > 0:
+                    gaps.append(gap)
+                gap = 0
+            else:
+                gap += 1
+        if gap > 0:
+            gaps.append(gap)
+
+        if gaps:
+            lgap = max(gaps)
+        else:
+            lgap = 0
+        longest_gap[uid] = lgap
+
+        # Find start and end of the longest gap
+        gap_start, gap_end = None, None
+        current_gap = 0
+        for i, yq in enumerate(yr_qtrs):
+            if yq not in present_qtrs:
+                current_gap += 1
+                if current_gap == lgap:
+                    gap_end = i
+                    gap_start = i - lgap + 1
+                    break
+            else:
+                current_gap = 0
+
+        if gap_start is not None and gap_end is not None:
+            before_qtrs = yr_qtrs[:gap_start]
+            after_qtrs = yr_qtrs[gap_end+1:]
+            before_wages = [wages[q] for q in before_qtrs if q in wages]
+            after_wages = [wages[q] for q in after_qtrs if q in wages]
+
+            median_wage_before[uid] = (pd.Series(before_wages).median()
+                                       if before_wages else None)
+            median_wage_after[uid] = (pd.Series(after_wages).median()
+                                      if after_wages else None)
+        else:
+            median_wage_before[uid] = None
+            median_wage_after[uid] = None
+
+    # make heatmap of presence
+    mat = pd.DataFrame(0, index=yr_qtrs, columns=ids)
+    for _, r in df.iterrows():
+        if r['ID'] in ids and r['yr_qtr'] in yr_qtrs:
+            mat.loc[r['yr_qtr'], r['ID']] = 1
+
+    plt.figure(figsize=(len(ids)/3, len(yr_qtrs)/3))
+    sns.heatmap(mat, cmap=sns.color_palette(["red", "green"]), cbar=False)
+    plt.title(
+        f"Average longest gap length: {pd.Series(longest_gap).mean():.2f} | "
+        f"IDs without gap: {sum(v==0 for v in longest_gap.values())}"
+    )
+    plt.xlabel("ID")
+    plt.ylabel("yr_qtr")
+    plt.show()
+
+    # return a summary DataFrame
+    summary = pd.DataFrame({
+        "ID": ids,
+        "longest_gap": [longest_gap[i] for i in ids],
+        "median_wage_before_gap": [median_wage_before[i] for i in ids],
+        "median_wage_after_gap": [median_wage_after[i] for i in ids]
+    })
+    return summary
