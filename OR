@@ -1,90 +1,82 @@
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def get_gaps_and_wages(df, ids=None, yr_qtrs=None):
+def gaps_medians_heatmap(df, ids=None, yr_qtrs=None):
     if ids is None:
-        ids = df['ID'].unique()
+        ids = list(df['ID'].unique())
     if yr_qtrs is None:
         yr_qtrs = sorted(df['yr_qtr'].unique())
-
-    # dictionary to hold longest gap length per ID
-    longest_gap = {}
-    # dictionaries for median wages before/after longest gap
-    median_wage_before = {}
-    median_wage_after = {}
-
-    for uid in ids:
-        sub = df[df['ID'] == uid].sort_values('yr_qtr')
-        present_qtrs = sub['yr_qtr'].tolist()
-        wages = dict(zip(sub['yr_qtr'], sub['wage']))
-
-        gaps = []
-        gap = 0
-        for yq in yr_qtrs:
-            if yq in present_qtrs:
-                if gap > 0:
-                    gaps.append(gap)
-                gap = 0
-            else:
-                gap += 1
-        if gap > 0:
-            gaps.append(gap)
-
-        if gaps:
-            lgap = max(gaps)
-        else:
-            lgap = 0
-        longest_gap[uid] = lgap
-
-        # Find start and end of the longest gap
-        gap_start, gap_end = None, None
-        current_gap = 0
-        for i, yq in enumerate(yr_qtrs):
-            if yq not in present_qtrs:
-                current_gap += 1
-                if current_gap == lgap:
-                    gap_end = i
-                    gap_start = i - lgap + 1
-                    break
-            else:
-                current_gap = 0
-
-        if gap_start is not None and gap_end is not None:
-            before_qtrs = yr_qtrs[:gap_start]
-            after_qtrs = yr_qtrs[gap_end+1:]
-            before_wages = [wages[q] for q in before_qtrs if q in wages]
-            after_wages = [wages[q] for q in after_qtrs if q in wages]
-
-            median_wage_before[uid] = (pd.Series(before_wages).median()
-                                       if before_wages else None)
-            median_wage_after[uid] = (pd.Series(after_wages).median()
-                                      if after_wages else None)
-        else:
-            median_wage_before[uid] = None
-            median_wage_after[uid] = None
-
-    # make heatmap of presence
-    mat = pd.DataFrame(0, index=yr_qtrs, columns=ids)
+    id_order = list(ids)
+    mat = pd.DataFrame(0, index=yr_qtrs, columns=id_order)
     for _, r in df.iterrows():
-        if r['ID'] in ids and r['yr_qtr'] in yr_qtrs:
-            mat.loc[r['yr_qtr'], r['ID']] = 1
-
-    plt.figure(figsize=(len(ids)/3, len(yr_qtrs)/3))
-    sns.heatmap(mat, cmap=sns.color_palette(["red", "green"]), cbar=False)
-    plt.title(
-        f"Average longest gap length: {pd.Series(longest_gap).mean():.2f} | "
-        f"IDs without gap: {sum(v==0 for v in longest_gap.values())}"
-    )
+        if r['ID'] in mat.columns and r['yr_qtr'] in mat.index:
+            mat.at[r['yr_qtr'], r['ID']] = 1
+    longest_gap = {}
+    gap_window = {}
+    med_before = {}
+    med_after = {}
+    yq_to_idx = {yq:i for i, yq in enumerate(yr_qtrs)}
+    for uid in id_order:
+        present = set(df.loc[df['ID']==uid, 'yr_qtr'])
+        values = [1 if yq in present else 0 for yq in yr_qtrs]
+        best_len = 0
+        best_start = None
+        cur_len = 0
+        cur_start = None
+        for i, v in enumerate(values):
+            if v == 0:
+                if cur_len == 0:
+                    cur_start = i
+                cur_len += 1
+                if cur_len > best_len:
+                    best_len = cur_len
+                    best_start = cur_start
+            else:
+                cur_len = 0
+                cur_start = None
+        if best_len == 0:
+            longest_gap[uid] = 0
+            gap_window[uid] = (None, None)
+            med_before[uid] = None
+            med_after[uid] = None
+            continue
+        best_end = best_start + best_len - 1
+        longest_gap[uid] = best_len
+        gap_window[uid] = (best_start, best_end)
+        sub = df.loc[df['ID']==uid, ['yr_qtr','wage']].sort_values('yr_qtr')
+        wages_map = dict(zip(sub['yr_qtr'], sub['wage']))
+        before_q = yr_qtrs[:best_start]
+        after_q = yr_qtrs[best_end+1:]
+        before_w = [wages_map[q] for q in before_q if q in wages_map]
+        after_w = [wages_map[q] for q in after_q if q in wages_map]
+        med_before[uid] = float(np.median(before_w)) if len(before_w) else None
+        med_after[uid] = float(np.median(after_w)) if len(after_w) else None
+    plt.figure(figsize=(max(6, len(id_order)/3), max(6, len(yr_qtrs)/3)))
+    ax = sns.heatmap(mat, cmap=sns.color_palette(["black","green"]), cbar=False)
+    for j, uid in enumerate(id_order):
+        lg = longest_gap.get(uid, 0)
+        if lg > 0:
+            s, e = gap_window[uid]
+            y_mid = (s + e) / 2.0
+            ax.text(j + 0.5, y_mid + 0.5, str(lg), ha="center", va="center", fontsize=9, color="white")
+    avg_gap = float(np.mean(list(longest_gap.values()))) if len(longest_gap) else 0.0
+    no_gap = sum(1 for v in longest_gap.values() if v == 0)
+    plt.title(f"Average longest gap length: {avg_gap:.2f} | IDs without gap: {no_gap}")
     plt.xlabel("ID")
     plt.ylabel("yr_qtr")
+    plt.tight_layout()
     plt.show()
-
-    # return a summary DataFrame
-    summary = pd.DataFrame({
-        "ID": ids,
-        "longest_gap": [longest_gap[i] for i in ids],
-        "median_wage_before_gap": [median_wage_before[i] for i in ids],
-        "median_wage_after_gap": [median_wage_after[i] for i in ids]
+    out = pd.DataFrame({
+        "ID": id_order,
+        "longest_gap": [longest_gap[i] for i in id_order],
+        "median_wage_before_gap": [med_before[i] for i in id_order],
+        "median_wage_after_gap": [med_after[i] for i in id_order]
     })
-    return summary
+    def delta_row(r):
+        if r["longest_gap"] > 10 and pd.notnull(r["median_wage_before_gap"]) and pd.notnull(r["median_wage_after_gap"]):
+            return r["median_wage_after_gap"] - r["median_wage_before_gap"]
+        return np.nan
+    out["delta_wage_after_minus_before"] = out.apply(delta_row, axis=1)
+    return out
