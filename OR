@@ -1,73 +1,102 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.animation import FuncAnimation
 
-def load_table(path, sheet_name=None):
-    ext = str(path).split(".")[-1].lower()
-    if ext in {"xlsx","xls"}:
-        df = pd.read_excel(path, sheet_name=sheet_name, dtype=str)
-    else:
-        df = pd.read_csv(path, dtype=str)
-    df.columns = [c.strip().lower() for c in df.columns]
-    return df
+def prepare_revisions(df):
+    value_cols = [c for c in df.columns if c.startswith("revised") or c=="final"]
+    df_num = df.copy()
+    for c in value_cols:
+        df_num[c] = pd.to_numeric(df[c], errors="coerce")
+    df_num["initial"] = df_num[[c for c in value_cols if c.startswith("revised")]].min(axis=1, skipna=True)
+    df_num["overall_delta"] = df_num["final"] - df_num["initial"]
+    for i in range(1, 10):
+        col = f"revised{i}"
+        if col in df_num.columns:
+            df_num[f"delta_rev{i}"] = df_num["final"] - df_num[col]
+    if {"year","qtr"}.issubset(df_num.columns):
+        df_num["yr_qtr"] = df_num["year"].astype(str) + "-Q" + df_num["qtr"].astype(str)
+    return df_num
 
-def _smart_numeric(series):
-    s = series.astype(str).str.strip()
-    s = s.replace({
-        "not yet published":"", "Not yet published":"", "NOT YET PUBLISHED":"",
-        "na":"", "n/a":"", "None":"", "":""
-    })
-    s = s.str.replace(r"\u00A0", "", regex=True)
-    s = s.str.replace(r"[,\s]", "", regex=True)
-    s = s.str.replace(r"^\((.*)\)$", r"-\1", regex=True)
-    s = s.str.replace(r"^-$", "", regex=True)
-    return pd.to_numeric(s, errors="coerce")
-
-def coerce_types(df):
-    cand = [c for c in df.columns if c not in {"year","qtr","state","area","geo","field"}]
-    for c in cand:
-        if df[c].astype(str).str.contains(r"\d|not yet published|N/A|^-", case=False, regex=True).any():
-            df[c] = _smart_numeric(df[c])
-    if "year" in df.columns: df["year"] = pd.to_numeric(df["year"], errors="coerce")
-    if "qtr" in df.columns: df["qtr"] = pd.to_numeric(df["qtr"], errors="coerce")
-    return df
-
-def tidy(df):
-    area_col = "state" if "state" in df.columns else ("area" if "area" in df.columns else "geo")
-    id_cols = [c for c in ["year","qtr",area_col,"field"] if c in df.columns]
-    value_cols = [c for c in df.columns if c.startswith("rev") or c=="final"]
-    df = df[id_cols + value_cols].copy()
-    df["yr_qtr"] = pd.PeriodIndex(pd.to_datetime(df["year"].astype("Int64").astype(str) + "-Q" + df["qtr"].astype("Int64").astype(str)).dt.to_period("Q"))
-    long = df.melt(id_vars=id_cols+["yr_qtr"], value_vars=value_cols, var_name="revision", value_name="value")
-    rev_order = [c for c in ["revised1","revised2","revised3","revised4","final"] if c in value_cols]
-    long["revision"] = pd.Categorical(long["revision"], categories=rev_order, ordered=True)
-    return long.rename(columns={area_col:"state"})
-
-def revision_deltas(df_tidy):
-    pv = df_tidy.pivot_table(index=["year","qtr","yr_qtr","state","field"], columns="revision", values="value", aggfunc="first").reset_index()
-    if "final" not in pv.columns: pv["final"] = np.nan
-    rev_cols = [c for c in pv.columns if c.startswith("revised")]
-    for c in rev_cols:
-        pv[f"abs_delta_{c}"] = (pv["final"] - pv[c]).abs()
-        pv[f"pct_delta_{c}"] = np.where(pv["final"].abs()>0, (pv["final"] - pv[c]).abs()/pv["final"].abs(), np.nan)
-    return pv
-
-def plot_timeseries(df_tidy, state, field):
-    d = df_tidy[(df_tidy["state"]==state) & (df_tidy["field"]==field)]
-    wid = max(8, int(d["yr_qtr"].nunique()/3)+2)
-    plt.figure(figsize=(wid,4))
-    for rev, grp in d.sort_values("revision").groupby("revision"):
-        grp = grp.sort_values("yr_qtr")
-        plt.plot(grp["yr_qtr"].astype(str), grp["value"], label=str(rev))
+def plot_delta_heatmap(df, field, delta_col="overall_delta"):
+    sub = df[df["field"]==field]
+    mat = sub.pivot_table(index="state", columns="yr_qtr", values=delta_col)
+    plt.figure(figsize=(12,6))
+    sns.heatmap(mat, cmap="RdBu_r", center=0, annot=False, cbar_kws={"label":"Delta"})
+    plt.title(f"{field} | {delta_col.replace('_',' ')}")
     plt.xticks(rotation=90)
-    plt.title(f"{field} | {state}")
-    plt.legend()
     plt.tight_layout()
     plt.show()
 
-df = load_table("your_file.xlsx")
-df = coerce_types(df)
-tidy_df = tidy(df)
-plot_timeseries(tidy_df, state="United States", field="January Employment")
-pv = revision_deltas(tidy_df)
+def animate_revisions(df, field, states=None, save_path=None, interval=1500):
+    sub = df[df["field"]==field].copy()
+    if states is not None:
+        sub = sub[sub["state"].isin(states)]
+    revisions = [c for c in df.columns if c.startswith("revised")] + (["final"] if "final" in df.columns else [])
+    fig, ax = plt.subplots(figsize=(10,6))
+    def update(frame):
+        ax.clear()
+        rev = revisions[frame]
+        mat = sub.pivot_table(index="state", columns="yr_qtr", values=rev)
+        sns.heatmap(mat, cmap="YlGnBu", ax=ax, cbar=False)
+        ax.set_title(f"{field} | {rev}")
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    ani = FuncAnimation(fig, update, frames=len(revisions), interval=interval, repeat=True)
+    if save_path:
+        ani.save(save_path, writer="pillow", fps=max(1, int(1000/interval)))
+    plt.show()
 
+def summary_tables(df):
+    delta_cols = [c for c in df.columns if c.startswith("delta_") or c=="overall_delta"]
+    long = df.melt(id_vars=[c for c in ["year","qtr","yr_qtr","state","field"] if c in df.columns],
+                   value_vars=delta_cols, var_name="delta_type", value_name="delta")
+    long = long.dropna(subset=["delta"])
+    rev_summary = (long.groupby("delta_type")["delta"]
+                        .apply(lambda x: x.abs().max())
+                        .reset_index(name="max_abs_change")
+                        .sort_values("max_abs_change", ascending=False))
+    field_summary = (long.groupby("field")["delta"]
+                          .apply(lambda x: x.abs().max())
+                          .reset_index(name="max_abs_change")
+                          .sort_values("max_abs_change", ascending=False))
+    top_changes = long.reindex(long["delta"].abs().sort_values(ascending=False).index).head(20)
+    return rev_summary, field_summary, top_changes
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+
+path = "your_file.xlsx"
+sheet = 0
+field_to_view = "January Employment"
+states_subset = ["United States","Alabama"]
+gif_path = "revisions.gif"
+
+df = pd.read_excel(path, sheet_name=sheet, dtype=str) if path.lower().endswith((".xlsx",".xls")) else pd.read_csv(path, dtype=str)
+if isinstance(df, dict):
+    df = list(df.values())[0]
+df.columns = [c.strip().lower() for c in df.columns]
+
+df_rev = prepare_revisions(df)
+
+rev_summary, field_summary, top_changes = summary_tables(df_rev)
+print(rev_summary.to_string(index=False))
+print(field_summary.head(10).to_string(index=False))
+print(top_changes.to_string(index=False))
+
+plot_delta_heatmap(df_rev, field=field_to_view, delta_col="overall_delta")
+animate_revisions(df_rev, field=field_to_view, states=states_subset, save_path=gif_path, interval=1500)
+
+rev_summary.to_csv("rev_summary.csv", index=False)
+field_summary.to_csv("field_summary.csv", index=False)
+top_changes.to_csv("top_changes.csv", index=False)
