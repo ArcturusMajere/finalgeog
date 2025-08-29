@@ -1,102 +1,22 @@
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.animation import FuncAnimation
-
-def prepare_revisions(df):
-    value_cols = [c for c in df.columns if c.startswith("revised") or c=="final"]
-    df_num = df.copy()
-    for c in value_cols:
-        df_num[c] = pd.to_numeric(df[c], errors="coerce")
-    df_num["initial"] = df_num[[c for c in value_cols if c.startswith("revised")]].min(axis=1, skipna=True)
-    df_num["overall_delta"] = df_num["final"] - df_num["initial"]
-    for i in range(1, 10):
-        col = f"revised{i}"
-        if col in df_num.columns:
-            df_num[f"delta_rev{i}"] = df_num["final"] - df_num[col]
-    if {"year","qtr"}.issubset(df_num.columns):
-        df_num["yr_qtr"] = df_num["year"].astype(str) + "-Q" + df_num["qtr"].astype(str)
-    return df_num
-
-def plot_delta_heatmap(df, field, delta_col="overall_delta"):
-    sub = df[df["field"]==field]
-    mat = sub.pivot_table(index="state", columns="yr_qtr", values=delta_col)
-    plt.figure(figsize=(12,6))
-    sns.heatmap(mat, cmap="RdBu_r", center=0, annot=False, cbar_kws={"label":"Delta"})
-    plt.title(f"{field} | {delta_col.replace('_',' ')}")
-    plt.xticks(rotation=90)
-    plt.tight_layout()
-    plt.show()
-
-def animate_revisions(df, field, states=None, save_path=None, interval=1500):
-    sub = df[df["field"]==field].copy()
-    if states is not None:
-        sub = sub[sub["state"].isin(states)]
-    revisions = [c for c in df.columns if c.startswith("revised")] + (["final"] if "final" in df.columns else [])
+def animate_fields_heatmap(df, delta_col="overall_delta", fields=None, areas=None, save_path=None, interval=1200):
+    sub = df.copy()
+    if areas is not None:
+        sub = sub[sub["area"].isin(areas)]
+    all_fields = list(pd.unique(sub["field"]))
+    if fields is None:
+        fields = all_fields
+    else:
+        fields = [f for f in fields if f in all_fields]
     fig, ax = plt.subplots(figsize=(10,6))
-    def update(frame):
+    def update(i):
         ax.clear()
-        rev = revisions[frame]
-        mat = sub.pivot_table(index="state", columns="yr_qtr", values=rev)
-        sns.heatmap(mat, cmap="YlGnBu", ax=ax, cbar=False)
-        ax.set_title(f"{field} | {rev}")
+        f = fields[i]
+        d = sub[sub["field"]==f]
+        mat = d.pivot_table(index="area", columns="yr_qtr", values=delta_col)
+        sns.heatmap(mat, cmap="RdBu_r", center=0, ax=ax, cbar=False)
+        ax.set_title(f"{f} | {delta_col.replace('_',' ')}")
         ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
-    ani = FuncAnimation(fig, update, frames=len(revisions), interval=interval, repeat=True)
+    ani = FuncAnimation(fig, update, frames=len(fields), interval=interval, repeat=True)
     if save_path:
         ani.save(save_path, writer="pillow", fps=max(1, int(1000/interval)))
     plt.show()
-
-def summary_tables(df):
-    delta_cols = [c for c in df.columns if c.startswith("delta_") or c=="overall_delta"]
-    long = df.melt(id_vars=[c for c in ["year","qtr","yr_qtr","state","field"] if c in df.columns],
-                   value_vars=delta_cols, var_name="delta_type", value_name="delta")
-    long = long.dropna(subset=["delta"])
-    rev_summary = (long.groupby("delta_type")["delta"]
-                        .apply(lambda x: x.abs().max())
-                        .reset_index(name="max_abs_change")
-                        .sort_values("max_abs_change", ascending=False))
-    field_summary = (long.groupby("field")["delta"]
-                          .apply(lambda x: x.abs().max())
-                          .reset_index(name="max_abs_change")
-                          .sort_values("max_abs_change", ascending=False))
-    top_changes = long.reindex(long["delta"].abs().sort_values(ascending=False).index).head(20)
-    return rev_summary, field_summary, top_changes
-
-
-
-
-
-
-
-
-
-
-
-
-import pandas as pd
-
-path = "your_file.xlsx"
-sheet = 0
-field_to_view = "January Employment"
-states_subset = ["United States","Alabama"]
-gif_path = "revisions.gif"
-
-df = pd.read_excel(path, sheet_name=sheet, dtype=str) if path.lower().endswith((".xlsx",".xls")) else pd.read_csv(path, dtype=str)
-if isinstance(df, dict):
-    df = list(df.values())[0]
-df.columns = [c.strip().lower() for c in df.columns]
-
-df_rev = prepare_revisions(df)
-
-rev_summary, field_summary, top_changes = summary_tables(df_rev)
-print(rev_summary.to_string(index=False))
-print(field_summary.head(10).to_string(index=False))
-print(top_changes.to_string(index=False))
-
-plot_delta_heatmap(df_rev, field=field_to_view, delta_col="overall_delta")
-animate_revisions(df_rev, field=field_to_view, states=states_subset, save_path=gif_path, interval=1500)
-
-rev_summary.to_csv("rev_summary.csv", index=False)
-field_summary.to_csv("field_summary.csv", index=False)
-top_changes.to_csv("top_changes.csv", index=False)
