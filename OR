@@ -1,57 +1,73 @@
-import plotly.express as px
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 
-def animated_bubble_chart(df, output_file="bubble_chart.html"):
-    df['naics3'] = df['naics3'].astype(str)
-    fig = px.scatter(
-        df,
-        x="mean",
-        y="count",
-        size="count",
-        color="naics3",
-        animation_frame="yr_qtr",
-        hover_name="naics3",
-        size_max=60,
-        labels={"mean": "Mean", "count": "Count", "naics3": "NAICS3"}
-    )
-    fig.write_html(output_file)
-    return output_file
+def load_table(path, sheet_name=None):
+    ext = str(path).split(".")[-1].lower()
+    if ext in {"xlsx","xls"}:
+        df = pd.read_excel(path, sheet_name=sheet_name, dtype=str)
+    else:
+        df = pd.read_csv(path, dtype=str)
+    df.columns = [c.strip().lower() for c in df.columns]
+    return df
 
+def _smart_numeric(series):
+    s = series.astype(str).str.strip()
+    s = s.replace({
+        "not yet published":"", "Not yet published":"", "NOT YET PUBLISHED":"",
+        "na":"", "n/a":"", "None":"", "":""
+    })
+    s = s.str.replace(r"\u00A0", "", regex=True)
+    s = s.str.replace(r"[,\s]", "", regex=True)
+    s = s.str.replace(r"^\((.*)\)$", r"-\1", regex=True)
+    s = s.str.replace(r"^-$", "", regex=True)
+    return pd.to_numeric(s, errors="coerce")
 
+def coerce_types(df):
+    cand = [c for c in df.columns if c not in {"year","qtr","state","area","geo","field"}]
+    for c in cand:
+        if df[c].astype(str).str.contains(r"\d|not yet published|N/A|^-", case=False, regex=True).any():
+            df[c] = _smart_numeric(df[c])
+    if "year" in df.columns: df["year"] = pd.to_numeric(df["year"], errors="coerce")
+    if "qtr" in df.columns: df["qtr"] = pd.to_numeric(df["qtr"], errors="coerce")
+    return df
 
+def tidy(df):
+    area_col = "state" if "state" in df.columns else ("area" if "area" in df.columns else "geo")
+    id_cols = [c for c in ["year","qtr",area_col,"field"] if c in df.columns]
+    value_cols = [c for c in df.columns if c.startswith("rev") or c=="final"]
+    df = df[id_cols + value_cols].copy()
+    df["yr_qtr"] = pd.PeriodIndex(pd.to_datetime(df["year"].astype("Int64").astype(str) + "-Q" + df["qtr"].astype("Int64").astype(str)).dt.to_period("Q"))
+    long = df.melt(id_vars=id_cols+["yr_qtr"], value_vars=value_cols, var_name="revision", value_name="value")
+    rev_order = [c for c in ["revised1","revised2","revised3","revised4","final"] if c in value_cols]
+    long["revision"] = pd.Categorical(long["revision"], categories=rev_order, ordered=True)
+    return long.rename(columns={area_col:"state"})
 
-def animated_bubble_chart_clusters(df, output_file="bubble_clusters.html"):
-    df['naics3'] = df['naics3'].astype(str)
-    fig = px.scatter(
-        df,
-        x="mean",
-        y="count",
-        size="count",
-        color="naics3",
-        animation_frame="yr_qtr",
-        hover_name="naics3",
-        size_max=60,
-        labels={"mean": "Mean", "count": "Count", "naics3": "NAICS3"}
-    )
-    fig.update_layout(title="Animated Bubble Chart: Clusters (Mean vs Count)")
-    fig.write_html(output_file)
-    return output_file
+def revision_deltas(df_tidy):
+    pv = df_tidy.pivot_table(index=["year","qtr","yr_qtr","state","field"], columns="revision", values="value", aggfunc="first").reset_index()
+    if "final" not in pv.columns: pv["final"] = np.nan
+    rev_cols = [c for c in pv.columns if c.startswith("revised")]
+    for c in rev_cols:
+        pv[f"abs_delta_{c}"] = (pv["final"] - pv[c]).abs()
+        pv[f"pct_delta_{c}"] = np.where(pv["final"].abs()>0, (pv["final"] - pv[c]).abs()/pv["final"].abs(), np.nan)
+    return pv
 
-def animated_bubble_chart_timeline(df, output_file="bubble_timeline.html"):
-    df['naics3'] = df['naics3'].astype(str)
-    fig = px.scatter(
-        df,
-        x="yr_qtr",
-        y="mean",
-        size="count",
-        color="naics3",
-        hover_name="naics3",
-        size_max=60,
-        labels={"yr_qtr": "Quarter", "mean": "Mean", "count": "Count", "naics3": "NAICS3"},
-        animation_frame="yr_qtr"  # keeps the animation sequential
-    )
-    fig.update_layout(title="Animated Bubble Chart: Timeline (Mean over Time)")
-    fig.write_html(output_file)
-    return output_file
-# Generate both HTMLs
-animated_bubble_chart_clusters(df, "bubble_clusters.html")
-animated_bubble_chart_timeline(df, "bubble_timeline.html")
+def plot_timeseries(df_tidy, state, field):
+    d = df_tidy[(df_tidy["state"]==state) & (df_tidy["field"]==field)]
+    wid = max(8, int(d["yr_qtr"].nunique()/3)+2)
+    plt.figure(figsize=(wid,4))
+    for rev, grp in d.sort_values("revision").groupby("revision"):
+        grp = grp.sort_values("yr_qtr")
+        plt.plot(grp["yr_qtr"].astype(str), grp["value"], label=str(rev))
+    plt.xticks(rotation=90)
+    plt.title(f"{field} | {state}")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+df = load_table("your_file.xlsx")
+df = coerce_types(df)
+tidy_df = tidy(df)
+plot_timeseries(tidy_df, state="United States", field="January Employment")
+pv = revision_deltas(tidy_df)
+
