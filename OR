@@ -1,22 +1,57 @@
-def animate_fields_heatmap(df, delta_col="overall_delta", fields=None, areas=None, save_path=None, interval=1200):
-    sub = df.copy()
-    if areas is not None:
-        sub = sub[sub["area"].isin(areas)]
-    all_fields = list(pd.unique(sub["field"]))
-    if fields is None:
-        fields = all_fields
-    else:
-        fields = [f for f in fields if f in all_fields]
-    fig, ax = plt.subplots(figsize=(10,6))
-    def update(i):
-        ax.clear()
-        f = fields[i]
-        d = sub[sub["field"]==f]
-        mat = d.pivot_table(index="area", columns="yr_qtr", values=delta_col)
-        sns.heatmap(mat, cmap="RdBu_r", center=0, ax=ax, cbar=False)
-        ax.set_title(f"{f} | {delta_col.replace('_',' ')}")
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
-    ani = FuncAnimation(fig, update, frames=len(fields), interval=interval, repeat=True)
-    if save_path:
-        ani.save(save_path, writer="pillow", fps=max(1, int(1000/interval)))
-    plt.show()
+import itertools as it
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+years = range(2014, 2025)
+quarters = [1, 2, 3, 4]
+tasks = list(it.product(years, quarters))
+
+def _run(y, q):
+    df = Doctor_Idaho_Cohort(y, q)
+    df["yr_qtr"] = f"{y}Q{q}"
+    return df
+
+dfs = []
+with ThreadPoolExecutor(max_workers=8) as ex:
+    futs = [ex.submit(_run, y, q) for y, q in tasks]
+    for f in as_completed(futs):
+        dfs.append(f.result())
+
+result_df = pd.concat(dfs, ignore_index=True)
+
+
+import oracledb
+import itertools as it
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+pool = oracledb.SessionPool(user=USER, password=PASSWORD, dsn=DSN, min=1, max=12, increment=2, threaded=True)
+
+def _run(y, q):
+    with pool.acquire() as conn:
+        df = Doctor_Idaho_Cohort(y, q, conn=conn)
+        df["yr_qtr"] = f"{y}Q{q}"
+        return df
+
+tasks = list(it.product(range(2014, 2025), [1,2,3,4]))
+with ThreadPoolExecutor(max_workers=8) as ex:
+    dfs = [f.result() for f in as_completed([ex.submit(_run, y, q) for y, q in tasks])]
+
+result_df = pd.concat(dfs, ignore_index=True)
+
+
+import pandas as pd
+import oracledb
+
+pool = oracledb.SessionPool(user=USER, password=PASSWORD, dsn=DSN, min=1, max=4, increment=1, threaded=True)
+sql = """
+SELECT *
+FROM qcew_wage_data
+WHERE state_code = :fips
+  AND yr BETWEEN 2014 AND 2024
+  AND qtr IN (1,2,3,4)
+"""
+with pool.acquire() as conn:
+    df = pd.read_sql(sql, conn, params={"fips": fips})
+# if you need yr_qtr:
+df["yr_qtr"] = df["yr"].astype(str) + "Q" + df["qtr"].astype(str)
