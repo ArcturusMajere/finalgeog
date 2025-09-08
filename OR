@@ -1,3 +1,4 @@
+import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Run Doctor_IdahoCohort in parallel for years 2014–2024
@@ -5,7 +6,7 @@ def run_multithreaded():
     years = list(range(2014, 2025))
     results = []
 
-    with ThreadPoolExecutor(max_workers=8) as executor:  # adjust workers to your CPU/IO load
+    with ThreadPoolExecutor(max_workers=8) as executor:  # tune for your workload
         futures = {executor.submit(Doctor_IdahoCohort, year): year for year in years}
 
         for future in as_completed(futures):
@@ -17,7 +18,14 @@ def run_multithreaded():
             except Exception as e:
                 print(f"Error with year {year}: {e}")
 
-    return results
+    # Combine all yearly DataFrames into one
+    if results:
+        final_df = pd.concat(results, ignore_index=True)
+    else:
+        final_df = pd.DataFrame()
+
+    return final_df
 
 # Example call
 all_results = run_multithreaded()
+print(all_results.head())
