@@ -1,57 +1,23 @@
-import itertools as it
-import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-years = range(2014, 2025)
-quarters = [1, 2, 3, 4]
-tasks = list(it.product(years, quarters))
+# Run Doctor_IdahoCohort in parallel for years 2014–2024
+def run_multithreaded():
+    years = list(range(2014, 2025))
+    results = []
 
-def _run(y, q):
-    df = Doctor_Idaho_Cohort(y, q)
-    df["yr_qtr"] = f"{y}Q{q}"
-    return df
+    with ThreadPoolExecutor(max_workers=8) as executor:  # adjust workers to your CPU/IO load
+        futures = {executor.submit(Doctor_IdahoCohort, year): year for year in years}
 
-dfs = []
-with ThreadPoolExecutor(max_workers=8) as ex:
-    futs = [ex.submit(_run, y, q) for y, q in tasks]
-    for f in as_completed(futs):
-        dfs.append(f.result())
+        for future in as_completed(futures):
+            year = futures[future]
+            try:
+                result = future.result()
+                results.append(result)
+                print(f"Finished year {year}")
+            except Exception as e:
+                print(f"Error with year {year}: {e}")
 
-result_df = pd.concat(dfs, ignore_index=True)
+    return results
 
-
-import oracledb
-import itertools as it
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-pool = oracledb.SessionPool(user=USER, password=PASSWORD, dsn=DSN, min=1, max=12, increment=2, threaded=True)
-
-def _run(y, q):
-    with pool.acquire() as conn:
-        df = Doctor_Idaho_Cohort(y, q, conn=conn)
-        df["yr_qtr"] = f"{y}Q{q}"
-        return df
-
-tasks = list(it.product(range(2014, 2025), [1,2,3,4]))
-with ThreadPoolExecutor(max_workers=8) as ex:
-    dfs = [f.result() for f in as_completed([ex.submit(_run, y, q) for y, q in tasks])]
-
-result_df = pd.concat(dfs, ignore_index=True)
-
-
-import pandas as pd
-import oracledb
-
-pool = oracledb.SessionPool(user=USER, password=PASSWORD, dsn=DSN, min=1, max=4, increment=1, threaded=True)
-sql = """
-SELECT *
-FROM qcew_wage_data
-WHERE state_code = :fips
-  AND yr BETWEEN 2014 AND 2024
-  AND qtr IN (1,2,3,4)
-"""
-with pool.acquire() as conn:
-    df = pd.read_sql(sql, conn, params={"fips": fips})
-# if you need yr_qtr:
-df["yr_qtr"] = df["yr"].astype(str) + "Q" + df["qtr"].astype(str)
+# Example call
+all_results = run_multithreaded()
