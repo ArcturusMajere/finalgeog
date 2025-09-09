@@ -1,31 +1,45 @@
-import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import pandas as pd
 
-# Run Doctor_IdahoCohort in parallel for years 2014–2024
-def run_multithreaded():
-    years = list(range(2014, 2025))
+def threaded_quarter_extract(fips, years, quarters=(1,2,3,4), max_workers=8):
+    """Run quarter_extract(fips, year, quarter) in parallel for a range of years/quarters."""
+    tasks = []
     results = []
 
-    with ThreadPoolExecutor(max_workers=8) as executor:  # tune for your workload
-        futures = {executor.submit(Doctor_IdahoCohort, year): year for year in years}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for year in years:
+            for q in quarters:
+                tasks.append(executor.submit(quarter_extract, fips, year, q))
 
-        for future in as_completed(futures):
-            year = futures[future]
+        for future in as_completed(tasks):
             try:
-                result = future.result()
-                results.append(result)
-                print(f"Finished year {year}")
+                df = future.result()
+                if df is not None and not df.empty:
+                    results.append(df)
             except Exception as e:
-                print(f"Error with year {year}: {e}")
+                print(f"Quarterly extraction error: {e}")
 
-    # Combine all yearly DataFrames into one
-    if results:
-        final_df = pd.concat(results, ignore_index=True)
-    else:
-        final_df = pd.DataFrame()
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+def threaded_annual_extract(fips, years, max_workers=8):
+    """Run annual_extract(fips, year) in parallel for a range of years."""
+    tasks = []
+    results = []
 
-    return final_df
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for year in years:
+            tasks.append(executor.submit(annual_extract, fips, year))
 
-# Example call
-all_results = run_multithreaded()
-print(all_results.head())
+        for future in as_completed(tasks):
+            try:
+                df = future.result()
+                if df is not None and not df.empty:
+                    results.append(df)
+            except Exception as e:
+                print(f"Annual extraction error: {e}")
+
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+years = range(2014, 2025)
+fips = "16"   # Idaho FIPS, for example
+
+quarterly_df = threaded_quarter_extract(fips, years)
+annual_df = threaded_annual_extract(fips, years)
