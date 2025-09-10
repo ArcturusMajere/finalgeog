@@ -216,3 +216,95 @@ viz_wage_counts(master, view="stacked_wages", save_path="wages_viz.html")
 viz_wage_counts(master, view="heatmap_counts", save_path="heatmap_counts.html")
 viz_wage_counts(master, view="heatmap_wages", save_path="heatmap_wages.html")
 
+import pandas as pd
+import plotly.express as px
+
+def plot_wage_viz(master: pd.DataFrame, view="bubble", value="all_id_count", naics2=None, save_html=None):
+    df = master.copy()
+
+    if view == "bubble":
+        df["avg_wage"] = df["all_total_wages"] / df["all_id_count"].replace(0, pd.NA)
+        fig = px.scatter(
+            df,
+            x="avg_wage",
+            y="all_id_count",
+            size="all_total_wages",
+            color="NAICS2",
+            animation_frame="yr_qtr",
+            hover_data=["NAICS2","yr_qtr","all_total_wages","all_id_count"],
+            size_max=60,
+            labels={"avg_wage":"Average wage","all_id_count":"ID count","all_total_wages":"Total wages"},
+            title="Avg Wage vs ID Count (size = Total Wages)"
+        )
+
+    elif view == "stacked":
+        if value not in {"all_id_count","all_total_wages"}:
+            raise ValueError("For 'stacked', value must be 'all_id_count' or 'all_total_wages'.")
+        fig = px.bar(
+            df,
+            x="yr_qtr",
+            y=value,
+            color="NAICS2",
+            barmode="stack",
+            labels={"yr_qtr":"Quarter", value:value.replace("_"," ").title()},
+            title=f"Stacked Bar: {value.replace('_',' ').title()} by NAICS2 per Quarter"
+        )
+
+    elif view == "heatmap":
+        if value not in {"all_id_count","all_total_wages"}:
+            raise ValueError("For 'heatmap', value must be 'all_id_count' or 'all_total_wages'.")
+        p = df.pivot(index="NAICS2", columns="yr_qtr", values=value).fillna(0)
+        fig = px.imshow(
+            p,
+            labels=dict(x="Quarter", y="NAICS2", color=value.replace("_"," ").title()),
+            aspect="auto",
+            title=f"Heatmap: {value.replace('_',' ').title()} (NAICS2 × Quarter)"
+        )
+
+    elif view == "band_shares":
+        if naics2 is None:
+            raise ValueError("Provide naics2 for 'band_shares'.")
+        d = df[df["NAICS2"] == naics2].copy()
+        bin_cols = [c for c in d.columns if c.endswith("__id_count")]
+        d["id_total"] = d["all_id_count"].replace(0, pd.NA)
+        for c in bin_cols:
+            d[c.replace("__id_count","__id_share")] = d[c] / d["id_total"]
+        share_cols = [c for c in d.columns if c.endswith("__id_share")]
+        long = d.melt(id_vars=["yr_qtr"], value_vars=share_cols, var_name="band", value_name="share")
+        long["band"] = long["band"].str.replace("__id_share","", regex=False)
+        fig = px.line(
+            long.sort_values("yr_qtr"),
+            x="yr_qtr", y="share", color="band",
+            labels={"share":"Share of employees","yr_qtr":"Quarter","band":"Wage band"},
+            title=f"Wage Band Employee Shares Over Time — NAICS2 {naics2}"
+        )
+
+    else:
+        raise ValueError("view must be one of: 'bubble', 'stacked', 'heatmap', 'band_shares'")
+
+    if save_html:
+        fig.write_html(save_html, include_plotlyjs="cdn", full_html=True)
+    fig.show()
+    return fig
+# 1) Bubble (animated by quarter)
+plot_wage_viz(master, view="bubble")
+
+# 2) Stacked bars (counts)
+plot_wage_viz(master, view="stacked", value="all_id_count")
+
+# 3) Stacked bars (wages)
+plot_wage_viz(master, view="stacked", value="all_total_wages")
+
+# 4) Heatmap (counts)
+plot_wage_viz(master, view="heatmap", value="all_id_count")
+
+# 5) Band shares over time for a NAICS2
+plot_wage_viz(master, view="band_shares", naics2="52")
+
+
+
+
+
+
+master = build_master_wage_table("path/to/your/csv_folder", id_col="ID", wage_col="WAGE", naics_col="NAICS2")
+
