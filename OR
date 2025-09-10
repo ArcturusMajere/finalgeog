@@ -1,117 +1,87 @@
-    paired_cols = []
-    for wc in labels:
-        # count then total adjacent
-        for metric in ["id_count", "total_wages"]:
-            col = f"{wc}__{metric}"
-            if col in out.columns:
-                paired_cols.append(col)
+import json
+from pathlib import Path
 
-    out = out[paired_cols]
+def json_to_bubble_html(json_path, output_html, title="NAICS2 Wage Bins Bubble Animation"):
+    data = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>{title}</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:20px}}
+#wrap{{max-width:1100px;margin:0 auto}}
+#ctrl{{display:flex;gap:12px;align-items:center;margin-bottom:12px}}
+#naics{{min-width:220px}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="ctrl">
+    <label for="naics">NAICS2</label>
+    <select id="naics"></select>
+  </div>
+  <div id="chart" style="height:640px"></div>
+</div>
+<script>
+var DATA = {json.dumps(data)};
+var BIN_ORDER=["1-2499","2500-6249","6250-12499","12500-18749","18750-24999","25000-49999","50000-124999","125000-249999","250000+"];
 
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+function binMid(b){{if(b.endsWith("+"))return 250000;var p=b.split("-");return (parseInt(p[0],10)+parseInt(p[1],10))/2;}}
+function prep(d){{return d.map(x=>Object.assign({{}},x,{{bin_mid:binMid(x.bin)}}));}}
+var D=prep(DATA);
 
-def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
-    if naics_col not in df.columns:
-        raise ValueError("naics_col not found")
-    if df[naics_col].dtype.kind in "iufc":
-        df = df.copy()
-        df["NAICS2"] = df[naics_col].astype("Int64")
-    else:
-        df = df.copy()
-        df["NAICS2"] = df[naics_col].astype(str).str.extract(r"(\d{2})", expand=False)
+function uniques(arr,key){{var s=new Set(arr.map(d=>d[key]));return Array.from(s).sort((a,b)=>(""+a).localeCompare(""+b,undefined,{{numeric:true}}));}}
+function byNAICS(val){{return D.filter(d=>(""+d.NAICS2)===((""+val)));}}
 
-    bins = [0, 2500, 6250, 12500, 18750, 25000, 50000, 125000, 250000, np.inf]
-    labels = [
-        "1-2499","2500-6249","6250-12499","12500-18749",
-        "18750-24999","25000-49999","50000-124999",
-        "125000-249999","250000+"
-    ]
+function buildFigure(naicsVal){{
+  var rows=byNAICS(naicsVal);
+  var framesByT={{}};
+  rows.forEach(r=>{{(framesByT[r.timeframe]||(framesByT[r.timeframe]=[])).push(r);}});
+  var timekeys=Object.keys(framesByT).sort((a,b)=>(""+a).localeCompare(""+b,undefined,{{numeric:true}}));
+  if(timekeys.length===0){{return {{data:[],layout:{},frames:[]}};}}
+  var traces0=BIN_ORDER.map(b=>{{
+    var r=rows.find(x=>x.timeframe===timekeys[0]&&x.bin===b)||{{bin:b,bin_mid:binMid(b),id_count:0,total_wages:0}};
+    return {{x:[r.bin_mid],y:[r.id_count],mode:"markers",type:"scatter",name:b,marker:{{size:Math.sqrt(r.total_wages)/20}},hovertemplate:"Bin=%{{text}}<br>ID count=%{{y:,}}<br>Total wages=%{{customdata:,}}<extra></extra>",text:[b],customdata:[r.total_wages],showlegend:true}};
+  }});
+  var frames=timekeys.map(t=>{{
+    var arr=BIN_ORDER.map(b=>{{
+      var r=(framesByT[t]||[]).find(x=>x.bin===b)||{{bin:b,bin_mid:binMid(b),id_count:0,total_wages:0}};
+      return {{x:[r.bin_mid],y:[r.id_count],marker:{{size:Math.sqrt(r.total_wages)/20}},text:[b],customdata:[r.total_wages]}};
+    }});
+    return {{name:t,data:arr}};
+  }});
+  var tickvals=[1250,4375,9375,15625,21875,37500,87500,187500,250000];
+  var ticktext=["1–2.5k","2.5–6.25k","6.25–12.5k","12.5–18.75k","18.75–25k","25–50k","50–125k","125–250k","250k+"];
+  var layout={{xaxis:{{title:"Wage bin midpoint",tickmode:"array",tickvals:tickvals,ticktext:ticktext,range:[0,270000]}},yaxis:{{title:"ID count",rangemode:"tozero"}},legend:{{title:{{text:"Wage bin"}}}},margin:{{l:70,r:20,t:30,b:60}},updatemenus:[{{type:"buttons",showactive:false,y:1.12,x:0.0,xanchor:"left",yanchor:"top",buttons:[{{label:"Play",method:"animate",args:[null,{{fromcurrent:true,frame:{{duration:700,redraw:true}},transition:{{duration:300}}}}]}},{{label:"Pause",method:"animate",args:[[null],{{mode:"immediate",frame:{{duration:0,redraw:false}},transition:{{duration:0}}}}]}}]}}],sliders:[{{active:0,y:1.05,x:0.15,len:0.8,steps:timekeys.map(t=>({{label:t,method:"animate",args:[[t],{{mode:"immediate",transition:{{duration:200}},frame:{{duration:0,redraw:true}}}}]}}))}}]}};
+  return {{data:traces0,layout:layout,frames:frames}};
+}}
 
-    df["wage_class"] = pd.cut(
-        df[wage_col].astype(float),
-        bins=bins, labels=labels, right=True, include_lowest=False
-    )
+function mount(){{
+  var naicsSel=document.getElementById("naics");
+  var naicsVals=uniques(D,"NAICS2");
+  naicsSel.innerHTML=naicsVals.map(v=>`<option value="${{v}}">${{v}}</option>`).join("");
+  var start=naicsVals[0]||"";
+  var fig=buildFigure(start);
+  Plotly.newPlot("chart",fig.data,fig.layout).then(()=>Plotly.addFrames("chart",fig.frames));
+  naicsSel.onchange=function(e){{var f=buildFigure(e.target.value);Plotly.react("chart",f.data,f.layout).then(()=>Plotly.addFrames("chart",f.frames));}};
+}}
+mount();
+</script>
+</body>
+</html>"""
+    Path(output_html).write_text(html, encoding="utf-8")
+    return str(output_html)
 
-    g = df.groupby(["NAICS2","wage_class"]).agg(
-        total_wages=(wage_col,"sum"),
-        id_count=(id_col,"nunique")
-    )
 
-    out = (
-        g.unstack("wage_class")
-         .reindex(columns=pd.Index(labels, name="wage_class"), level=1)
-         .sort_index()
-         .fillna(0)
-    )
 
-    out.columns = [f"{wc}__{metric}" for metric, wc in out.columns]
 
-    paired_cols = []
-    for wc in labels:
-        # count then total adjacent
-        for metric in ["id_count", "total_wages"]:
-            col = f"{wc}__{metric}"
-            if col in out.columns:
-                paired_cols.append(col)
 
-    out = out[paired_cols]
-    return out
-#&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+# 1. Convert your Excel with wage bins (multiple sheets) into JSON
+json_str = excel_to_long_json("your_wage_bins.xlsx", naics_col="NAICS2", save_path="wage_bins.json")
 
-import pandas as pd
-import numpy as np
+# 2. Generate the interactive HTML file with dropdown + bubble animation
+html_file = json_to_bubble_html("wage_bins.json", "wage_bubbles.html")
 
-def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
-    if naics_col not in df.columns:
-        raise ValueError("naics_col not found")
-    if df[naics_col].dtype.kind in "iufc":
-        df = df.copy()
-        df["NAICS2"] = df[naics_col].astype("Int64")
-    else:
-        df = df.copy()
-        df["NAICS2"] = df[naics_col].astype(str).str.extract(r"(\d{2})", expand=False)
-
-    bins = [0, 2500, 6250, 12500, 18750, 25000, 50000, 125000, 250000, np.inf]
-    labels = [
-        "1-2499","2500-6249","6250-12499","12500-18749",
-        "18750-24999","25000-49999","50000-124999",
-        "125000-249999","250000+"
-    ]
-
-    df[wage_col] = pd.to_numeric(df[wage_col], errors="coerce")
-    df["wage_class"] = pd.cut(
-        df[wage_col],
-        bins=bins, labels=labels, right=True, include_lowest=False
-    )
-
-    g = df.groupby([naics_col,"wage_class"]).agg(
-        total_wages=(wage_col,"sum"),
-        id_count=(id_col,"nunique")
-    )
-
-    out = (
-        g.unstack("wage_class")
-         .reindex(columns=pd.MultiIndex.from_product([["total_wages","id_count"], labels]))
-         .fillna(0)
-         .reset_index()
-    )
-
-    out.columns = [naics_col] + [f"{wc}__{metric}" for metric, wc in out.columns if wc]
-
-    paired_cols = []
-    for wc in labels:
-        for metric in ["id_count", "total_wages"]:
-            col = f"{wc}__{metric}"
-            if col in out.columns:
-                paired_cols.append(col)
-
-    # totals per sector
-    totals = df.groupby(naics_col).agg(
-        all_total_wages=(wage_col, "sum"),
-        all_id_count=(id_col, "nunique")
-    ).reset_index()
-
-    out = totals.merge(out, on=naics_col, how="left")
-    out = out[[naics_col, "all_total_wages", "all_id_count"] + paired_cols]
-
-    return out
+print(f"HTML dashboard written to: {html_file}")
