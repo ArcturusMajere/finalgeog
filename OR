@@ -1,45 +1,35 @@
 import pandas as pd
 import numpy as np
 
-def wage_bins_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
-    # define bins and labels
-    bins = [0, 2500, 6250, 12500, 18750, 25000, 50000, 125000, 250000, np.inf]
-    labels = [
-        "1-2499", "2500-6249", "6250-12499", "12500-18749",
-        "18750-24999", "25000-49999", "50000-124999",
-        "125000-249999", "250000+"
-    ]
+# bins & labels
+bins = [-np.inf, 2499, 6249, 12499, 18749, 24999, 49999, 124999, 249999, np.inf]
+labels = [
+    "1-2499",
+    "2500-6249",
+    "6250-12499",
+    "12500-18749",
+    "18750-24999",
+    "25000-49999",
+    "50000-124999",
+    "125000-249999",
+    "250000+"
+]
 
-    df = df.copy()
-    df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
+# make sure wage is numeric
+df = df.copy()
+df["WAGE"] = pd.to_numeric(df["WAGE"], errors="coerce")
 
-    # aggregate by NAICS2 + wage_class
-    grouped = (
-        df.groupby([naics_col, "wage_class"])
-          .agg(count=(id_col, "nunique"),
-               total=(wage_col, "sum"))
-    )
+# assign wage class (left-inclusive, right-inclusive)
+df["wage_class"] = pd.cut(df["WAGE"], bins=bins, labels=labels, right=True)
 
-    # pivot wider
-    wide = grouped.unstack(fill_value=0)
+# aggregate
+agg = df.groupby(["NAICS2", "wage_class"]).agg(
+    total_wages=("WAGE", "sum"),
+    id_count=("ID", "nunique")
+)
 
-    # build columns in the desired order: each bin → [count, total]
-    new_cols = []
-    for wc in labels:
-        new_cols.append((wc, "count"))
-        new_cols.append((wc, "total"))
+# reshape
+out = agg.unstack("wage_class").fillna(0)
+out.columns = [f"{metric}_{wc}" for metric, wc in out.columns]
 
-    # reindex with new column order (ignore missing gracefully)
-    wide = wide.reindex(columns=pd.MultiIndex.from_tuples(new_cols), fill_value=0)
-
-    # flatten columns: e.g. "2500-6249_count"
-    wide.columns = [f"{wc}_{metric}" for wc, metric in wide.columns]
-
-    # overall totals
-    overall = df.groupby(naics_col).agg(all_count=(id_col, "nunique"),
-                                        all_total=(wage_col, "sum"))
-
-    # combine
-    final = overall.join(wide).reset_index()
-
-    return final
+out = out.reset_index()
