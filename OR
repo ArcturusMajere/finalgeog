@@ -1,21 +1,16 @@
-import pandas as pd
-import numpy as np
-from itertools import chain
 
-def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
-    bins = [-np.inf, 2499, 6249, 12499, 18749, 24999, 49999, 124999, 249999, np.inf]
-    labels = ["1-2499","2500-6249","6250-12499","12500-18749","18750-24999","25000-49999","50000-124999","125000-249999","250000+"]
-    df = df.copy()
-    df[wage_col] = pd.to_numeric(df[wage_col], errors="coerce")
-    df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
-    agg = df.groupby([naics_col, "wage_class"]).agg(total_wages=(wage_col, "sum"), id_count=(id_col, "nunique"))
-    out = (agg.unstack("wage_class")
-              .reindex(columns=pd.MultiIndex.from_product([["total_wages","id_count"], labels]))
-              .fillna(0)
-              .reset_index())
-    flat_cols = [naics_col] + list(chain.from_iterable(([f"{wc}_total", f"{wc}_count"] for wc in labels)))
-    out.columns = flat_cols
-    totals = df.groupby(naics_col).agg(all_total=(wage_col, "sum"), all_count=(id_col, "nunique")).reset_index()
-    out = totals.merge(out, on=naics_col, how="left")
-    ordered = [naics_col, "all_total", "all_count"] + list(chain.from_iterable(([f"{wc}_total", f"{wc}_count"] for wc in labels)))
-    return out[ordered]
+
+def collectorl(root_dir, output_file):
+    writer = pd.ExcelWriter(output_file, engine="openpyxl")
+    for dirpath, _, filenames in os.walk(root_dir):
+        for f in filenames:
+            if f.lower().endswith(".csv"):
+                file_path = os.path.join(dirpath, f)
+                try:
+                    df = pd.read_csv(file_path)
+                except Exception as e:
+                    print(f"Skipping {file_path}: {e}")
+                    continue
+                sheet_name = os.path.splitext(f)[0][:31]  # Excel limit
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+    writer.close()
