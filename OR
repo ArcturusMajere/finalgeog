@@ -1,6 +1,5 @@
 
-
-def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
+def wage_table2(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
     bins = [-np.inf, 2499, 6249, 12499, 18749, 24999, 49999, 124999, 249999, np.inf]
     labels = [
         "1-2499",
@@ -20,8 +19,7 @@ def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
         total_wages=(wage_col, "sum"),
         id_count=(id_col, "nunique")
     )
-    out = agg.unstack("wage_class").fillna(0)
-    out = out.reset_index()
+    out = agg.unstack("wage_class").fillna(0).reset_index()
     out.columns = [f"{wc}_total" if metric == "total_wages" else f"{wc}_count" for metric, wc in out.columns]
     totals = df.groupby(naics_col).agg(
         all_total=(wage_col, "sum"),
@@ -29,7 +27,7 @@ def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
     ).reset_index()
     out = totals.merge(out, on=naics_col, how="left")
     ordered_cols = (
-        ["NAICS2", "all_total", "all_count"] +
+        [naics_col, "all_total", "all_count"] +
         [f"{wc}_total" for wc in labels] +
         [f"{wc}_count" for wc in labels]
     )
