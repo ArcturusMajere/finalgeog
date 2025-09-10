@@ -129,3 +129,73 @@ plot_wage_viz(master, view="heatmap_wages")
 
 # Band shares with automatic “blip” annotations: RQ6
 plot_wage_viz(master, view="band_shares", naics2="52", annotate=True, blip_delta=0.05)
+
+
+
+import re
+import os
+from pathlib import Path
+import pandas as pd
+import plotly.express as px
+
+def save_animated_bubble_htmls(master: pd.DataFrame,
+                               output_dir="bubble_htmls",
+                               naics2_list=None,
+                               top_k=None,
+                               size_max=60,
+                               title_prefix="Avg Wage vs ID Count (size = Total Wages)"):
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    def _order_key(s):
+        m = re.match(r"(\d{4})Q([1-4])", str(s))
+        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+    df = master.copy()
+    df["avg_wage"] = df["all_total_wages"] / df["all_id_count"].replace(0, pd.NA)
+
+    # enforce chronological quarter order for the animation slider
+    ordered = sorted(df["yr_qtr"].dropna().unique(), key=_order_key)
+    df["yr_qtr"] = pd.Categorical(df["yr_qtr"], categories=ordered, ordered=True)
+
+    def _make_fig(dsub, subtitle):
+        return px.scatter(
+            dsub,
+            x="avg_wage",
+            y="all_id_count",
+            size="all_total_wages",
+            color="NAICS2",
+            animation_frame="yr_qtr",
+            hover_data=["NAICS2","yr_qtr","all_total_wages","all_id_count","avg_wage"],
+            size_max=size_max,
+            labels={"avg_wage":"Average wage","all_id_count":"ID count","all_total_wages":"Total wages"},
+            title=f"{title_prefix} — {subtitle}"
+        )
+
+    # 1) All industries
+    fig_all = _make_fig(df, "All NAICS2")
+    fig_all.write_html(Path(output_dir, "bubble_all.html"), include_plotlyjs="cdn", full_html=True)
+
+    # 2) Optional: per-NAICS2 files
+    if naics2_list is None and top_k:
+        totals = (df.groupby("NAICS2", dropna=True)["all_total_wages"]
+                    .sum()
+                    .sort_values(ascending=False))
+        naics2_list = totals.head(top_k).index.astype(str).tolist()
+
+    if naics2_list:
+        for code in naics2_list:
+            dsub = df[df["NAICS2"].astype(str) == str(code)]
+            if dsub.empty:
+                continue
+            fig = _make_fig(dsub, f"NAICS2 {code}")
+            safe = re.sub(r"[^\w\-]+", "_", str(code))
+            fig.write_html(Path(output_dir, f"bubble_naics2_{safe}.html"), include_plotlyjs="cdn", full_html=True)
+
+    return str(Path(output_dir).resolve())
+# master = build_master_wage_table(...)
+
+# A) Save one “all industries” animated bubble + top 8 NAICS2 files
+save_animated_bubble_htmls(master, output_dir="bubbles_out", top_k=8)
+
+# B) Or specify exactly which NAICS2 to export
+save_animated_bubble_htmls(master, output_dir="bubbles_focus", naics2_list=["11","23","31","52"], size_max=70)
