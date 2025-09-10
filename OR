@@ -1,45 +1,65 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
+import numpy as np
 
-def threaded_quarter_extract(fips, years, quarters=(1,2,3,4), max_workers=8):
-    """Run quarter_extract(fips, year, quarter) in parallel for a range of years/quarters."""
-    tasks = []
-    results = []
+def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
+    if naics_col not in df.columns:
+        raise ValueError("naics_col not found")
+    if df[naics_col].dtype.kind in "iufc":
+        df = df.copy()
+        df["NAICS2"] = df[naics_col].astype("Int64")
+    else:
+        df = df.copy()
+        df["NAICS2"] = df[naics_col].astype(str).str.extract(r"(\d{2})", expand=False)
+    bins = [0,2500,6250,12500,18750,25000,50000,125000,250000,np.inf]
+    labels = ["1-2499","2500-6249","6250-12499","12500-18749","18750-24999","25000-49999","50000-124999","125000-249999","250000+"]
+    df["wage_class"] = pd.cut(df[wage_col].astype(float), bins=bins, labels=labels, right=True, include_lowest=False)
+    g = df.groupby(["NAICS2","wage_class"]).agg(total_wages=(wage_col,"sum"), id_count=(id_col,"nunique"))
+    out = g.unstack("wage_class").reindex(columns=pd.Index(labels, name="wage_class"), level=1)
+    out = out.sort_index().fillna(0)
+    out.columns = [f"{wc}__{metric}" for metric, wc in out.columns]
+    return out
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for year in years:
-            for q in quarters:
-                tasks.append(executor.submit(quarter_extract, fips, year, q))
+# example
+# result = wage_table(df)
+# result
 
-        for future in as_completed(tasks):
-            try:
-                df = future.result()
-                if df is not None and not df.empty:
-                    results.append(df)
-            except Exception as e:
-                print(f"Quarterly extraction error: {e}")
 
-    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
-def threaded_annual_extract(fips, years, max_workers=8):
-    """Run annual_extract(fips, year) in parallel for a range of years."""
-    tasks = []
-    results = []
+import pandas as pd
+import numpy as np
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for year in years:
-            tasks.append(executor.submit(annual_extract, fips, year))
+def wage_bins_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
+    # define bins and labels
+    bins = [0, 2500, 6250, 12500, 18750, 25000, 50000, 125000, 250000, np.inf]
+    labels = [
+        "1-2499", "2500-6249", "6250-12499", "12500-18749",
+        "18750-24999", "25000-49999", "50000-124999",
+        "125000-249999", "250000+"
+    ]
 
-        for future in as_completed(tasks):
-            try:
-                df = future.result()
-                if df is not None and not df.empty:
-                    results.append(df)
-            except Exception as e:
-                print(f"Annual extraction error: {e}")
+    # cut into bins
+    df = df.copy()
+    df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
 
-    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
-years = range(2014, 2025)
-fips = "16"   # Idaho FIPS, for example
+    # group by NAICS2 and wage_class
+    grouped = (
+        df.groupby([naics_col, "wage_class"])
+          .agg(total_wages=(wage_col, "sum"),
+               id_count=(id_col, "nunique"))
+    )
 
-quarterly_df = threaded_quarter_extract(fips, years)
-annual_df = threaded_annual_extract(fips, years)
+    # pivot into wide format
+    result = grouped.unstack("wage_class").fillna(0)
+
+    # flatten MultiIndex columns: WageBin_Total / WageBin_Count
+    result.columns = [
+        f"{wc}_{metric}" for metric, wc in result.columns
+    ]
+
+    # sort by NAICS2
+    result = result.sort_index()
+
+    return result
+
+# Example:
+# result_df = wage_bins_table(df)
+# result_df.to_excel("wage_bins.xlsx")
