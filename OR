@@ -1,35 +1,31 @@
-import pandas as pd
-import numpy as np
 
-# bins & labels
-bins = [-np.inf, 2499, 6249, 12499, 18749, 24999, 49999, 124999, 249999, np.inf]
-labels = [
-    "1-2499",
-    "2500-6249",
-    "6250-12499",
-    "12500-18749",
-    "18750-24999",
-    "25000-49999",
-    "50000-124999",
-    "125000-249999",
-    "250000+"
-]
 
-# make sure wage is numeric
-df = df.copy()
-df["WAGE"] = pd.to_numeric(df["WAGE"], errors="coerce")
-
-# assign wage class (left-inclusive, right-inclusive)
-df["wage_class"] = pd.cut(df["WAGE"], bins=bins, labels=labels, right=True)
-
-# aggregate
-agg = df.groupby(["NAICS2", "wage_class"]).agg(
-    total_wages=("WAGE", "sum"),
-    id_count=("ID", "nunique")
-)
-
-# reshape
-out = agg.unstack("wage_class").fillna(0)
-out.columns = [f"{metric}_{wc}" for metric, wc in out.columns]
-
-out = out.reset_index()
+def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
+    bins = [-np.inf, 2499, 6249, 12499, 18749, 24999, 49999, 124999, 249999, np.inf]
+    labels = [
+        "1-2499",
+        "2500-6249",
+        "6250-12499",
+        "12500-18749",
+        "18750-24999",
+        "25000-49999",
+        "50000-124999",
+        "125000-249999",
+        "250000+"
+    ]
+    df = df.copy()
+    df[wage_col] = pd.to_numeric(df[wage_col], errors="coerce")
+    df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
+    agg = df.groupby([naics_col, "wage_class"]).agg(
+        total_wages=(wage_col, "sum"),
+        id_count=(id_col, "nunique")
+    )
+    out = agg.unstack("wage_class").fillna(0)
+    out.columns = [f"{metric}_{wc}" for metric, wc in out.columns]
+    out = out.reset_index()
+    totals = df.groupby(naics_col).agg(
+        all_total_wages=(wage_col, "sum"),
+        all_id_count=(id_col, "nunique")
+    ).reset_index()
+    out = out.merge(totals, on=naics_col, how="left")
+    return out
