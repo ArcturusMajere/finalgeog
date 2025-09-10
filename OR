@@ -73,3 +73,75 @@ def build_master_wage_table(root_dir, id_col="ID", wage_col="WAGE", naics_col="N
         return pd.DataFrame(columns=cols)
     master = pd.concat(frames, ignore_index=True)
     return master
+
+
+
+import pandas as pd
+import plotly.express as px
+
+def viz_wage_counts(master: pd.DataFrame, view="bubble"):
+    df = master.copy()
+    if view == "bubble":
+        df["avg_wage"] = df["all_total_wages"] / df["all_id_count"].replace(0, pd.NA)
+        fig = px.scatter(
+            df,
+            x="avg_wage",
+            y="all_id_count",
+            size="all_total_wages",
+            color="NAICS2",
+            animation_frame="yr_qtr",
+            hover_data=["NAICS2","yr_qtr","all_total_wages","all_id_count"],
+            size_max=60,
+            labels={"avg_wage":"Average wage","all_id_count":"ID count","all_total_wages":"Total wages"}
+        )
+        fig.show()
+        return fig
+    if view == "stacked_counts":
+        fig = px.bar(
+            df,
+            x="yr_qtr",
+            y="all_id_count",
+            color="NAICS2",
+            barmode="stack",
+            labels={"yr_qtr":"Quarter","all_id_count":"ID count"}
+        )
+        fig.show()
+        return fig
+    if view == "stacked_wages":
+        fig = px.bar(
+            df,
+            x="yr_qtr",
+            y="all_total_wages",
+            color="NAICS2",
+            barmode="stack",
+            labels={"yr_qtr":"Quarter","all_total_wages":"Total wages"}
+        )
+        fig.show()
+        return fig
+    if view == "heatmap_counts":
+        p = df.pivot(index="NAICS2", columns="yr_qtr", values="all_id_count").fillna(0)
+        fig = px.imshow(
+            p,
+            labels=dict(x="Quarter", y="NAICS2", color="ID count"),
+            aspect="auto"
+        )
+        fig.show()
+        return fig
+    if view == "heatmap_wages":
+        p = df.pivot(index="NAICS2", columns="yr_qtr", values="all_total_wages").fillna(0)
+        fig = px.imshow(
+            p,
+            labels=dict(x="Quarter", y="NAICS2", color="Total wages"),
+            aspect="auto"
+        )
+        fig.show()
+        return fig
+    raise ValueError("view must be one of: 'bubble','stacked_counts','stacked_wages','heatmap_counts','heatmap_wages'")
+
+
+viz_wage_counts(master, view="bubble")
+viz_wage_counts(master, view="stacked_counts")
+viz_wage_counts(master, view="stacked_wages")
+viz_wage_counts(master, view="heatmap_counts")
+viz_wage_counts(master, view="heatmap_wages")
+
