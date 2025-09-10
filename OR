@@ -10,85 +10,36 @@ def wage_bins_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
         "125000-249999", "250000+"
     ]
 
-    # assign wage class
     df = df.copy()
     df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
 
-    # aggregate
+    # aggregate by NAICS2 + wage_class
     grouped = (
         df.groupby([naics_col, "wage_class"])
           .agg(count=(id_col, "nunique"),
-               total_wages=(wage_col, "sum"))
-    )
-
-    # pivot wider: NAICS2 rows × wage_class columns
-    result = grouped.unstack("wage_class").fillna(0)
-
-    # reorder columns so for each wage class it's [count, total]
-    new_cols = []
-    for wc in labels:
-        new_cols.extend([
-            (wc, "count"),
-            (wc, "total_wages")
-        ])
-    result = result.reindex(columns=new_cols, level=[1, 0])
-
-    # flatten column names: "2500-6249_count", "2500-6249_total"
-    result.columns = [f"{wc}_{metric}" for wc, metric in result.columns]
-
-    return result.reset_index()
-
-# Example usage
-# result_df = wage_bins_table(df)
-# result_df.to_excel("wage_bins.xlsx", index=False)
-
-
-import pandas as pd
-import numpy as np
-
-def wage_bins_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
-    # define bins and labels
-    bins = [0, 2500, 6250, 12500, 18750, 25000, 50000, 125000, 250000, np.inf]
-    labels = [
-        "1-2499", "2500-6249", "6250-12499", "12500-18749",
-        "18750-24999", "25000-49999", "50000-124999",
-        "125000-249999", "250000+"
-    ]
-
-    df = df.copy()
-    df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
-
-    # group by NAICS2 and wage_class
-    grouped = (
-        df.groupby([naics_col, "wage_class"])
-          .agg(count=(id_col, "nunique"),
-               total_wages=(wage_col, "sum"))
+               total=(wage_col, "sum"))
     )
 
     # pivot wider
-    result = grouped.unstack("wage_class").fillna(0)
+    wide = grouped.unstack(fill_value=0)
 
-    # reorder so each wage class has [count, total]
-    cols = []
+    # build columns in the desired order: each bin → [count, total]
+    new_cols = []
     for wc in labels:
-        cols.extend([(wc, "count"), (wc, "total_wages")])
-    result = result.reindex(columns=cols, level=[1, 0])
+        new_cols.append((wc, "count"))
+        new_cols.append((wc, "total"))
 
-    # flatten
-    result.columns = [f"{wc}_{metric}" for wc, metric in result.columns]
+    # reindex with new column order (ignore missing gracefully)
+    wide = wide.reindex(columns=pd.MultiIndex.from_tuples(new_cols), fill_value=0)
 
-    # overall aggregation (all wages) per NAICS2
-    overall = (
-        df.groupby(naics_col)
-          .agg(all_count=(id_col, "nunique"),
-               all_total=(wage_col, "sum"))
-    )
+    # flatten columns: e.g. "2500-6249_count"
+    wide.columns = [f"{wc}_{metric}" for wc, metric in wide.columns]
 
-    # join overall to front
-    final = overall.join(result)
+    # overall totals
+    overall = df.groupby(naics_col).agg(all_count=(id_col, "nunique"),
+                                        all_total=(wage_col, "sum"))
 
-    return final.reset_index()
+    # combine
+    final = overall.join(wide).reset_index()
 
-# Example
-# result_df = wage_bins_table(df)
-# result_df.to_excel("wage_bins.xlsx", index=False)
+    return final
