@@ -1,8 +1,28 @@
+import pandas as pd
 import json
 from pathlib import Path
 
-def json_to_bubble_html(json_path, output_html, title="NAICS2 Wage Bins Bubble Animation"):
-    data = json.loads(Path(json_path).read_text(encoding="utf-8"))
+def excel_to_explorer_html(xlsx_path, output_html, max_rows=5000, top_n=20, title="CSV Workbook Explorer"):
+    wb = pd.read_excel(xlsx_path, sheet_name=None)
+    pkg = {}
+    for sheet, df in wb.items():
+        df = df.copy()
+        if len(df) > max_rows:
+            df = df.head(max_rows)
+        # Light dtype hints
+        num_cols = df.select_dtypes(include="number").columns.tolist()
+        cat_cols = df.select_dtypes(include=["object","category","bool"]).columns.tolist()
+        # Convert to JSON-friendly
+        data = json.loads(df.to_json(orient="records"))
+        pkg[sheet] = {
+            "rows": len(df),
+            "cols": df.shape[1],
+            "columns": df.columns.tolist(),
+            "numeric_cols": num_cols,
+            "categorical_cols": cat_cols,
+            "data": data
+        }
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -11,62 +31,127 @@ def json_to_bubble_html(json_path, output_html, title="NAICS2 Wage Bins Bubble A
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
 body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:20px}}
-#wrap{{max-width:1100px;margin:0 auto}}
-#ctrl{{display:flex;gap:12px;align-items:center;margin-bottom:12px}}
-#naics{{min-width:220px}}
+#wrap{{max-width:1200px;margin:0 auto}}
+#top{{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}}
+label{{font-size:12px;color:#444}}
+select{{min-width:220px;padding:6px}}
+.badges{{display:flex;gap:10px;margin:8px 0 16px}}
+.badge{{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px;font-size:12px}}
+#grid{{overflow:auto;border:1px solid #e5e7eb;border-radius:8px;max-height:360px}}
+table{{border-collapse:separate;border-spacing:0;width:100%}}
+th,td{{padding:6px 10px;border-bottom:1px solid #eee;white-space:nowrap}}
+th{{position:sticky;top:0;background:#fafafa;z-index:1}}
+#plots{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}}
+@media (max-width:900px){{#plots{{grid-template-columns:1fr}}}}
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div id="ctrl">
-    <label for="naics">NAICS2</label>
-    <select id="naics"></select>
+  <h2 style="margin:0 0 12px">{title}</h2>
+  <div id="top">
+    <div>
+      <label>Sheet</label><br/>
+      <select id="sheet"></select>
+    </div>
+    <div>
+      <label>Numeric column (histogram)</label><br/>
+      <select id="num"></select>
+    </div>
+    <div>
+      <label>Categorical column (top {top_n} bar)</label><br/>
+      <select id="cat"></select>
+    </div>
   </div>
-  <div id="chart" style="height:640px"></div>
+  <div class="badges">
+    <div class="badge" id="meta-rows"></div>
+    <div class="badge" id="meta-cols"></div>
+  </div>
+  <div id="grid"></div>
+  <div id="plots">
+    <div id="hist"></div>
+    <div id="bar"></div>
+  </div>
 </div>
+
 <script>
-var DATA = {json.dumps(data)};
-var BIN_ORDER=["1-2499","2500-6249","6250-12499","12500-18749","18750-24999","25000-49999","50000-124999","125000-249999","250000+"];
+const PKG = {json.dumps(pkg)};
+const TOP_N = {top_n};
 
-function binMid(b){{if(b.endsWith("+"))return 250000;var p=b.split("-");return (parseInt(p[0],10)+parseInt(p[1],10))/2;}}
-function prep(d){{return d.map(x=>Object.assign({{}},x,{{bin_mid:binMid(x.bin)}}));}}
-var D=prep(DATA);
+function el(id){{return document.getElementById(id);}}
 
-function uniques(arr,key){{var s=new Set(arr.map(d=>d[key]));return Array.from(s).sort((a,b)=>(""+a).localeCompare(""+b,undefined,{{numeric:true}}));}}
-function byNAICS(val){{return D.filter(d=>(""+d.NAICS2)===((""+val)));}}
+function setOptions(sel, items){{
+  sel.innerHTML = items.map(v => `<option value="${{v}}">${{v}}</option>`).join("");
+}}
 
-function buildFigure(naicsVal){{
-  var rows=byNAICS(naicsVal);
-  var framesByT={{}};
-  rows.forEach(r=>{{(framesByT[r.timeframe]||(framesByT[r.timeframe]=[])).push(r);}});
-  var timekeys=Object.keys(framesByT).sort((a,b)=>(""+a).localeCompare(""+b,undefined,{{numeric:true}}));
-  if(timekeys.length===0){{return {{data:[],layout:{},frames:[]}};}}
-  var traces0=BIN_ORDER.map(b=>{{
-    var r=rows.find(x=>x.timeframe===timekeys[0]&&x.bin===b)||{{bin:b,bin_mid:binMid(b),id_count:0,total_wages:0}};
-    return {{x:[r.bin_mid],y:[r.id_count],mode:"markers",type:"scatter",name:b,marker:{{size:Math.sqrt(r.total_wages)/20}},hovertemplate:"Bin=%{{text}}<br>ID count=%{{y:,}}<br>Total wages=%{{customdata:,}}<extra></extra>",text:[b],customdata:[r.total_wages],showlegend:true}};
+function renderTable(rows, columns){{
+  if(!rows || rows.length===0){{el("grid").innerHTML="<div style='padding:10px;color:#666'>No data</div>";return;}}
+  const head = "<tr>"+columns.map(c=>`<th>${{c}}</th>`).join("")+"</tr>";
+  const body = rows.map(r => "<tr>"+columns.map(c=>`<td>${{r[c]===undefined?"":r[c]}}</td>`).join("")+"</tr>").join("");
+  el("grid").innerHTML = `<table><thead>${{head}}</thead><tbody>${{body}}</tbody></table>`;
+}}
+
+function histPlot(data, col){{
+  if(!col){{Plotly.purge("hist"); return;}}
+  const arr = data.map(d=>d[col]).filter(v => typeof v === "number" && !isNaN(v));
+  if(arr.length===0){{Plotly.purge("hist"); return;}}
+  Plotly.newPlot("hist", [{type:"histogram", x:arr}], {{
+    margin:{{l:60,r:20,t:30,b:50}},
+    xaxis:{{title:col}},
+    yaxis:{{title:"Count"}},
+    title:"Histogram"
   }});
-  var frames=timekeys.map(t=>{{
-    var arr=BIN_ORDER.map(b=>{{
-      var r=(framesByT[t]||[]).find(x=>x.bin===b)||{{bin:b,bin_mid:binMid(b),id_count:0,total_wages:0}};
-      return {{x:[r.bin_mid],y:[r.id_count],marker:{{size:Math.sqrt(r.total_wages)/20}},text:[b],customdata:[r.total_wages]}};
-    }});
-    return {{name:t,data:arr}};
+}}
+
+function barPlot(data, col){{
+  if(!col){{Plotly.purge("bar"); return;}}
+  const counts = new Map();
+  for(const r of data){{
+    const v = r[col];
+    const key = (v===null||v===undefined) ? "(null)" : String(v);
+    counts.set(key, (counts.get(key)||0)+1);
+  }}
+  let arr = Array.from(counts, ([k,v])=>({{k,v}}));
+  arr.sort((a,b)=>b.v - a.v);
+  arr = arr.slice(0, TOP_N);
+  if(arr.length===0){{Plotly.purge("bar"); return;}}
+  Plotly.newPlot("bar", [{type:"bar", x:arr.map(d=>d.k), y:arr.map(d=>d.v)}], {{
+    margin:{{l:60,r:20,t:30,b:80}},
+    xaxis:{{title:col, automargin:true}},
+    yaxis:{{title:"Count"}},
+    title:"Top "+TOP_N+" categories"
   }});
-  var tickvals=[1250,4375,9375,15625,21875,37500,87500,187500,250000];
-  var ticktext=["1–2.5k","2.5–6.25k","6.25–12.5k","12.5–18.75k","18.75–25k","25–50k","50–125k","125–250k","250k+"];
-  var layout={{xaxis:{{title:"Wage bin midpoint",tickmode:"array",tickvals:tickvals,ticktext:ticktext,range:[0,270000]}},yaxis:{{title:"ID count",rangemode:"tozero"}},legend:{{title:{{text:"Wage bin"}}}},margin:{{l:70,r:20,t:30,b:60}},updatemenus:[{{type:"buttons",showactive:false,y:1.12,x:0.0,xanchor:"left",yanchor:"top",buttons:[{{label:"Play",method:"animate",args:[null,{{fromcurrent:true,frame:{{duration:700,redraw:true}},transition:{{duration:300}}}}]}},{{label:"Pause",method:"animate",args:[[null],{{mode:"immediate",frame:{{duration:0,redraw:false}},transition:{{duration:0}}}}]}}]}}],sliders:[{{active:0,y:1.05,x:0.15,len:0.8,steps:timekeys.map(t=>({{label:t,method:"animate",args:[[t],{{mode:"immediate",transition:{{duration:200}},frame:{{duration:0,redraw:true}}}}]}}))}}]}};
-  return {{data:traces0,layout:layout,frames:frames}};
+}}
+
+function onSheetChange(){{
+  const s = el("sheet").value;
+  const obj = PKG[s];
+  const cols = obj.columns;
+  el("meta-rows").textContent = `Rows: ${{obj.rows}}`;
+  el("meta-cols").textContent = `Columns: ${{obj.cols}}`;
+  renderTable(obj.data, cols);
+  setOptions(el("num"), obj.numeric_cols);
+  setOptions(el("cat"), obj.categorical_cols);
+  // pick defaults
+  const nSel = el("num"); if(nSel.options.length>0) nSel.selectedIndex = 0;
+  const cSel = el("cat"); if(cSel.options.length>0) cSel.selectedIndex = 0;
+  histPlot(obj.data, nSel.value);
+  barPlot(obj.data, cSel.value);
 }}
 
 function mount(){{
-  var naicsSel=document.getElementById("naics");
-  var naicsVals=uniques(D,"NAICS2");
-  naicsSel.innerHTML=naicsVals.map(v=>`<option value="${{v}}">${{v}}</option>`).join("");
-  var start=naicsVals[0]||"";
-  var fig=buildFigure(start);
-  Plotly.newPlot("chart",fig.data,fig.layout).then(()=>Plotly.addFrames("chart",fig.frames));
-  naicsSel.onchange=function(e){{var f=buildFigure(e.target.value);Plotly.react("chart",f.data,f.layout).then(()=>Plotly.addFrames("chart",f.frames));}};
+  const sheetNames = Object.keys(PKG);
+  setOptions(el("sheet"), sheetNames);
+  if(sheetNames.length>0) el("sheet").selectedIndex = 0;
+  onSheetChange();
+  el("sheet").onchange = onSheetChange;
+  el("num").onchange = () => {{
+    const s = el("sheet").value; histPlot(PKG[s].data, el("num").value);
+  }};
+  el("cat").onchange = () => {{
+    const s = el("sheet").value; barPlot(PKG[s].data, el("cat").value);
+  }};
 }}
+
 mount();
 </script>
 </body>
@@ -76,12 +161,6 @@ mount();
 
 
 
-
-
-# 1. Convert your Excel with wage bins (multiple sheets) into JSON
-json_str = excel_to_long_json("your_wage_bins.xlsx", naics_col="NAICS2", save_path="wage_bins.json")
-
-# 2. Generate the interactive HTML file with dropdown + bubble animation
-html_file = json_to_bubble_html("wage_bins.json", "wage_bubbles.html")
-
-print(f"HTML dashboard written to: {html_file}")
+# After csvs_to_excel(...) creates "combined.xlsx"
+excel_to_explorer_html("combined.xlsx", "combined_explorer.html")
+# Open combined_explorer.html in your browser
