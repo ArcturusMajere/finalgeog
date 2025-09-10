@@ -1,27 +1,46 @@
 import pandas as pd
 import numpy as np
 
-def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
-    if naics_col not in df.columns:
-        raise ValueError("naics_col not found")
-    if df[naics_col].dtype.kind in "iufc":
-        df = df.copy()
-        df["NAICS2"] = df[naics_col].astype("Int64")
-    else:
-        df = df.copy()
-        df["NAICS2"] = df[naics_col].astype(str).str.extract(r"(\d{2})", expand=False)
-    bins = [0,2500,6250,12500,18750,25000,50000,125000,250000,np.inf]
-    labels = ["1-2499","2500-6249","6250-12499","12500-18749","18750-24999","25000-49999","50000-124999","125000-249999","250000+"]
-    df["wage_class"] = pd.cut(df[wage_col].astype(float), bins=bins, labels=labels, right=True, include_lowest=False)
-    g = df.groupby(["NAICS2","wage_class"]).agg(total_wages=(wage_col,"sum"), id_count=(id_col,"nunique"))
-    out = g.unstack("wage_class").reindex(columns=pd.Index(labels, name="wage_class"), level=1)
-    out = out.sort_index().fillna(0)
-    out.columns = [f"{wc}__{metric}" for metric, wc in out.columns]
-    return out
+def wage_bins_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
+    # define bins and labels
+    bins = [0, 2500, 6250, 12500, 18750, 25000, 50000, 125000, 250000, np.inf]
+    labels = [
+        "1-2499", "2500-6249", "6250-12499", "12500-18749",
+        "18750-24999", "25000-49999", "50000-124999",
+        "125000-249999", "250000+"
+    ]
 
-# example
-# result = wage_table(df)
-# result
+    # assign wage class
+    df = df.copy()
+    df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
+
+    # aggregate
+    grouped = (
+        df.groupby([naics_col, "wage_class"])
+          .agg(count=(id_col, "nunique"),
+               total_wages=(wage_col, "sum"))
+    )
+
+    # pivot wider: NAICS2 rows × wage_class columns
+    result = grouped.unstack("wage_class").fillna(0)
+
+    # reorder columns so for each wage class it's [count, total]
+    new_cols = []
+    for wc in labels:
+        new_cols.extend([
+            (wc, "count"),
+            (wc, "total_wages")
+        ])
+    result = result.reindex(columns=new_cols, level=[1, 0])
+
+    # flatten column names: "2500-6249_count", "2500-6249_total"
+    result.columns = [f"{wc}_{metric}" for wc, metric in result.columns]
+
+    return result.reset_index()
+
+# Example usage
+# result_df = wage_bins_table(df)
+# result_df.to_excel("wage_bins.xlsx", index=False)
 
 
 import pandas as pd
@@ -36,30 +55,40 @@ def wage_bins_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
         "125000-249999", "250000+"
     ]
 
-    # cut into bins
     df = df.copy()
     df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
 
     # group by NAICS2 and wage_class
     grouped = (
         df.groupby([naics_col, "wage_class"])
-          .agg(total_wages=(wage_col, "sum"),
-               id_count=(id_col, "nunique"))
+          .agg(count=(id_col, "nunique"),
+               total_wages=(wage_col, "sum"))
     )
 
-    # pivot into wide format
+    # pivot wider
     result = grouped.unstack("wage_class").fillna(0)
 
-    # flatten MultiIndex columns: WageBin_Total / WageBin_Count
-    result.columns = [
-        f"{wc}_{metric}" for metric, wc in result.columns
-    ]
+    # reorder so each wage class has [count, total]
+    cols = []
+    for wc in labels:
+        cols.extend([(wc, "count"), (wc, "total_wages")])
+    result = result.reindex(columns=cols, level=[1, 0])
 
-    # sort by NAICS2
-    result = result.sort_index()
+    # flatten
+    result.columns = [f"{wc}_{metric}" for wc, metric in result.columns]
 
-    return result
+    # overall aggregation (all wages) per NAICS2
+    overall = (
+        df.groupby(naics_col)
+          .agg(all_count=(id_col, "nunique"),
+               all_total=(wage_col, "sum"))
+    )
 
-# Example:
+    # join overall to front
+    final = overall.join(result)
+
+    return final.reset_index()
+
+# Example
 # result_df = wage_bins_table(df)
-# result_df.to_excel("wage_bins.xlsx")
+# result_df.to_excel("wage_bins.xlsx", index=False)
