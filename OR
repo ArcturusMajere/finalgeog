@@ -1,45 +1,58 @@
 import pandas as pd
 import numpy as np
-from itertools import chain
 
-def sector_wage_bins(df, id_col="ID", wage_col="WAGE", sector_col="sector"):
-    bins = [-np.inf, 2499, 6249, 12499, 18749, 24999, 49999, 124999, 249999, np.inf]
-    labels = [
-        "1-2499",
-        "2500-6249",
-        "6250-12499",
-        "12500-18749",
-        "18750-24999",
-        "25000-49999",
-        "50000-124999",
-        "125000-249999",
-        "250000+"
-    ]
-    
-    df = df.copy()
-    df[wage_col] = pd.to_numeric(df[wage_col], errors="coerce")
-    df["wage_class"] = pd.cut(df[wage_col], bins=bins, labels=labels, right=True)
-    
-    agg = df.groupby([sector_col, "wage_class"]).agg(
-        total_wages=(wage_col, "sum"),
-        id_count=(id_col, "nunique")
-    )
-    
-    out = (agg.unstack("wage_class")
-              .reindex(columns=pd.MultiIndex.from_product([["total_wages","id_count"], labels]))
-              .fillna(0)
-              .reset_index())
-    
-    # Flatten columns
-    flat_cols = [sector_col] + list(chain.from_iterable(([f"{wc}_total", f"{wc}_count"] for wc in labels)))
-    out.columns = flat_cols
-    
-    # Add totals
-    totals = df.groupby(sector_col).agg(
-        all_total=(wage_col, "sum"),
-        all_count=(id_col, "nunique")
-    ).reset_index()
-    
-    out = totals.merge(out, on=sector_col, how="left")
-    ordered = [sector_col, "all_total", "all_count"] + list(chain.from_iterable(([f"{wc}_total", f"{wc}_count"] for wc in labels)))
-    return out[ordered]
+def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
+    if naics_col not in df.columns:
+        raise ValueError("naics_col not found")
+    if df[naics_col].dtype.kind in "iufc":
+        df = df.copy()
+        df["NAICS2"] = df[naics_col].astype("Int64")
+    else:
+        df = df.copy()
+        df["NAICS2"] = df[naics_col].astype(str).str.extract(r"(\d{2})", expand=False)
+    bins = [0,2500,6250,12500,18750,25000,50000,125000,250000,np.inf]
+    labels = ["1-2499","2500-6249","6250-12499","12500-18749","18750-24999","25000-49999","50000-124999","125000-249999","250000+"]
+    df["wage_class"] = pd.cut(df[wage_col].astype(float), bins=bins, labels=labels, right=True, include_lowest=False)
+    g = df.groupby(["NAICS2","wage_class"]).agg(total_wages=(wage_col,"sum"), id_count=(id_col,"nunique"))
+    out = g.unstack("wage_class").reindex(columns=pd.Index(labels, name="wage_class"), level=1)
+    out = out.sort_index().fillna(0)
+    out.columns = [f"{wc}__{metric}" for metric, wc in out.columns]
+    return out
+
+# example
+# result = wage_table(df)
+# result
+
+
+# define bins and labels
+bins = [0, 2500, 6250, 12500, 18750, 25000, 50000, 125000, 250000, np.inf]
+labels = [
+    "1-2499",
+    "2500-6249",
+    "6250-12499",
+    "12500-18749",
+    "18750-24999",
+    "25000-49999",
+    "50000-124999",
+    "125000-249999",
+    "250000+"
+]
+
+# classify wages
+df = df.copy()
+df["wage_class"] = pd.cut(df["WAGE"], bins=bins, labels=labels, right=True)
+
+# aggregate by NAICS2 and wage_class
+agg = df.groupby(["NAICS2", "wage_class"]).agg(
+    total_wages=("WAGE", "sum"),
+    id_count=("ID", "nunique")
+)
+
+# reshape to wide format
+out = agg.unstack("wage_class").fillna(0)
+
+# flatten MultiIndex columns
+out.columns = [f"{metric}_{wc}" for metric, wc in out.columns]
+
+# final table: rows = NAICS2, cols = each bin’s total_wages + id_count
+out = out.reset_index()
