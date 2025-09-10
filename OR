@@ -21,11 +21,17 @@ def wage_table(df, id_col="ID", wage_col="WAGE", naics_col="NAICS2"):
         id_count=(id_col, "nunique")
     )
     out = agg.unstack("wage_class").fillna(0)
-    out.columns = [f"{metric}_{wc}" for metric, wc in out.columns]
     out = out.reset_index()
+    out.columns = [f"{wc}_total" if metric == "total_wages" else f"{wc}_count" for metric, wc in out.columns]
     totals = df.groupby(naics_col).agg(
-        all_total_wages=(wage_col, "sum"),
-        all_id_count=(id_col, "nunique")
+        all_total=(wage_col, "sum"),
+        all_count=(id_col, "nunique")
     ).reset_index()
-    out = out.merge(totals, on=naics_col, how="left")
+    out = totals.merge(out, on=naics_col, how="left")
+    ordered_cols = (
+        ["NAICS2", "all_total", "all_count"] +
+        [f"{wc}_total" for wc in labels] +
+        [f"{wc}_count" for wc in labels]
+    )
+    out = out[ordered_cols]
     return out
