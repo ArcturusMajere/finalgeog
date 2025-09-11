@@ -1,34 +1,136 @@
-results = []
-for col, label in column_labels.items():
-    base = (
-        joined.with_columns(
-            pl.col(col).fill_null("Unknown").alias("naics"),
-            pl.lit(label).alias("agg_level"),
-            pl.lit(state).alias("state"),
-            pl.lit(year).alias("year"),
-            pl.lit(quarter).alias("quarter"),
-        )
-    )
+select version() as version,
+       current_setting('server_version_num') as server_version_num,
+       current_database() as db,
+       current_user as user_name,
+       inet_server_addr() as server_ip,
+       inet_server_port() as server_port,
+       now() - pg_postmaster_start_time() as uptime,
+       pg_is_in_recovery() as is_read_replica;
 
-    tmp = (
-        base.filter(pl.col("naics") != "Unknown")
-        if label != "00"
-        else base.with_columns(
-            pl.when(pl.col("naics") == "Unknown")
-              .then(pl.lit("00"))
-              .otherwise(pl.col("naics"))
-              .alias("naics"),
-            pl.lit("00").alias("agg_level"),
-        ).filter(pl.col("naics") == "00")
-    )
+select name, setting
+from pg_settings
+where name in ('work_mem','maintenance_work_mem','shared_buffers','effective_cache_size','random_page_cost','seq_page_cost','autovacuum','autovacuum_work_mem','max_connections','max_worker_processes','max_parallel_workers','max_parallel_workers_per_gather','max_parallel_maintenance_workers')
+order by name;
 
-    aggregated = (
-        tmp.group_by("naics", "agg_level", "state", "year", "quarter")
-           .agg(
-               pl.col(ui_col).n_unique().alias("ui_count"),
-               pl.col("BLS_ID").n_unique().alias("bls_id_count"),
-           )
-    )
-    results.append(aggregated)
+select name, setting
+from pg_settings
+where name like 'rds.%'
+order by name;
 
-result_df = pl.concat(results).collect()
+select case when exists (select 1 from pg_proc where proname = 'aurora_version') then aurora_version() else null end as aurora_version;
+
+select d.datname,
+       xact_commit, xact_rollback, blks_read, blks_hit,
+       tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted,
+       temp_files, temp_bytes, deadlocks,
+       blk_read_time, blk_write_time
+from pg_stat_database d
+where d.datname = current_database();
+
+select pid, usename, datname, state, wait_event_type, wait_event, backend_type, client_addr, query_start, now() - query_start as running_for, left(query, 500) as query
+from pg_stat_activity
+where state <> 'idle'
+order by query_start asc;
+
+select pid as blocked_pid,
+       pg_blocking_pids(pid) as blocking_pids,
+       usename, datname, wait_event_type, wait_event, state, left(query, 500) as query,
+       now() - query_start as running_for
+from pg_stat_activity
+where cardinality(pg_blocking_pids(pid)) > 0
+order by running_for desc;
+
+select n.nspname as schema,
+       c.relname as table_name,
+       pg_total_relation_size(c.oid) as total_bytes,
+       pg_relation_size(c.oid) as table_bytes,
+       pg_indexes_size(c.oid) as index_bytes,
+       s.n_live_tup,
+       s.n_dead_tup,
+       round(100.0 * s.n_dead_tup / nullif(s.n_live_tup + s.n_dead_tup,0),2) as dead_tuple_pct
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+left join pg_stat_all_tables s on s.relid = c.oid
+where c.relkind = 'r' and n.nspname not in ('pg_catalog','information_schema')
+order by total_bytes desc
+limit 50;
+
+select relname as table_name,
+       seq_scan, idx_scan,
+       case when seq_scan > 0 and idx_scan = 0 then 'possible_missing_index' else '' end as note
+from pg_stat_user_tables
+order by (seq_scan - idx_scan) desc
+limit 50;
+
+select t.schemaname,
+       t.relname as table_name,
+       i.indexrelname as index_name,
+       idx_scan, idx_tup_read, idx_tup_fetch
+from pg_stat_user_indexes ui
+join pg_index ix on ix.indexrelid = ui.indexrelid
+join pg_class c on c.oid = ix.indrelid
+join pg_stat_all_tables t on t.relid = ix.indrelid
+join pg_class i on i.oid = ix.indexrelid
+order by idx_scan asc
+limit 50;
+
+select relname as table_name,
+       last_vacuum, last_autovacuum, last_analyze, last_autoanalyze,
+       vacuum_count, autovacuum_count, analyze_count, autoanalyze_count
+from pg_stat_user_tables
+order by coalesce(last_autovacuum, timestamp 'epoch'), coalesce(last_autoanalyze, timestamp 'epoch')
+limit 50;
+
+select datname, relid::regclass as relation, phase, heap_blks_total, heap_blks_scanned, heap_blks_vacuumed, index_vacuum_count, max_dead_tuples, num_dead_tuples
+from pg_stat_progress_vacuum
+order by datname;
+
+select now() as ts, *
+from pg_stat_bgwriter;
+
+select now() as ts, *
+from pg_stat_wal;
+
+select application_name, client_addr, state, sync_state, write_lag, flush_lag, replay_lag
+from pg_stat_replication
+order by state;
+
+select status, receive_start_lsn, received_lsn, latest_end_lsn, latest_end_time
+from pg_stat_wal_receiver;
+
+select extname, extversion
+from pg_extension
+order by extname;
+
+select case when exists (select 1 from pg_extension where extname='pg_stat_statements') then 1 else 0 end as has_pg_stat_statements;
+
+select queryid, calls, total_time, mean_time, rows, shared_blks_hit, shared_blks_read, temp_blks_read, temp_blks_written, left(query, 500) as query
+from pg_stat_statements
+where (select count(*) from pg_extension where extname='pg_stat_statements') = 1
+order by total_time desc
+limit 20;
+
+select queryid, calls, total_time, mean_time, rows, shared_blks_hit, shared_blks_read, temp_blks_read, temp_blks_written, left(query, 500) as query
+from pg_stat_statements
+where (select count(*) from pg_extension where extname='pg_stat_statements') = 1
+order by mean_time desc
+limit 20;
+
+select datname, usename, application_name, client_addr, backend_start, state_change, state, left(query, 500) as query
+from pg_stat_activity
+where now() - state_change > interval '5 minutes' and state <> 'idle'
+order by state_change asc;
+
+select n.nspname as schema, c.relname as relation, s.heap_blks_read, s.heap_blks_hit, round(100.0*s.heap_blks_hit/nullif(s.heap_blks_hit + s.heap_blks_read,0),2) as heap_cache_hit_pct
+from pg_statio_user_tables s
+join pg_class c on c.oid = s.relid
+join pg_namespace n on n.oid = c.relnamespace
+order by heap_cache_hit_pct asc nulls last
+limit 50;
+
+select current_setting('max_connections') as max_connections,
+       (select count(*) from pg_stat_activity) as current_connections;
+
+select now() as ts, temp_files, temp_bytes
+from pg_stat_database
+where datname = current_database();
