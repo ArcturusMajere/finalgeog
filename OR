@@ -1,2 +1,18 @@
-df = df[~((df["naics"] == "Unknown") & (df["agg_code"] != "all"))]
+# --- 1. Open terminal in JupyterLab ---
 
+# 2. Clone the repo (if not already cloned)
+git clone https://github.com/your-org/your-repo.git
+cd your-repo
+
+# Or, if repo already exists, just update it
+git pull
+
+# --- 3. Open and edit X.ipynb in JupyterLab interface ---
+# (do this in the JupyterLab file browser, save changes)
+
+# --- 4. Stage and commit the notebook ---
+git add X.ipynb
+git commit -m "Fix: corrected code in X.ipynb"
+
+# --- 5. Push the changes back to repo ---
+git push
