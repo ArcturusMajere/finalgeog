@@ -1,7 +1,2 @@
-df = pd.concat([
-    df,
-    df.loc[df["naics"] == "Unknown"]
-      .groupby(["year", "quarter"], as_index=False)[["id_count", "company_count"]]
-      .sum()
-      .assign(naics="Unknown", agg_code="all")
-])
+df = df[~((df["naics"] == "Unknown") & (df["agg_code"] != "all"))]
+
