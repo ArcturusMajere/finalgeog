@@ -2,15 +2,17 @@ import re
 import math
 import pandas as pd
 
-def to_excel_safe(df, path, sheet_name="Sheet1", engine_preference=("openpyxl","xlsxwriter")):
+def to_excel_and_csv(df, path_excel, path_csv, sheet_name="Sheet1", engine_preference=("openpyxl","xlsxwriter")):
     df2 = df.copy()
+    # flatten multi-index columns
     if isinstance(df2.columns, pd.MultiIndex):
         df2.columns = ["_".join(map(str, c)) for c in df2.columns]
     else:
         df2.columns = [str(c) for c in df2.columns]
-    df2 = df2.reset_index(drop=True)
-    df2 = df2.convert_dtypes()
-    df2 = df2.replace({pd.NA: None})
+    # reset index, clean types
+    df2 = df2.reset_index(drop=True).convert_dtypes().replace({pd.NA: None})
+
+    # -------- Excel safe write --------
     max_rows, max_cols = 1_048_576, 16_384
     if df2.shape[1] > max_cols:
         raise ValueError(f"Too many columns for Excel: {df2.shape[1]} > {max_cols}")
@@ -19,20 +21,23 @@ def to_excel_safe(df, path, sheet_name="Sheet1", engine_preference=("openpyxl","
     last_err = None
     for eng in engine_preference:
         try:
-            with pd.ExcelWriter(path, engine=eng) as writer:
+            with pd.ExcelWriter(path_excel, engine=eng) as writer:
                 if n_sheets == 1:
                     df2.to_excel(writer, index=False, sheet_name=base)
                 else:
                     for i in range(n_sheets):
-                        s = i*max_rows
-                        e = min((i+1)*max_rows, len(df2))
-                        df2.iloc[s:e].to_excel(writer, index=False, sheet_name=(base if i==0 else f"{base}_{i+1}")[:31])
-            return
+                        s, e = i*max_rows, min((i+1)*max_rows, len(df2))
+                        df2.iloc[s:e].to_excel(writer, index=False,
+                                               sheet_name=(base if i==0 else f"{base}_{i+1}")[:31])
+            break
         except Exception as exc:
             last_err = exc
             continue
-    raise RuntimeError(f"Failed to write Excel with engines {engine_preference}: {last_err}")
+    else:
+        raise RuntimeError(f"Failed to write Excel with engines {engine_preference}: {last_err}")
 
-# examples
-# to_excel_safe(final2, "final2.xlsx")
-# to_excel_safe(final2, "final2.xlsx", sheet_name="my:report*2025")
+    # -------- CSV safe write --------
+    df2.to_csv(path_csv, index=False)
+
+# Example usage:
+# to_excel_and_csv(final2, "final2.xlsx", "final2.csv")
