@@ -1,1 +1,38 @@
-final2.reset_index(drop=True).rename(columns=lambda x: "_".join(map(str, x)) if isinstance(x, tuple) else str(x)).to_excel("final2.xlsx", index=False)
+import re
+import math
+import pandas as pd
+
+def to_excel_safe(df, path, sheet_name="Sheet1", engine_preference=("openpyxl","xlsxwriter")):
+    df2 = df.copy()
+    if isinstance(df2.columns, pd.MultiIndex):
+        df2.columns = ["_".join(map(str, c)) for c in df2.columns]
+    else:
+        df2.columns = [str(c) for c in df2.columns]
+    df2 = df2.reset_index(drop=True)
+    df2 = df2.convert_dtypes()
+    df2 = df2.replace({pd.NA: None})
+    max_rows, max_cols = 1_048_576, 16_384
+    if df2.shape[1] > max_cols:
+        raise ValueError(f"Too many columns for Excel: {df2.shape[1]} > {max_cols}")
+    base = re.sub(r'[:\\/?*\[\]]', '_', str(sheet_name))[:31] or "Sheet1"
+    n_sheets = math.ceil(len(df2) / max_rows) if len(df2) else 1
+    last_err = None
+    for eng in engine_preference:
+        try:
+            with pd.ExcelWriter(path, engine=eng) as writer:
+                if n_sheets == 1:
+                    df2.to_excel(writer, index=False, sheet_name=base)
+                else:
+                    for i in range(n_sheets):
+                        s = i*max_rows
+                        e = min((i+1)*max_rows, len(df2))
+                        df2.iloc[s:e].to_excel(writer, index=False, sheet_name=(base if i==0 else f"{base}_{i+1}")[:31])
+            return
+        except Exception as exc:
+            last_err = exc
+            continue
+    raise RuntimeError(f"Failed to write Excel with engines {engine_preference}: {last_err}")
+
+# examples
+# to_excel_safe(final2, "final2.xlsx")
+# to_excel_safe(final2, "final2.xlsx", sheet_name="my:report*2025")
