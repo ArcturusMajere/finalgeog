@@ -1,43 +1,12 @@
-import re
-import math
-import pandas as pd
+# Initialize conda/venv environment called "tilo"
+source ~/anaconda3/bin/activate tilo   # if conda
+# OR for python venv
+# source ~/tilo/bin/activate
 
-def to_excel_and_csv(df, path_excel, path_csv, sheet_name="Sheet1", engine_preference=("openpyxl","xlsxwriter")):
-    df2 = df.copy()
-    # flatten multi-index columns
-    if isinstance(df2.columns, pd.MultiIndex):
-        df2.columns = ["_".join(map(str, c)) for c in df2.columns]
-    else:
-        df2.columns = [str(c) for c in df2.columns]
-    # reset index, clean types
-    df2 = df2.reset_index(drop=True).convert_dtypes().replace({pd.NA: None})
-
-    # -------- Excel safe write --------
-    max_rows, max_cols = 1_048_576, 16_384
-    if df2.shape[1] > max_cols:
-        raise ValueError(f"Too many columns for Excel: {df2.shape[1]} > {max_cols}")
-    base = re.sub(r'[:\\/?*\[\]]', '_', str(sheet_name))[:31] or "Sheet1"
-    n_sheets = math.ceil(len(df2) / max_rows) if len(df2) else 1
-    last_err = None
-    for eng in engine_preference:
-        try:
-            with pd.ExcelWriter(path_excel, engine=eng) as writer:
-                if n_sheets == 1:
-                    df2.to_excel(writer, index=False, sheet_name=base)
-                else:
-                    for i in range(n_sheets):
-                        s, e = i*max_rows, min((i+1)*max_rows, len(df2))
-                        df2.iloc[s:e].to_excel(writer, index=False,
-                                               sheet_name=(base if i==0 else f"{base}_{i+1}")[:31])
-            break
-        except Exception as exc:
-            last_err = exc
-            continue
-    else:
-        raise RuntimeError(f"Failed to write Excel with engines {engine_preference}: {last_err}")
-
-    # -------- CSV safe write --------
-    df2.to_csv(path_csv, index=False)
-
-# Example usage:
-# to_excel_and_csv(final2, "final2.xlsx", "final2.csv")
+# Only run in interactive shells
+if [[ $- == *i* ]]; then
+    read -p "Start JupyterLab? (y/n) " answer
+    if [[ $answer == [Yy]* ]]; then
+        jupyter lab --no-browser --ip=0.0.0.0
+    fi
+fi
