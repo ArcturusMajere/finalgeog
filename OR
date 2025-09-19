@@ -1,3 +1,6 @@
+# Change directory to ~/coco
+cd ~/coco
+
 # Initialize conda/venv environment called "tilo"
 source ~/anaconda3/bin/activate tilo   # if conda
 # OR for python venv
