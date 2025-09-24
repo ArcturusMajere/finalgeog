@@ -1,14 +1,14 @@
 suppressWarnings({
   library(DBI)
-  library(odbc)
+  library(ROracle)
   library(dplyr)
-  library(arrow)
   library(stringr)
   library(readr)
+  library(tibble)
+  library(duckdb)
 })
 
-states <- c('AL','AR','CT','FL','GA','IA','IL','IN','ID','KS','LA','MD','ME','MN','MT',
-            'NE','NJ','NM','OH','OK','OR','PA','RI','SC','SD','WA','WI','WV','WY','TX','UT')
+states <- c('AL','AR','CT','FL','GA','IA','IL','IN','ID','KS','LA','MD','ME','MN','MT','NE','NJ','NM','OH','OK','OR','PA','RI','SC','SD','WA','WI','WV','WY','TX','UT')
 
 abbr_to_fips <- c(AL="01", AR="05", CT="09", FL="12", GA="13", IA="19", IL="17", IN="18", ID="16", KS="20",
                   LA="22", MD="24", ME="23", MN="27", MT="30", NE="31", NJ="34", NM="35", OH="39", OK="40",
@@ -32,12 +32,11 @@ lookup <- c(`11`="11:Agriculture",`21`="21:Mining",`22`="22:Utilities",`23`="23:
             `54`="54:Profess, Science & Tech Srvs",`55`="55:Management Srvs",`56`="56:Admin Support Srvs",
             `61`="61:Educational Srvs",`62`="62:Healthcare & Social Assistance",`71`="71:Arts, Entertainment and Rec",
             `72`="72:Accommodations & Food Srvs",`81`="81:Other Services",`92`="92:Public Admin",`99`="99:Unclassified")
+
 lookup_naics2 <- function(naics2) { ifelse(naics2 %in% names(lookup), lookup[[naics2]], "00:Unknown") }
 
 dupeID <- function(M) {
-  M %>%
-    arrange(BLS_ID, desc(WAGE)) %>%
-    distinct(BLS_ID, .keep_all = TRUE)
+  M %>% arrange(BLS_ID, desc(WAGE)) %>% distinct(BLS_ID, .keep_all = TRUE)
 }
 
 Fetch_WR_QTR <- function(query, params, conn) {
@@ -46,37 +45,38 @@ Fetch_WR_QTR <- function(query, params, conn) {
     on.exit(dbClearResult(rs), add = TRUE)
     dbBind(rs, params = params)
     df <- dbFetch(rs)
-    if (!nrow(df)) return(tibble::as_tibble(df))
+    if (!nrow(df)) return(as_tibble(df))
     df$STATE_CODE <- as.character(df$STATE_CODE)
     df$state <- vapply(df$STATE_CODE, fips2name, FUN.VALUE=character(1))
     df$yr_qtr <- paste0(df$YR, "-", df$QTR)
     drop_cols <- intersect(c("STATEUSE","HOURLYRATE","JOBTITLE","SOCCODE","WEEKS","HOURS","EIN","STATE_CODE"), names(df))
-    tibble::as_tibble(df[, setdiff(names(df), drop_cols), drop=FALSE])
-  }, error=function(e) { tibble::tibble() })
+    as_tibble(df[, setdiff(names(df), drop_cols), drop=FALSE])
+  }, error=function(e) { tibble() })
 }
 
 Fetch_DOM_QTR <- function(year, qtr, fips) {
-  table <- open_dataset("/wagerec/current_dominantnaics/parquet/", format="parquet")
+  con <- dbConnect(duckdb::duckdb())
+  on.exit(dbDisconnect(con, shutdown=TRUE), add=TRUE)
   f <- sub("^0+", "", fips)
-  Final <- table %>%
-    filter(fips == f, year == !!year, qtr == !!qtr) %>%
-    select(ui_acct, fips, naics2, naics3, naics4, naics6, run) %>%
-    collect()
-  names(Final)[names(Final)=="ui_acct"] <- "UI"
-  names(Final)[names(Final)=="run"] <- "RUN"
-  Final
+  sql <- paste0(
+    "SELECT ui_acct AS UI, fips, naics2, naics3, naics4, naics6, run AS RUN ",
+    "FROM read_parquet('/wagerec/current_dominantnaics/parquet/*.parquet') ",
+    "WHERE fips='", f, "' AND year=", year, " AND qtr=", qtr
+  )
+  dbGetQuery(con, sql) %>% as_tibble()
 }
 
 Extract_QTR <- function(fips, year, quarter) {
   st <- proc.time()[3]
   query <- "SELECT * FROM YQQ WHERE state_code = :fips AND YR = :year AND qtr = :quarter"
   params <- list(fips=fips, year=year, quarter=quarter)
-  conn <- dbConnect(odbc::odbc(), .connection_string = paste0("DSN=XQQQ;UID=", read_file("USER.txt"), ";PWD=", read_file("password.txt")))
+  drv <- ROracle::Oracle()
+  conn <- dbConnect(drv, username=read_file("USER.txt"), password=read_file("password.txt"), dbname="XQQQ")
   on.exit(dbDisconnect(conn), add = TRUE)
   WR <- Fetch_WR_QTR(query, params, conn)
   D <- Fetch_DOM_QTR(year, quarter, fips)
   if (nrow(D)) D$UI <- str_pad(D$UI, 10, pad="0")
-  WR1 <- dplyr::filter(WR, WAGE != 0)
+  WR1 <- filter(WR, WAGE != 0)
   WR2 <- dupeID(WR1)
   df <- WR2 %>% left_join(D, by=c("UI","RUN"), multiple="all")
   df1 <- dupeID(df)
@@ -86,7 +86,7 @@ Extract_QTR <- function(fips, year, quarter) {
   df1$sector <- vapply(df1$naics2, lookup_naics2, FUN.VALUE=character(1))
   df_subset <- df1 %>%
     group_by(yr_qtr, state, sector) %>%
-    summarize(counts = dplyr::n(), mean_wage = mean(WAGE, na.rm=TRUE), median_wage = median(WAGE, na.rm=TRUE),
+    summarize(counts = n(), mean_wage = mean(WAGE, na.rm=TRUE), median_wage = median(WAGE, na.rm=TRUE),
               percentile75 = as.numeric(quantile(WAGE, 0.75, na.rm=TRUE)),
               percentile25 = as.numeric(quantile(WAGE, 0.25, na.rm=TRUE)), .groups="drop")
   message(sprintf("%d unique IDS found in %s @%d Q%d", q2, fips2name(fips), year, quarter))
@@ -94,4 +94,3 @@ Extract_QTR <- function(fips, year, quarter) {
   message(sprintf("Exec Time: %.2f min", (et - st)/60))
   list(df1=df1, df_subset=df_subset)
 }
-
