@@ -1,96 +1,73 @@
-suppressWarnings({
-  library(DBI)
-  library(ROracle)
-  library(dplyr)
-  library(stringr)
-  library(readr)
-  library(tibble)
-  library(duckdb)
-})
+import warnings; warnings.filterwarnings('ignore')
+import us, polars as pl, time, pyarrow.dataset as ds, oracledb
 
-states <- c('AL','AR','CT','FL','GA','IA','IL','IN','ID','KS','LA','MD','ME','MN','MT','NE','NJ','NM','OH','OK','OR','PA','RI','SC','SD','WA','WI','WV','WY','TX','UT')
+states = ['AL','AR','CT','FL','GA','IA','IL','IN','ID','KS','LA','MD','ME','MN','MT','NE','NJ','NM','OH','OK','OR','PA','RI','SC','SD','WA','WI','WV','WY','TX','UT']
+lookup = {'11':'11:Agriculture','21':'21:Mining','22':'22:Utilities','23':'23:Construction','31-33':'31-33:Manufacturing','42':'42:Wholesale Trade','44-45':'44-45:Retail Trade','48-49':'48-49:Transportation & Warehousing','51':'51:Information','52':'52:Finance & Insurance','53':'53:Real Estate, Rental & Leasing','54':'54:Profess, Science & Tech Srvs','55':'55:Management Srvs','56':'56:Admin Support Srvs','61':'61:Educational Srvs','62':'62:Healthcare & Social Assistance','71':'71:Arts, Entertainment and Rec','72':'72:Accommodations & Food Srvs','81':'81:Other Services','92':'92:Public Admin','99':'99:Unclassified'}
 
-abbr_to_fips <- c(AL="01", AR="05", CT="09", FL="12", GA="13", IA="19", IL="17", IN="18", ID="16", KS="20",
-                  LA="22", MD="24", ME="23", MN="27", MT="30", NE="31", NJ="34", NM="35", OH="39", OK="40",
-                  OR="41", PA="42", RI="44", SC="45", SD="46", WA="53", WI="55", WV="54", WY="56", TX="48", UT="49")
+def lookup_naics2(x): return lookup.get(x,'00:Unknown')
+def fips2name(code):
+    try: return us.states.lookup(code.zfill(2)).name
+    except: return code
 
-fips_to_name <- c(`01`="Alabama",`05`="Arkansas",`09`="Connecticut",`12`="Florida",`13`="Georgia",`16`="Idaho",
-                  `17`="Illinois",`18`="Indiana",`19`="Iowa",`20`="Kansas",`22`="Louisiana",`23`="Maine",
-                  `24`="Maryland",`27`="Minnesota",`30`="Montana",`31`="Nebraska",`34`="New Jersey",`35`="New Mexico",
-                  `39`="Ohio",`40`="Oklahoma",`41`="Oregon",`42`="Pennsylvania",`44`="Rhode Island",`45`="South Carolina",
-                  `46`="South Dakota",`48`="Texas",`49`="Utah",`53`="Washington",`54`="West Virginia",`55`="Wisconsin",
-                  `56`="Wyoming")
+def timer(f):
+    def wrapper(*a, **k):
+        t=time.time(); r=f(*a,**k); print(f"Exec Time: {(time.time()-t)/60:.2f} min"); return r
+    return wrapper
 
-abbr2fips <- function(abbr) unname(abbr_to_fips[[abbr]])
-fips2name <- function(code) { c <- str_pad(code,2,pad="0"); ifelse(c %in% names(fips_to_name), fips_to_name[[c]], code) }
+_pool = oracledb.create_pool(user=open('USER.txt').read().strip(), password=open('password.txt').read().strip(), dsn="XQQQ", min=1, max=8, increment=1, homogeneous=True, threaded=True)
 
-fipslist <- unname(vapply(states, abbr2fips, FUN.VALUE=character(1)))
+def Fetch_WR_QTR(fips, year, quarter) -> pl.DataFrame:
+    q = """
+    SELECT BLS_ID, UI, RUN, WAGE, YR, QTR, STATE_CODE
+    FROM (
+      SELECT BLS_ID, UI, RUN, WAGE, YR, QTR, STATE_CODE,
+             ROW_NUMBER() OVER (PARTITION BY BLS_ID ORDER BY WAGE DESC) rn
+      FROM YQQ
+      WHERE STATE_CODE = :fips AND YR = :year AND QTR = :qtr AND WAGE <> 0
+    )
+    WHERE rn = 1
+    """
+    with _pool.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.arraysize = 100000
+            cur.execute(q, {'fips': fips, 'year': year, 'qtr': quarter})
+            rows = cur.fetchall()
+            cols = [c[0] for c in cur.description]
+    df = pl.DataFrame(rows, schema=cols)
+    return df.with_columns([
+        pl.col("STATE_CODE").cast(pl.Utf8),
+        (pl.col("YR").cast(pl.Utf8) + "-" + pl.col("QTR").cast(pl.Utf8)).alias("yr_qtr")
+    ])
 
-lookup <- c(`11`="11:Agriculture",`21`="21:Mining",`22`="22:Utilities",`23`="23:Construction",`31-33`="31-33:Manufacturing",
-            `42`="42:Wholesale Trade",`44-45`="44-45:Retail Trade",`48-49`="48-49:Transportation & Warehousing",
-            `51`="51:Information",`52`="52:Finance & Insurance",`53`="53:Real Estate, Rental & Leasing",
-            `54`="54:Profess, Science & Tech Srvs",`55`="55:Management Srvs",`56`="56:Admin Support Srvs",
-            `61`="61:Educational Srvs",`62`="62:Healthcare & Social Assistance",`71`="71:Arts, Entertainment and Rec",
-            `72`="72:Accommodations & Food Srvs",`81`="81:Other Services",`92`="92:Public Admin",`99`="99:Unclassified")
+def Fetch_DOM_QTR(year, qtr, fips) -> pl.DataFrame:
+    ds1 = ds.dataset("/wagerec/current_dominantnaics/parquet/", format="parquet")
+    lz = pl.scan_pyarrow_dataset(ds1).filter(
+        (pl.col("fips") == fips.lstrip("0")) & (pl.col("year") == year) & (pl.col("qtr") == qtr)
+    ).select(["ui_acct","fips","naics2","naics3","naics4","naics6","run"])
+    return lz.collect().rename({"ui_acct":"UI","run":"RUN"}).with_columns(pl.col("UI").cast(pl.Utf8).str.zfill(10))
 
-lookup_naics2 <- function(naics2) { ifelse(naics2 %in% names(lookup), lookup[[naics2]], "00:Unknown") }
-
-dupeID <- function(M) {
-  M %>% arrange(BLS_ID, desc(WAGE)) %>% distinct(BLS_ID, .keep_all = TRUE)
-}
-
-Fetch_WR_QTR <- function(query, params, conn) {
-  tryCatch({
-    rs <- dbSendQuery(conn, query)
-    on.exit(dbClearResult(rs), add = TRUE)
-    dbBind(rs, params = params)
-    df <- dbFetch(rs)
-    if (!nrow(df)) return(as_tibble(df))
-    df$STATE_CODE <- as.character(df$STATE_CODE)
-    df$state <- vapply(df$STATE_CODE, fips2name, FUN.VALUE=character(1))
-    df$yr_qtr <- paste0(df$YR, "-", df$QTR)
-    drop_cols <- intersect(c("STATEUSE","HOURLYRATE","JOBTITLE","SOCCODE","WEEKS","HOURS","EIN","STATE_CODE"), names(df))
-    as_tibble(df[, setdiff(names(df), drop_cols), drop=FALSE])
-  }, error=function(e) { tibble() })
-}
-
-Fetch_DOM_QTR <- function(year, qtr, fips) {
-  con <- dbConnect(duckdb::duckdb())
-  on.exit(dbDisconnect(con, shutdown=TRUE), add=TRUE)
-  f <- sub("^0+", "", fips)
-  sql <- paste0(
-    "SELECT ui_acct AS UI, fips, naics2, naics3, naics4, naics6, run AS RUN ",
-    "FROM read_parquet('/wagerec/current_dominantnaics/parquet/*.parquet') ",
-    "WHERE fips='", f, "' AND year=", year, " AND qtr=", qtr
-  )
-  dbGetQuery(con, sql) %>% as_tibble()
-}
-
-Extract_QTR <- function(fips, year, quarter) {
-  st <- proc.time()[3]
-  query <- "SELECT * FROM YQQ WHERE state_code = :fips AND YR = :year AND qtr = :quarter"
-  params <- list(fips=fips, year=year, quarter=quarter)
-  drv <- ROracle::Oracle()
-  conn <- dbConnect(drv, username=read_file("USER.txt"), password=read_file("password.txt"), dbname="XQQQ")
-  on.exit(dbDisconnect(conn), add = TRUE)
-  WR <- Fetch_WR_QTR(query, params, conn)
-  D <- Fetch_DOM_QTR(year, quarter, fips)
-  if (nrow(D)) D$UI <- str_pad(D$UI, 10, pad="0")
-  WR1 <- filter(WR, WAGE != 0)
-  WR2 <- dupeID(WR1)
-  df <- WR2 %>% left_join(D, by=c("UI","RUN"), multiple="all")
-  df1 <- dupeID(df)
-  q2 <- nrow(df1)
-  df1$yr_qtr <- paste0(df1$YR, "-", df1$QTR)
-  df1$state <- vapply(as.character(df1$fips), fips2name, FUN.VALUE=character(1))
-  df1$sector <- vapply(df1$naics2, lookup_naics2, FUN.VALUE=character(1))
-  df_subset <- df1 %>%
-    group_by(yr_qtr, state, sector) %>%
-    summarize(counts = n(), mean_wage = mean(WAGE, na.rm=TRUE), median_wage = median(WAGE, na.rm=TRUE),
-              percentile75 = as.numeric(quantile(WAGE, 0.75, na.rm=TRUE)),
-              percentile25 = as.numeric(quantile(WAGE, 0.25, na.rm=TRUE)), .groups="drop")
-  message(sprintf("%d unique IDS found in %s @%d Q%d", q2, fips2name(fips), year, quarter))
-  et <- proc.time()[3]
-  message(sprintf("Exec Time: %.2f min", (et - st)/60))
-  list(df1=df1, df_subset=df_subset)
-}
+@timer
+def Extract_QTR(fips, year, quarter):
+    WR = Fetch_WR_QTR(fips, year, quarter)
+    D = Fetch_DOM_QTR(year, quarter, fips)
+    df = WR.join(D, on=["UI","RUN"], how="left")
+    df1 = df.unique(subset=["BLS_ID"], keep="first")
+    q2 = df1.height
+    df1 = df1.with_columns([
+        pl.col("YR").cast(pl.Utf8) + "-" + pl.col("QTR").cast(pl.Utf8),
+        pl.col("STATE_CODE").cast(pl.Utf8).map_elements(fips2name, return_dtype=pl.Utf8).alias("state"),
+        pl.col("naics2").cast(pl.Utf8).map_elements(lookup_naics2, return_dtype=pl.Utf8).alias("sector")
+    ]).rename({"literal": "yr_qtr"})
+    df_subset = (
+        df1.group_by(["yr_qtr","state","sector"])
+           .agg([
+               pl.count("BLS_ID").alias("counts"),
+               pl.col("WAGE").mean().alias("mean_wage"),
+               pl.col("WAGE").median().alias("median_wage"),
+               pl.col("WAGE").quantile(0.75, "nearest").alias("percentile75"),
+               pl.col("WAGE").quantile(0.25, "nearest").alias("percentile25")
+           ])
+           .sort(["yr_qtr","state","sector"])
+    )
+    print(f"{q2} unique IDS found in {fips2name(fips)} @{year} Q{quarter}")
+    return df1.to_pandas(), df_subset.to_pandas()
