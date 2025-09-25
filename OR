@@ -1,9 +1,16 @@
 library(arrow)
 library(dplyr)
+library(ssh)
 library(stringr)
 
-DOM <- function(year, qtr, state) {
-  ds <- open_dataset("/path/to/dom/parquet", format = "parquet")
+DOM <- function(year, qtr, state, host, user, password, remote_path) {
+  session <- ssh_connect(paste0(user, "@", host), passwd = password)
+  on.exit(ssh_disconnect(session), add = TRUE)
+  dest_parent <- file.path(tempdir(), paste0("parq_", as.integer(Sys.time())))
+  dir.create(dest_parent, recursive = TRUE, showWarnings = FALSE)
+  scp_download(session, remote = remote_path, to = dest_parent, recursive = TRUE)
+  local_path <- file.path(dest_parent, basename(remote_path))
+  ds <- open_dataset(local_path, format = "parquet")
   st <- toupper(state)
   ds %>%
     filter(state == st, year == !!year, qtr == !!qtr) %>%
@@ -12,12 +19,7 @@ DOM <- function(year, qtr, state) {
     mutate(
       fips = str_pad(as.character(fips), width = 5, side = "left", pad = "0"),
       state = as.character(state),
-      yr_qtr = paste0(year, "Q", qtr)
-    ) %>%
-    collect()
-}
-
-
+      yr_qtr = paste0(year, "Q", qtr)) %>% collect()}
 
 
 import warnings; warnings.filterwarnings('ignore')
