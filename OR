@@ -1,3 +1,25 @@
+library(arrow)
+library(dplyr)
+library(stringr)
+
+DOM <- function(year, qtr, state) {
+  ds <- open_dataset("/path/to/dom/parquet", format = "parquet")
+  st <- toupper(state)
+  ds %>%
+    filter(state == st, year == !!year, qtr == !!qtr) %>%
+    select(ui_acct, fips, naics2, naics3, naics4, naics6, run, year, qtr, state) %>%
+    rename(UI = ui_acct, RUN = run) %>%
+    mutate(
+      fips = str_pad(as.character(fips), width = 5, side = "left", pad = "0"),
+      state = as.character(state),
+      yr_qtr = paste0(year, "Q", qtr)
+    ) %>%
+    collect()
+}
+
+
+
+
 import warnings; warnings.filterwarnings('ignore')
 import re, time, us, polars as pl, pandas as pd, pyarrow.dataset as ds, oracledb
 from concurrent.futures import ThreadPoolExecutor, as_completed
