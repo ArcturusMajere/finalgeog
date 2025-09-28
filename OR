@@ -1,209 +1,49 @@
-library(arrow)
-library(dplyr)
-library(ssh)
-library(stringr)
-
-DOM <- function(year, qtr, state, host, user, password, remote_path) {
-  session <- ssh_connect(paste0(user, "@", host), passwd = password)
-  on.exit(ssh_disconnect(session), add = TRUE)
-  dest_parent <- file.path(tempdir(), paste0("parq_", as.integer(Sys.time())))
-  dir.create(dest_parent, recursive = TRUE, showWarnings = FALSE)
-  scp_download(session, remote = remote_path, to = dest_parent, recursive = TRUE)
-  local_path <- file.path(dest_parent, basename(remote_path))
-  ds <- open_dataset(local_path, format = "parquet")
-  st <- toupper(state)
-  ds %>%
-    filter(state == st, year == !!year, qtr == !!qtr) %>%
-    select(ui_acct, fips, naics2, naics3, naics4, naics6, run, year, qtr, state) %>%
-    rename(UI = ui_acct, RUN = run) %>%
-    mutate(
-      fips = str_pad(as.character(fips), width = 5, side = "left", pad = "0"),
-      state = as.character(state),
-      yr_qtr = paste0(year, "Q", qtr)) %>% collect()}
-
-
-import warnings; warnings.filterwarnings('ignore')
-import re, time, us, polars as pl, pandas as pd, pyarrow.dataset as ds, oracledb
+import itertools, os, math
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
-lookup={'11':'11:Agriculture','21':'21:Mining','22':'22:Utilities','23':'23:Construction','31-33':'31-33:Manufacturing','42':'42:Wholesale Trade','44-45':'44-45:Retail Trade','48-49':'48-49:Transportation & Warehousing','51':'51:Information','52':'52:Finance & Insurance','53':'53:Real Estate, Rental & Leasing','54':'54:Profess, Science & Tech Srvs','55':'55:Management Srvs','56':'56:Admin Support Srvs','61':'61:Educational Srvs','62':'62:Healthcare & Social Assistance','71':'71:Arts, Entertainment and Rec','72':'72:Accommodations & Food Srvs','81':'81:Other Services','92':'92:Public Admin','99':'99:Unclassified'}
+def quarter_range(start_year, start_qtr, end_year, end_qtr):
+    sy, sq, ey, eq = int(start_year), int(start_qtr), int(end_year), int(end_qtr)
+    start_idx = (sy * 4) + (sq - 1)
+    end_idx = (ey * 4) + (eq - 1)
+    for idx in range(start_idx, end_idx + 1):
+        y = idx // 4
+        q = (idx % 4) + 1
+        yield y, q
 
-def lookup_naics2(x):
-    if x is None: return '00:Unknown'
-    return lookup.get(str(x),'00:Unknown')
+def Extract_QTR_safe(fips, year, quarter):
+    try:
+        df1, df_subset = Extract_QTR(fips, year, quarter)
+        return {"ok": True, "fips": fips, "year": year, "qtr": quarter, "df1": df1, "subset": df_subset, "err": None}
+    except Exception as e:
+        return {"ok": False, "fips": fips, "year": year, "qtr": quarter, "df1": None, "subset": None, "err": repr(e)}
 
-def fips2name(code):
-    try: return us.states.lookup(str(code).zfill(2)).name
-    except: return str(code)
-
-def _norm_fips(x):
-    s=str(x).strip()
-    if s.isdigit(): return s.zfill(2)
-    st=us.states.lookup(s)
-    if st is None: raise ValueError(f"bad state/fips: {x}")
-    return st.fips
-
-def _parse_yrq(s):
-    s=str(s).replace("_","-").upper().replace("Q","-")
-    y,q=s.split("-")
-    return int(y), int(q)
-
-def _yrq_range(start_yrq, end_yrq):
-    y1,q1=_parse_yrq(start_yrq); y2,q2=_parse_yrq(end_yrq)
-    out=[]
-    y,q=y1,q1
-    while (y<y2) or (y==y2 and q<=q2):
-        out.append((y,q))
-        q+=1
-        if q==5:
-            q=1
-            y+=1
-    return out
-
-def _infer_naics_col(v):
-    if isinstance(v,(list,tuple,set)): v=next(iter(v))
-    s=str(v)
-    if re.fullmatch(r'\d{2}-\d{2}',s): return 'naics2'
-    d=re.sub(r'\D','',s)
-    if len(d)==2: return 'naics2'
-    if len(d)==3: return 'naics3'
-    if len(d)==4: return 'naics4'
-    return 'naics6'
-
-def _level_from_col(col):
-    return {'naics2':2,'naics3':3,'naics4':4,'naics6':6}.get(col,2)
-
-def _col_from_level(level):
-    return {2:'naics2',3:'naics3',4:'naics4',6:'naics6'}[int(level)]
-
-_pool=oracledb.create_pool(user=open('USER.txt').read().strip(), password=open('password.txt').read().strip(), dsn="XQQQ", min=1, max=16, increment=1, homogeneous=True, threaded=True)
-
-def Fetch_WR_QTR(fips2, year, quarter) -> pl.DataFrame:
-    q="""
-    SELECT BLS_ID, UI, RUN, WAGE, YR, QTR, STATE_CODE
-    FROM (
-      SELECT BLS_ID, UI, RUN, WAGE, YR, QTR, STATE_CODE,
-             ROW_NUMBER() OVER (PARTITION BY BLS_ID ORDER BY WAGE DESC) rn
-      FROM YQQ
-      WHERE STATE_CODE = :fips AND YR = :year AND QTR = :qtr AND WAGE <> 0
-    ) WHERE rn = 1
-    """
-    with _pool.acquire() as conn:
-        with conn.cursor() as cur:
-            cur.arraysize=100000
-            cur.execute(q, {'fips':fips2,'year':year,'qtr':quarter})
-            rows=cur.fetchall(); cols=[c[0] for c in cur.description]
-    return pl.DataFrame(rows, schema=cols).with_columns((pl.col("YR").cast(pl.Utf8)+"-"+pl.col("QTR").cast(pl.Utf8)).alias("yr_qtr"))
-
-def Fetch_WR_QTR_Cohort(fips2, year, quarter, cohort, cohort_col='BLS_ID') -> pl.DataFrame:
-    if cohort_col not in ('BLS_ID','UI'): raise ValueError("cohort_col must be 'BLS_ID' or 'UI'")
-    ids=[str(x) for x in cohort]
-    if cohort_col=='UI': ids=[x.zfill(10) for x in ids]
-    q=f"""
-    SELECT BLS_ID, UI, RUN, WAGE, YR, QTR, STATE_CODE
-    FROM (
-      SELECT BLS_ID, UI, RUN, WAGE, YR, QTR, STATE_CODE,
-             ROW_NUMBER() OVER (PARTITION BY BLS_ID ORDER BY WAGE DESC) rn
-      FROM YQQ
-      WHERE STATE_CODE = :fips AND YR = :year AND QTR = :qtr AND WAGE <> 0
-        AND {cohort_col} IN (SELECT COLUMN_VALUE FROM TABLE(:ids))
-    ) WHERE rn = 1
-    """
-    with _pool.acquire() as conn:
-        with conn.cursor() as cur:
-            arr=cur.arrayvar(oracledb.DB_TYPE_VARCHAR, ids)
-            cur.arraysize=100000
-            cur.execute(q, {'fips':fips2,'year':year,'qtr':quarter,'ids':arr})
-            rows=cur.fetchall(); cols=[c[0] for c in cur.description]
-    return pl.DataFrame(rows, schema=cols).with_columns((pl.col("YR").cast(pl.Utf8)+"-"+pl.col("QTR").cast(pl.Utf8)).alias("yr_qtr"))
-
-def Fetch_DOM_QTR(year, qtr, fips2, naics=None, naics_col=None) -> pl.DataFrame:
-    ds1=ds.dataset("/wagerec/current_dominantnaics/parquet/", format="parquet")
-    lz=pl.scan_pyarrow_dataset(ds1).filter((pl.col("fips")==fips2.lstrip("0"))&(pl.col("year")==year)&(pl.col("qtr")==qtr))
-    if naics is not None:
-        col=naics_col or _infer_naics_col(naics)
-        if isinstance(naics,(list,tuple,set)):
-            vals=[str(x) for x in naics]; lz=lz.filter(pl.col(col).cast(pl.Utf8).is_in(vals))
-        else:
-            lz=lz.filter(pl.col(col).cast(pl.Utf8)==str(naics))
-    return lz.select(["ui_acct","fips","naics2","naics3","naics4","naics6","run"]).collect().rename({"ui_acct":"UI","run":"RUN"}).with_columns(pl.col("UI").cast(pl.Utf8).str.zfill(10))
-
-def Extract_QTR(state, year, quarter, naics=None, naics_col=None):
-    fips2=_norm_fips(state)
-    WR=Fetch_WR_QTR(fips2, year, quarter)
-    D=Fetch_DOM_QTR(year, quarter, fips2, naics=naics, naics_col=naics_col)
-    df=WR.join(D, on=["UI","RUN"], how="left")
-    df1=df.unique(subset=["BLS_ID"], keep="first").with_columns([
-        pl.col("STATE_CODE").cast(pl.Utf8),
-        pl.col("STATE_CODE").map_elements(fips2name, return_dtype=pl.Utf8).alias("state"),
-        pl.col("naics2").cast(pl.Utf8).map_elements(lookup_naics2, return_dtype=pl.Utf8).alias("sector")
-    ])
-    df_subset=(df1.group_by(["yr_qtr","state","sector"]).agg([
-        pl.len().alias("count"),
-        pl.col("WAGE").mean().alias("mean_wage"),
-        pl.col("WAGE").median().alias("median_wage"),
-        pl.col("WAGE").quantile(0.25,"nearest").alias("25percentile"),
-        pl.col("WAGE").quantile(0.75,"nearest").alias("75percentile")
-    ]).sort(["yr_qtr","state","sector"]))
-    return df1.to_pandas(), df_subset.rename({"sector":"naics"}).to_pandas()
-
-def build_cohort_ids_from_extract(state, year, quarter, naics=None, naics_col=None, id_col='BLS_ID', return_level=True):
-    det,_=Extract_QTR(state, year, quarter, naics=naics, naics_col=naics_col)
-    s=pd.Series(det[id_col].astype(str)).dropna().unique().tolist()
-    if id_col=='UI': s=[x.zfill(10) for x in s]
-    if not return_level: return s
-    if naics_col is not None:
-        level=_level_from_col(naics_col)
-    elif naics is not None:
-        level=_level_from_col(_infer_naics_col(naics))
-    else:
-        level=2
-    return s, level
-
-def Extract_QTR_Cohort(fips2, year, quarter, cohort, cohort_col='BLS_ID', naics_level=2):
-    WR=Fetch_WR_QTR_Cohort(fips2, year, quarter, cohort, cohort_col=cohort_col).with_columns(pl.col("UI").cast(pl.Utf8).str.zfill(10))
-    D=Fetch_DOM_QTR(year, quarter, fips2, naics=None, naics_col=None)
-    df=WR.join(D, on=["UI","RUN"], how="left")
-    col=_col_from_level(naics_level)
-    df1=df.unique(subset=["BLS_ID"], keep="first").with_columns([
-        pl.col("STATE_CODE").cast(pl.Utf8),
-        pl.col("STATE_CODE").map_elements(fips2name, return_dtype=pl.Utf8).alias("state"),
-        pl.col(col).cast(pl.Utf8).alias("naics")
-    ])
-    df_subset=(df1.group_by(["yr_qtr","state","naics"]).agg([
-        pl.len().alias("count"),
-        pl.col("WAGE").mean().alias("mean_wage"),
-        pl.col("WAGE").median().alias("median_wage"),
-        pl.col("WAGE").quantile(0.25,"nearest").alias("25percentile"),
-        pl.col("WAGE").quantile(0.75,"nearest").alias("75percentile")
-    ]).sort(["yr_qtr","state","naics"]))
-    return df1.to_pandas(), df_subset.to_pandas()
-
-def Track_Cohort_Range(fiplist, start_yr_qtr, end_yr_qtr, cohort, cohort_col='BLS_ID', naics_level=2, max_workers=12):
-    fips=[_norm_fips(x) for x in fiplist]
-    periods=_yrq_range(start_yr_qtr, end_yr_qtr)
-    tasks=[(f,y,q) for f in fips for (y,q) in periods]
-    det_list=[]; agg_list=[]
-    def _run(t):
-        f,y,q=t
-        return Extract_QTR_Cohort(f, y, q, cohort, cohort_col=cohort_col, naics_level=naics_level)
+def run_multithread(start_year, start_qtr, end_year, end_qtr, max_workers=None):
+    periods = list(quarter_range(start_year, start_qtr, end_year, end_qtr))
+    jobs = [(f, y, q) for (y, q) in periods for f in fipslist]
+    if max_workers is None:
+        max_workers = max(4, min(32, (os.cpu_count() or 8) * 2))
+    results = []
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs={ex.submit(_run, t): t for t in tasks}
-        for fu in as_completed(futs):
-            try:
-                d,a=fu.result()
-                if len(d): det_list.append(d)
-                if len(a): agg_list.append(a)
-            except Exception as e:
-                print("Error", futs[fu], e)
-    detail=pd.concat(det_list, ignore_index=True) if det_list else pd.DataFrame()
-    summary=pd.concat(agg_list, ignore_index=True) if agg_list else pd.DataFrame()
-    wanted=["yr_qtr","state","naics","count","mean_wage","median_wage","25percentile","75percentile"]
-    if len(summary):
-        summary=summary[wanted].sort_values(["yr_qtr","state","naics"])
-    return detail, summary
+        futs = [ex.submit(Extract_QTR_safe, f, y, q) for (f, y, q) in jobs]
+        for fut in tqdm(as_completed(futs), total=len(futs)):
+            results.append(fut.result())
+    ok = [r for r in results if r["ok"]]
+    errs = [r for r in results if not r["ok"]]
+    if ok:
+        all_df1 = pd.concat([r["df1"] for r in ok], ignore_index=True)
+        all_subset = pd.concat([r["subset"] for r in ok], ignore_index=True)
+    else:
+        all_df1 = pd.DataFrame()
+        all_subset = pd.DataFrame()
+    if errs:
+        err_df = pd.DataFrame([{"fips": r["fips"], "year": r["year"], "qtr": r["qtr"], "err": r["err"]} for r in errs])
+    else:
+        err_df = pd.DataFrame(columns=["fips","year","qtr","err"])
+    return all_df1, all_subset, err_df
 
-
-ids, level = build_cohort_ids_from_extract("ID", 2024, 2, naics="62", naics_col="naics2", id_col="BLS_ID", return_level=True)
-detail, summary = Track_Cohort_Range(["16","53","41"], "2023-4", "2024-2", ids, cohort_col="BLS_ID", naics_level=level, max_workers=12)
-# summary has columns: yr_qtr, state, naics, count, mean_wage, median_wage, 25percentile, 75percentile
+start_year = 2022
+start_qtr = 3
+end_year = 2023
+end_qtr = 2
+all_df1, all_subset, err_df = run_multithread(start_year, start_qtr, end_year, end_qtr, max_workers=12)
