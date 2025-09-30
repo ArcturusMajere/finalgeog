@@ -1,4 +1,26 @@
-df.loc[(df['fips'] == '12') & (df['yr'] == 2022) & (df['qtr'] == 1), 'A'] = df.loc[(df['fips'] == '12') & (df['yr'] == 2022) & (df['qtr'] == 1), 'A'].apply(fl_fix)
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 
+def run_lok_all(max_workers=None):
+    years = range(2020, 2026)
+    qtrs = range(1, 5)
+    pairs = [(y, q) for y in years for q in qtrs]
+    results = []
+    errors = []
+    max_workers = max_workers or min(32, (os.cpu_count() or 4) * 5)
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = {ex.submit(lok, y, q): (y, q) for y, q in pairs}
+        for f in as_completed(futs):
+            y, q = futs[f]
+            try:
+                res = f.result()
+                results.append((y, q, res))
+            except Exception as e:
+                errors.append((y, q, str(e)))
+    results.sort()
+    return results, errors
 
-df.loc[(df['fips'] == '12') & (df['yr_qtr'] == '2022-1'), 'A'] = df.loc[(df['fips'] == '12') & (df['yr_qtr'] == '2022-1'), 'A'].apply(fl_fix)
+# example:
+# out, errs = run_lok_all()
+# print(out)
+# print(errs)
