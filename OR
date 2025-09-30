@@ -1,33 +1,10 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import os
-from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
 
-def run_lok_all(max_workers=None):
+def run_lok_all():
     years = range(2020, 2026)
     qtrs = range(1, 5)
     pairs = [(y, q) for y in years for q in qtrs]
 
-    max_workers = max_workers or min(32, (os.cpu_count() or 4) * 5)
-    errors = []
-
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(lok, y, q): (y, q) for y, q in pairs}
-
-        # tqdm with a vibrant bar color
-        with tqdm(total=len(futs), desc="Running lok jobs", 
-                  colour="bright_magenta", ncols=90, 
-                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
-            for f in as_completed(futs):
-                y, q = futs[f]
-                try:
-                    f.result()
-                except Exception as e:
-                    errors.append((y, q, str(e)))
-                pbar.update(1)
-
-    return errors
-
-# Example usage
-# errs = run_lok_all()
-# if errs:
-#     print("Errors:", errs)
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for y, q in pairs:
+            ex.submit(lok, y, q)
