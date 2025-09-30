@@ -1,2 +1,1 @@
-df = fl_fix(df) if (df['fips'] == '12').any() else df
-df.loc[df['fips'] == '12'] = fl_fix(df.loc[df['fips'] == '12'])
+df.loc[df['fips'] == '12', 'A'] = df.loc[df['fips'] == '12', 'A'].apply(fl_fix)
