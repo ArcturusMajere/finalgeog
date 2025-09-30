@@ -5,22 +5,22 @@ def run_lok_all(max_workers=None):
     years = range(2020, 2026)
     qtrs = range(1, 5)
     pairs = [(y, q) for y in years for q in qtrs]
-    results = []
-    errors = []
+
     max_workers = max_workers or min(32, (os.cpu_count() or 4) * 5)
+    errors = []
+
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = {ex.submit(lok, y, q): (y, q) for y, q in pairs}
         for f in as_completed(futs):
             y, q = futs[f]
             try:
-                res = f.result()
-                results.append((y, q, res))
+                f.result()  # just ensure it finished without error
             except Exception as e:
                 errors.append((y, q, str(e)))
-    results.sort()
-    return results, errors
 
-# example:
-# out, errs = run_lok_all()
-# print(out)
-# print(errs)
+    return errors
+
+# example usage:
+# errs = run_lok_all()
+# if errs:
+#     print("Errors:", errs)
