@@ -1,1 +1,4 @@
-df.loc[df['fips'] == '12', 'A'] = df.loc[df['fips'] == '12', 'A'].apply(fl_fix)
+df.loc[(df['fips'] == '12') & (df['yr'] == 2022) & (df['qtr'] == 1), 'A'] = df.loc[(df['fips'] == '12') & (df['yr'] == 2022) & (df['qtr'] == 1), 'A'].apply(fl_fix)
+
+
+df.loc[(df['fips'] == '12') & (df['yr_qtr'] == '2022-1'), 'A'] = df.loc[(df['fips'] == '12') & (df['yr_qtr'] == '2022-1'), 'A'].apply(fl_fix)
