@@ -1,10 +1,94 @@
-from concurrent.futures import ThreadPoolExecutor
+import pyarrow.dataset as ds
+import polars as pl
+import pandas as pd
+import matplotlib.pyplot as plt
 
-def run_lok_all():
-    years = range(2020, 2026)
-    qtrs = range(1, 5)
-    pairs = [(y, q) for y in years for q in qtrs]
+dnaicsloc = "/wagerec/current_dominantnaics/parquet/"
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        for y, q in pairs:
-            ex.submit(lok, y, q)
+def fetch_dom_qtr(year, qtr, fips):
+    table = ds.dataset(dnaicsloc, format="parquet")
+    dom1 = pl.scan_pyarrow_dataset(table)
+    f = fips.lstrip("0")
+    dom2 = (
+        dom1
+        .filter(pl.col("fips") == f)
+        .filter(pl.col("year") == year)
+        .filter(pl.col("qtr") == qtr)
+    )
+    final = dom2.select(
+        ["ui_acct", "fips", "naics2", "naics3", "naics4", "naics6", "run"]
+    ).collect().to_pandas()
+    final.rename(columns={"ui_acct": "UI"}, inplace=True)
+    final.rename(columns={"run": "RUN"}, inplace=True)
+    return final
+
+def diagnose_dom_all(fips=None):
+    table = ds.dataset(dnaicsloc, format="parquet")
+    dom = pl.scan_pyarrow_dataset(table)
+    if fips is not None:
+        f = fips.lstrip("0")
+        dom = dom.filter(pl.col("fips") == f)
+    stats = (
+        dom
+        .group_by(["year", "qtr"])
+        .agg(
+            [
+                pl.count().alias("n_rows"),
+                pl.n_unique("fips").alias("n_fips"),
+                pl.n_unique("ui_acct").alias("n_ui"),
+                pl.n_unique("naics2").alias("n_naics2"),
+                pl.n_unique("naics3").alias("n_naics3"),
+                pl.n_unique("naics4").alias("n_naics4"),
+                pl.n_unique("naics6").alias("n_naics6"),
+                pl.n_unique("run").alias("n_runs"),
+            ]
+        )
+        .sort(["year", "qtr"])
+        .collect()
+        .to_pandas()
+    )
+    return stats
+
+def make_dom_report(fips=None):
+    stats = diagnose_dom_all(fips)
+    title = "Dominant NAICS diagnostics for all FIPS" if fips is None else f"Dominant NAICS diagnostics for FIPS {fips.lstrip('0')}"
+    print()
+    print("=" * len(title))
+    print(title)
+    print("=" * len(title))
+    print()
+    print("Summary by year and quarter")
+    print(stats.to_string(index=False))
+    print()
+    coverage = (
+        stats[["year", "qtr"]]
+        .drop_duplicates()
+        .sort_values(["year", "qtr"])
+        .reset_index(drop=True)
+    )
+    print("Year–quarter coverage")
+    print(coverage.to_string(index=False))
+    print()
+    pivot_ui = stats.pivot_table(index="year", columns="qtr", values="n_ui", aggfunc="sum")
+    fig, ax = plt.subplots()
+    im = ax.imshow(pivot_ui.values, aspect="auto")
+    ax.set_xticks(range(len(pivot_ui.columns)))
+    ax.set_xticklabels(pivot_ui.columns)
+    ax.set_yticks(range(len(pivot_ui.index)))
+    ax.set_yticklabels(pivot_ui.index)
+    ax.set_xlabel("Quarter")
+    ax.set_ylabel("Year")
+    ax.set_title("Distinct UI accounts by year and quarter")
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label("Distinct UI accounts")
+    for i in range(pivot_ui.shape[0]):
+        for j in range(pivot_ui.shape[1]):
+            val = pivot_ui.values[i, j]
+            if pd.notna(val):
+                ax.text(j, i, int(val), ha="center", va="center", fontsize=8)
+    plt.tight_layout()
+    plt.show()
+    return stats
+
+if __name__ == "__main__":
+    make_dom_report()
