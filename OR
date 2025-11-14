@@ -3,10 +3,8 @@ import polars as pl
 import pandas as pd
 import matplotlib.pyplot as plt
 
-dnaicsloc = "/wagerec/current_dominantnaics/parquet/"
-
-def fetch_dom_qtr(year, qtr, fips):
-    table = ds.dataset(dnaicsloc, format="parquet")
+def fetch_dom_qtr(year, qtr, fips, path="/wagerec/current_dominantnaics/parquet/"):
+    table = ds.dataset(path, format="parquet")
     dom1 = pl.scan_pyarrow_dataset(table)
     f = fips.lstrip("0")
     dom2 = (
@@ -22,8 +20,8 @@ def fetch_dom_qtr(year, qtr, fips):
     final.rename(columns={"run": "RUN"}, inplace=True)
     return final
 
-def diagnose_dom_all(fips=None):
-    table = ds.dataset(dnaicsloc, format="parquet")
+def dom_stats_from_path(path, fips=None):
+    table = ds.dataset(path, format="parquet")
     dom = pl.scan_pyarrow_dataset(table)
     if fips is not None:
         f = fips.lstrip("0")
@@ -49,46 +47,89 @@ def diagnose_dom_all(fips=None):
     )
     return stats
 
-def make_dom_report(fips=None):
-    stats = diagnose_dom_all(fips)
-    title = "Dominant NAICS diagnostics for all FIPS" if fips is None else f"Dominant NAICS diagnostics for FIPS {fips.lstrip('0')}"
+def compare_dom_dirs(old_path, new_path, fips=None):
+    old_stats = dom_stats_from_path(old_path, fips)
+    new_stats = dom_stats_from_path(new_path, fips)
+
+    merged = pd.merge(
+        old_stats,
+        new_stats,
+        on=["year", "qtr"],
+        how="outer",
+        suffixes=("_old", "_new")
+    ).sort_values(["year", "qtr"])
+
+    for col in merged.columns:
+        if col not in ["year", "qtr"]:
+            merged[col] = merged[col].fillna(0).astype(int)
+
+    merged["delta_n_rows"] = merged["n_rows_new"] - merged["n_rows_old"]
+    merged["delta_n_ui"] = merged["n_ui_new"] - merged["n_ui_old"]
+    merged["delta_n_naics2"] = merged["n_naics2_new"] - merged["n_naics2_old"]
+    merged["delta_n_naics3"] = merged["n_naics3_new"] - merged["n_naics3_old"]
+    merged["delta_n_naics4"] = merged["n_naics4_new"] - merged["n_naics4_old"]
+    merged["delta_n_naics6"] = merged["n_naics6_new"] - merged["n_naics6_old"]
+    merged["delta_n_runs"] = merged["n_runs_new"] - merged["n_runs_old"]
+
+    title_parts = []
+    if fips is not None:
+        title_parts.append(f"FIPS {fips.lstrip('0')}")
+    title = "Dominant NAICS directory comparison"
+    if title_parts:
+        title += " for " + ", ".join(title_parts)
+
     print()
     print("=" * len(title))
     print(title)
     print("=" * len(title))
     print()
-    print("Summary by year and quarter")
-    print(stats.to_string(index=False))
+    print("Old directory:", old_path)
+    print("New directory:", new_path)
     print()
-    coverage = (
-        stats[["year", "qtr"]]
-        .drop_duplicates()
-        .sort_values(["year", "qtr"])
-        .reset_index(drop=True)
-    )
-    print("Year–quarter coverage")
+
+    narrow = merged[[
+        "year", "qtr",
+        "n_rows_old", "n_rows_new", "delta_n_rows",
+        "n_ui_old", "n_ui_new", "delta_n_ui"
+    ]]
+    print("Row and UI counts by year and quarter")
+    print(narrow.to_string(index=False))
+    print()
+
+    coverage = merged[["year", "qtr"]].drop_duplicates().sort_values(["year", "qtr"])
+    print("Year–quarter coverage across both directories")
     print(coverage.to_string(index=False))
     print()
-    pivot_ui = stats.pivot_table(index="year", columns="qtr", values="n_ui", aggfunc="sum")
+
+    pivot_delta_ui = merged.pivot_table(
+        index="year",
+        columns="qtr",
+        values="delta_n_ui",
+        aggfunc="sum"
+    )
+
     fig, ax = plt.subplots()
-    im = ax.imshow(pivot_ui.values, aspect="auto")
-    ax.set_xticks(range(len(pivot_ui.columns)))
-    ax.set_xticklabels(pivot_ui.columns)
-    ax.set_yticks(range(len(pivot_ui.index)))
-    ax.set_yticklabels(pivot_ui.index)
+    im = ax.imshow(pivot_delta_ui.values, aspect="auto")
+    ax.set_xticks(range(len(pivot_delta_ui.columns)))
+    ax.set_xticklabels(pivot_delta_ui.columns)
+    ax.set_yticks(range(len(pivot_delta_ui.index)))
+    ax.set_yticklabels(pivot_delta_ui.index)
     ax.set_xlabel("Quarter")
     ax.set_ylabel("Year")
-    ax.set_title("Distinct UI accounts by year and quarter")
+    ax.set_title("Change in distinct UI accounts (new minus old)")
     cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label("Distinct UI accounts")
-    for i in range(pivot_ui.shape[0]):
-        for j in range(pivot_ui.shape[1]):
-            val = pivot_ui.values[i, j]
+    cbar.set_label("Δ distinct UI accounts")
+    for i in range(pivot_delta_ui.shape[0]):
+        for j in range(pivot_delta_ui.shape[1]):
+            val = pivot_delta_ui.values[i, j]
             if pd.notna(val):
                 ax.text(j, i, int(val), ha="center", va="center", fontsize=8)
     plt.tight_layout()
     plt.show()
-    return stats
+
+    return merged
 
 if __name__ == "__main__":
-    make_dom_report()
+    old_dir = "/wagerec/old_dominantnaics/parquet/"
+    new_dir = "/wagerec/current_dominantnaics/parquet/"
+    compare_dom_dirs(old_dir, new_dir)
