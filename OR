@@ -1,4 +1,258 @@
- ┌──────────────────────────────────────────┐
+
+
+
+import warnings
+warnings.filterwarnings('ignore')
+
+import time
+import datetime
+import glob
+import os
+import csv
+import threading
+
+import numpy as np
+import pandas as pd
+import polars as pl
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pyarrow.dataset as ds
+import more_itertools
+from tqdm import tqdm
+from sshfs import SSHFileSystem
+import oracledb
+import us
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from colorama import init, Fore, Style
+
+init(autoreset=True)
+
+states = ['AL','AR','CT','FL','GA','IA','IL','IN','ID','KS','LA','MD','ME','MN','MT',
+          'NE','NJ','NM','OH','OK','OR','PA','RI','SC','SD','WA','WI','WV','WY','TX','UT']
+
+lookup = {
+    '11':'11:Agriculture','21':'21:Mining','22':'22:Utilities','23': '23:Construction',
+    '31-33':'31-33:Manufacturing','42': '42:Wholesale Trade','44-45':'44-45:Retail Trade',
+    '48-49':'48-49:Transportation & Warehousing','51':'51:Information',
+    '52':'52:Finance & Insurance','53':'53:Real Estate, Rental & Leasing',
+    '54':'54:Profess, Science & Tech Srvs','55':'55:Management Srvs',
+    '56':'56:Admin Support Srvs','61':'61:Educational Srvs',
+    '62':'62:Healthcare & Social Assistance','71':'71:Arts, Entertainment and Rec',
+    '72':'72:Accommodations & Food Srvs','81':'81:Other Services',
+    '92':'92:Public Admin','99':'99:Unclassified'
+}
+
+def log(msg, level="INFO"):
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    colors = {
+        "INFO": Fore.CYAN,
+        "SUCCESS": Fore.GREEN,
+        "ERROR": Fore.RED,
+        "WARN": Fore.YELLOW,
+        "DEBUG": Fore.MAGENTA,
+    }
+    color = colors.get(level.upper(), "")
+    print(f"{color}[{ts}] [{level.upper()}] {msg}{Style.RESET_ALL}")
+
+def abbr2fips(abbr):
+    state = us.states.lookup(abbr)
+    if state is None:
+        raise ValueError(f"Invalid state abbreviation: {abbr}")
+    return state.fips
+
+fipslist = [abbr2fips(abbr) for abbr in states]
+
+def lookup_naics2(naics2):
+    return lookup.get(naics2, '00:Unknown')
+
+def timer(f):
+    def wrapper(*args, **kwargs):
+        st = time.time()
+        result = f(*args, **kwargs)
+        et = time.time()
+        T = (et - st) / 60
+        log(f"Exec Time for {f.__name__}: {T:.2f} min", level="DEBUG")
+        return result
+    return wrapper
+
+def fips2name(state_code):
+    try:
+        return us.states.lookup(state_code.zfill(2)).name
+    except AttributeError:
+        return state_code
+
+def dupeID(M: pd.DataFrame) -> pd.DataFrame:
+    B = M.sort_values(by=['BLS_ID', 'WAGE'], ascending=[True, False])
+    B = B.drop_duplicates(subset=['BLS_ID'], keep='first')
+    return B
+
+def Fetch_WR_QTR(query: str, params: dict, conn) -> pd.DataFrame:
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+            df = pl.DataFrame(rows, schema=columns)
+            df = df.with_columns(pl.col("STATE_CODE").cast(pl.Utf8))
+            df = df.with_columns(
+                pl.col('STATE_CODE').map_elements(
+                    lambda code: fips2name(code),
+                    return_dtype=pl.Utf8
+                ).alias('state')
+            )
+            df = df.with_columns(
+                (pl.col('YR').cast(pl.Utf8) + "-" + pl.col('QTR').cast(pl.Utf8)).alias('yr_qtr')
+            )
+            df = df.drop(
+                ["STATEUSE", "HOURLYRATE", "JOBTITLE", "SOCCODE",
+                 "WEEKS", "HOURS", "EIN", "STATE_CODE"]
+            )
+            return df.to_pandas()
+    except oracledb.Error as e:
+        log(f"Oracle error in Fetch_WR_QTR: {e}", level="ERROR")
+        return pl.DataFrame().to_pandas()
+
+def Fetch_DOM_QTR(year: int, qtr: int, fips: str) -> pd.DataFrame:
+    dnaicsloc = "/wagerec/current_dominantnaics/parquet/"
+    table = ds.dataset(dnaicsloc, format="parquet")
+    DOM1 = pl.scan_pyarrow_dataset(table)
+    f = fips.lstrip('0')
+    DOM2 = (
+        DOM1
+        .filter(pl.col('fips') == f)
+        .filter(pl.col('year') == year)
+        .filter(pl.col('qtr') == qtr)
+    )
+    Final = DOM2.select(
+        ['ui_acct', 'fips', 'naics2', 'naics3', 'naics4', 'naics6', 'run']
+    ).collect().to_pandas()
+    Final.rename(columns={'ui_acct': 'UI', 'run': 'RUN'}, inplace=True)
+    return Final
+
+@timer
+def Extract_QTR(fips: str, year: int, quarter: int):
+    thread_name = threading.current_thread().name
+    log(f"[{thread_name}] Starting Q{quarter} extraction", level="INFO")
+
+    query = """
+        SELECT * FROM YQQ
+        WHERE state_code = :fips
+          AND YR = :year
+          AND qtr = :quarter
+    """
+    params = {'fips': fips, 'year': year, 'quarter': quarter}
+
+    log(f"[{thread_name}] Connecting to Oracle for Q{quarter}", level="INFO")
+    conn = oracledb.connect(
+        user=open('USER.txt').read(),
+        password=open('password.txt').read(),
+        dsn="XQQQ"
+    )
+
+    try:
+        log(f"[{thread_name}] Fetching WR table for Q{quarter}", level="INFO")
+        WR = Fetch_WR_QTR(query, params, conn)
+
+        log(f"[{thread_name}] Loading NAICS parquet for Q{quarter}", level="INFO")
+        D = Fetch_DOM_QTR(year, quarter, fips)
+    finally:
+        conn.close()
+        log(f"[{thread_name}] Closed Oracle connection for Q{quarter}", level="DEBUG")
+
+    D['UI'] = D['UI'].str.zfill(10)
+
+    log(f"[{thread_name}] Cleaning wage records for Q{quarter}", level="INFO")
+    WR1 = WR[WR['WAGE'] != 0]
+    WR2 = dupeID(WR1)
+
+    log(f"[{thread_name}] Merging WR + NAICS for Q{quarter}", level="INFO")
+    df = pd.merge(WR2, D, how='left', on=['UI', 'RUN'], indicator=True)
+    df1 = dupeID(df)
+
+    q2 = df1.shape[0]
+    log(f"[{thread_name}] {q2} unique IDs found for Q{quarter}", level="SUCCESS")
+
+    df1['yr_qtr'] = df1['YR'].astype(str) + "-" + df1['QTR'].astype(str)
+    df1['state'] = [fips2name(code) for code in df1['fips']]
+    df1['sector'] = [lookup_naics2(code) for code in df1['naics2']]
+
+    log(f"[{thread_name}] Aggregating statistics for Q{quarter}", level="INFO")
+    df_subset = df1.groupby(['yr_qtr', 'state', 'sector']).agg(
+        counts=('BLS_ID', 'count'),
+        mean_wage=('WAGE', 'mean'),
+        median_wage=('WAGE', 'median'),
+        percentile75=('WAGE', lambda x: x.quantile(0.75)),
+        percentile25=('WAGE', lambda x: x.quantile(0.25))
+    ).reset_index()
+
+    log(f"[{thread_name}] Finished Q{quarter}", level="SUCCESS")
+    return df1, df_subset
+
+def run_interactive():
+    state_abbr = input("Enter 2-letter state abbreviation (e.g., NM): ").strip().upper()
+    year_str = input("Enter year (e.g., 2024): ").strip()
+    start_qtr_str = input("Enter START quarter (1–4): ").strip()
+    end_qtr_str = input("Enter END quarter (1–4): ").strip()
+
+    year = int(year_str)
+    start_qtr = int(start_qtr_str)
+    end_qtr = int(end_qtr_str)
+
+    if start_qtr < 1 or start_qtr > 4 or end_qtr < 1 or end_qtr > 4 or start_qtr > end_qtr:
+        raise ValueError("Quarter range must be between 1 and 4, and start_qtr <= end_qtr.")
+
+    fips = abbr2fips(state_abbr)
+    quarters = list(range(start_qtr, end_qtr + 1))
+
+    log(f"Running {state_abbr} {year} Q{start_qtr}–Q{end_qtr} with multithreading", level="INFO")
+
+    all_full = []
+    all_summary = []
+
+    with ThreadPoolExecutor(max_workers=len(quarters)) as executor:
+        future_to_q = {
+            executor.submit(Extract_QTR, fips, year, q): q
+            for q in quarters
+        }
+
+        with tqdm(total=len(quarters), desc="Quarters", unit="qtr") as pbar:
+            for future in as_completed(future_to_q):
+                q = future_to_q[future]
+                log(f"Waiting for Q{q} to finish", level="DEBUG")
+                try:
+                    df1, df_subset = future.result()
+                    log(f"Quarter Q{q} result received", level="SUCCESS")
+                    all_full.append(df1)
+                    all_summary.append(df_subset)
+                except Exception as e:
+                    log(f"Error in quarter Q{q}: {e}", level="ERROR")
+                finally:
+                    pbar.update(1)
+
+    if not all_full:
+        log("No data returned for any quarter.", level="WARN")
+        return pd.DataFrame(), pd.DataFrame()
+
+    full_combined = pd.concat(all_full, ignore_index=True)
+    summary_combined = pd.concat(all_summary, ignore_index=True)
+    summary_combined = summary_combined.sort_values(
+        ["yr_qtr", "state", "sector"]
+    ).reset_index(drop=True)
+
+    log("Final summary across all quarters:", level="INFO")
+    print(summary_combined)
+
+    return full_combined, summary_combined
+
+if __name__ == "__main__":
+    full, summary = run_interactive()
+
+
+
+
+
+
+┌──────────────────────────────────────────┐
  │              START PROGRAM               │
  └──────────────────────────────────────────┘
                       │
