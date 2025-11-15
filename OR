@@ -1,3 +1,86 @@
+ ┌──────────────────────────────────────────┐
+ │              START PROGRAM               │
+ └──────────────────────────────────────────┘
+                      │
+                      ▼
+        ┌─────────────────────────────┐
+        │  Convert state abbreviation │
+        │      → FIPS code list       │
+        └─────────────────────────────┘
+                      │
+                      ▼
+     ┌───────────────────────────────────┐
+     │  User calls Extract_QTR(fips,     │
+     │                     year, quarter)│
+     └───────────────────────────────────┘
+                      │
+                      ▼
+     ┌────────────────────────────────────┐
+     │ Open Oracle connection using user  │
+     │ credentials and DSN                │
+     └────────────────────────────────────┘
+                      │
+                      ▼
+     ┌──────────────────────────────────────────┐
+     │ Run SQL query through Fetch_WR_QTR:      │
+     │   - Executes Oracle SQL                  │
+     │   - Fetches rows                         │
+     │   - Converts to DataFrame                │
+     │   - Adds state names + yr_qtr            │
+     │   - Cleans unused fields                 │
+     └──────────────────────────────────────────┘
+                      │
+                      ▼
+     ┌──────────────────────────────────────────┐
+     │ Load NAICS industry data using           │
+     │ Fetch_DOM_QTR:                           │
+     │   - Reads parquet dataset                │
+     │   - Filters by state/year/quarter        │
+     │   - Returns NAICS codes per UI account   │
+     └──────────────────────────────────────────┘
+                      │
+                      ▼
+       ┌──────────────────────────────────┐
+       │ Clean wage records:              │
+       │   - Remove WAGE = 0              │
+       │   - Remove duplicate BLS_IDs     │
+       └──────────────────────────────────┘
+                      │
+                      ▼
+     ┌─────────────────────────────────────────┐
+     │ Merge Wage Records (WR) with NAICS data │
+     │   - Left join on UI + RUN               │
+     │   - Remove duplicates again             │
+     └─────────────────────────────────────────┘
+                      │
+                      ▼
+     ┌──────────────────────────────────────────┐
+     │ Create summary statistics grouped by:     │
+     │   → yr_qtr                                │
+     │   → state                                 │
+     │   → sector (NAICS 2-digit text)           │
+     │                                            │
+     │   Includes:                                │
+     │      - ID counts                           │
+     │      - mean wage                           │
+     │      - median wage                         │
+     │      - 25th & 75th percentiles             │
+     └──────────────────────────────────────────┘
+                      │
+                      ▼
+     ┌───────────────────────────────────────────┐
+     │ Print number of unique IDs found          │
+     │ Return:                                    │
+     │   - Full merged DataFrame (df1)            │
+     │   - Summary statistics table (df_subset)   │
+     └───────────────────────────────────────────┘
+                      │
+                      ▼
+ ┌──────────────────────────────────────────┐
+ │                  END                     │
+ └──────────────────────────────────────────┘
+
+
 import polars as pl; import pandas as pd;import time;import numpy as np
 import matplotlib.pyplot as plt;import seaborn as sns;import glob
 import pyarrow.dataset as ds;import more_itertools ;from tqdm import tqdm
