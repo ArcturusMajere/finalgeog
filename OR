@@ -1,1 +1,259 @@
 
+import warnings
+warnings.filterwarnings('ignore')
+
+import polars as pl
+import pandas as pd
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import glob
+import pyarrow.dataset as ds
+import more_itertools
+from tqdm import tqdm
+from sshfs import SSHFileSystem
+import os
+import csv
+import oracledb
+import us
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+states = ['AL','AR','CT','FL','GA','IA','IL','IN','ID','KS','LA','MD','ME','MN','MT',
+          'NE','NJ','NM','OH','OK','OR','PA','RI','SC','SD','WA','WI','WV','WY','TX','UT']
+
+def abbr2fips(abbr):
+    state = us.states.lookup(abbr)
+    if state is None:
+        raise ValueError(f"Invalid state abbreviation: {abbr}")
+    return state.fips
+
+fipslist = [abbr2fips(abbr) for abbr in states]
+
+lookup = {
+    '11':'11:Agriculture','21':'21:Mining','22':'22:Utilities','23': '23:Construction','31-33':'31-33:Manufacturing',
+    '42': '42:Wholesale Trade','44-45':'44-45:Retail Trade','48-49':'48-49:Transportation & Warehousing','51':'51:Information',
+    '52':'52:Finance & Insurance','53':'53:Real Estate, Rental & Leasing','54':'54:Profess, Science & Tech Srvs',
+    '55':'55:Management Srvs','56':'56:Admin Support Srvs','61':'61:Educational Srvs','62':'62:Healthcare & Social Assistance',
+    '71':'71:Arts, Entertainment and Rec','72':'72:Accommodations & Food Srvs','81':'81:Other Services',
+    '92':'92:Public Admin','99':'99:Unclassified'
+}
+
+def lookup_naics2(naics2):
+    return lookup.get(naics2, '00:Unknown')
+
+def timer(f):
+    def wrapper(*args, **kwargs):
+        st = time.time()
+        result = f(*args, **kwargs)
+        et = time.time()
+        T = (et-st)/60
+        print(f"Exec Time: {f.__name__}: {T:.2f} min")
+        return result
+    return wrapper
+
+def fips2name(state_code):
+    try:
+        return us.states.lookup(state_code.zfill(2)).name
+    except AttributeError:
+        return state_code
+
+def dupeID(M: pd.DataFrame) -> pd.DataFrame:
+    B = M.sort_values(by=['BLS_ID','WAGE'], ascending=[True,False])
+    B = B.drop_duplicates(subset=['BLS_ID'], keep='first')
+    return B
+
+def Fetch_WR_QTR(query: str, params: dict, conn) -> pd.DataFrame:
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+            df = pl.DataFrame(rows, schema=columns)
+            df = df.with_columns(pl.col("STATE_CODE").cast(pl.Utf8))
+            df = df.with_columns(
+                pl.col('STATE_CODE').map_elements(
+                    lambda code: fips2name(code),
+                    return_dtype=pl.Utf8
+                ).alias('state')
+            )
+            df = df.with_columns(
+                (pl.col('YR').cast(pl.Utf8) + "-" + pl.col('QTR').cast(pl.Utf8)).alias('yr_qtr')
+            )
+            df = df.drop(["STATEUSE", "HOURLYRATE","JOBTITLE","SOCCODE","WEEKS","HOURS","EIN","STATE_CODE"])
+            return df.to_pandas()
+    except oracledb.Error as e:
+        print("Oracle error in Fetch_WR_QTR:", e)
+        return pl.DataFrame().to_pandas()
+
+def Fetch_DOM_QTR(year: int, qtr: int, fips: str) -> pd.DataFrame:
+    dnaicsloc = "/wagerec/current_dominantnaics/parquet/"
+    table = ds.dataset(dnaicsloc, format="parquet")
+    DOM1 = pl.scan_pyarrow_dataset(table)
+    f = fips.lstrip('0')
+    DOM2 = (
+        DOM1
+        .filter(pl.col('fips') == f)
+        .filter(pl.col('year') == year)
+        .filter(pl.col('qtr') == qtr)
+    )
+    Final = DOM2.select(['ui_acct','fips','naics2','naics3','naics4','naics6','run']).collect().to_pandas()
+    Final.rename(columns={'ui_acct': 'UI'}, inplace=True)
+    Final.rename(columns={'run': 'RUN'}, inplace=True)
+    return Final
+
+@timer
+def Extract_QTR(fips: str, year: int, quarter: int):
+    query = """ SELECT * FROM YQQ WHERE state_code = :fips AND YR = :year AND qtr = :quarter"""
+    params = {'fips': fips, 'year': year, 'quarter': quarter}
+
+    conn = oracledb.connect(
+        user=open('USER.txt').read(),
+        password=open('password.txt').read(),
+        dsn="XQQQ"
+    )
+
+    WR = Fetch_WR_QTR(query, params, conn)
+    D = Fetch_DOM_QTR(year, quarter, fips)
+    conn.close()
+
+    D['UI'] = D['UI'].str.zfill(10)
+
+    WR1 = WR[WR['WAGE'] != 0]
+    WR2 = dupeID(WR1)
+
+    df = pd.merge(WR2, D, how='left', on=['UI','RUN'], indicator=True)
+    df1 = dupeID(df)
+
+    # Any BLS_ID with no NAICS match → treat as "00" (Unknown)
+    df1['naics2'] = df1['naics2'].fillna('00').astype(str).str.strip()
+    df1.loc[df1['naics2'].isin(['', 'nan', 'None']), 'naics2'] = '00'
+
+    q2 = df1.shape[0]
+    df1['yr_qtr'] = df1['YR'].astype(str) + "-" + df1['QTR'].astype(str)
+    df1['state'] = [fips2name(code) for code in df1['fips']]
+    df1['sector'] = [lookup_naics2(code) for code in df1['naics2']]
+
+    df_subset = df1.groupby(['yr_qtr', 'state','sector']).agg(
+        counts=('BLS_ID', 'count'),
+        mean_wage=('WAGE', 'mean'),
+        median_wage=('WAGE', 'median'),
+        percentile75=('WAGE', lambda x: x.quantile(0.75)),
+        percentile25=('WAGE', lambda x: x.quantile(0.25))
+    ).reset_index()
+
+    print(f"{q2} unique IDS found in {fips2name(fips)} @{year} Q{quarter}")
+    return df1, df_subset
+
+def assign_own_code(naics_str: str) -> int:
+    if not isinstance(naics_str, str):
+        return 0
+    L = len(naics_str)
+    if L == 2:
+        return 54
+    elif L == 3:
+        return 55
+    elif L == 4:
+        return 56
+    elif L == 5:
+        return 57
+    elif L == 6:
+        return 58
+    else:
+        return 0
+
+def build_naics_state_xlsx(year: int, quarter: int, output_path: str, max_workers: int = 8) -> pd.DataFrame:
+    """
+    Builds NAICS-by-state matrix:
+      - rows: naics2 (including '00' for unknown)
+      - columns: state_cnt/state_pct for each state, plus US_cnt and US_pct
+      - includes own_code and NAICS_title columns
+    """
+
+    def process_state(abbr: str) -> pd.DataFrame:
+        fips = abbr2fips(abbr)
+        print(f"Processing {abbr} {year} Q{quarter}")
+        df1, _ = Extract_QTR(fips, year, quarter)
+
+        if df1.empty:
+            print(f"Warning: no data for {abbr} {year} Q{quarter}")
+            return pd.DataFrame(columns=[f"{abbr}_cnt", f"{abbr}_pct"])
+
+        # Group by naics2 (including '00' for unknowns)
+        grp = df1.groupby('naics2')['BLS_ID'].count()
+        total_state = grp.sum()
+        if total_state == 0:
+            return pd.DataFrame(columns=[f"{abbr}_cnt", f"{abbr}_pct"])
+
+        state_table = pd.DataFrame({
+            f"{abbr}_cnt": grp,
+            f"{abbr}_pct": grp / total_state
+        })
+        return state_table
+
+    all_tables = []
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(states))) as executor:
+        future_to_state = {
+            executor.submit(process_state, abbr): abbr
+            for abbr in states
+        }
+
+        for future in as_completed(future_to_state):
+            abbr = future_to_state[future]
+            try:
+                state_table = future.result()
+                if not state_table.empty:
+                    all_tables.append(state_table)
+                else:
+                    print(f"No NAICS rows for state {abbr}")
+            except Exception as e:
+                print(f"Error processing state {abbr}: {e}")
+
+    if not all_tables:
+        print("No data returned for any state.")
+        return pd.DataFrame()
+
+    # Outer join on index (naics2) across all states
+    result = pd.concat(all_tables, axis=1)
+    result.index.name = 'naics2'
+
+    # Title: use lookup; '00' will become '00:Unknown'
+    result['NAICS_title'] = [lookup_naics2(code) for code in result.index]
+
+    # US totals
+    cnt_cols = [c for c in result.columns if c.endswith('_cnt')]
+    result['US_cnt'] = result[cnt_cols].sum(axis=1)
+    us_total = result['US_cnt'].sum()
+    result['US_pct'] = result['US_cnt'] / us_total if us_total > 0 else 0.0
+
+    result = result.reset_index()
+
+    # own_code based on length of naics2 (including '00')
+    result['own_code'] = result['naics2'].astype(str).apply(assign_own_code)
+
+    # order state columns in fixed state order
+    ordered_state_cols = []
+    for abbr in states:
+        cnt_col = f"{abbr}_cnt"
+        pct_col = f"{abbr}_pct"
+        if cnt_col in result.columns:
+            ordered_state_cols.append(cnt_col)
+        if pct_col in result.columns:
+            ordered_state_cols.append(pct_col)
+
+    cols = ['naics2', 'own_code', 'NAICS_title'] + ordered_state_cols + ['US_cnt', 'US_pct']
+    result = result[cols]
+
+    result.to_excel(output_path, index=False)
+    print(f"Saved NAICS-by-state matrix to {output_path}")
+
+    return result
+
+if __name__ == "__main__":
+    year = int(input("Enter YEAR (e.g., 2024): "))
+    quarter = int(input("Enter QUARTER (1-4): "))
+    output_path = f"NAICS_state_matrix_{year}_Q{quarter}.xlsx"
+    print(f"Building NAICS state XLSX for {year} Q{quarter} ...")
+    df_out = build_naics_state_xlsx(year, quarter, output_path)
+    print("Done.")
