@@ -1,1 +1,73 @@
 
+              ┌─────────────────────────┐
+              │      START PROGRAM      │
+              └─────────────┬───────────┘
+                            ▼
+          ┌──────────────────────────────────┐
+          │ Load state abbreviations list    │
+          └──────────────────┬───────────────┘
+                             ▼
+          ┌──────────────────────────────────┐
+          │ Convert each abbreviation to     │
+          │ its FIPS code (abbr2fips)        │
+          └──────────────────┬───────────────┘
+                             ▼
+      ┌──────────────────────────────────────────────┐
+      │ User calls Extract_QTR(fips, year, quarter)  │
+      └──────────────────┬───────────────────────────┘
+                         ▼
+      ┌──────────────────────────────────────────┐
+      │ Connect to Oracle database               │
+      │ using stored username/password           │
+      └──────────────────┬───────────────────────┘
+                         ▼
+      ┌──────────────────────────────────────────────────┐
+      │ Fetch_WR_QTR:                                    │
+      │   - Run SQL query                                │
+      │   - Fetch records                                │
+      │   - Convert to DataFrame                         │
+      │   - Add yr_qtr and state name                    │
+      │   - Remove unused fields                         │
+      └──────────────────┬───────────────────────────────┘
+                         ▼
+    ┌─────────────────────────────────────────────────────────┐
+    │ Fetch_DOM_QTR:                                          │
+    │   - Load parquet NAICS dataset                          │
+    │   - Filter by fips, year, quarter                       │
+    │   - Pull NAICS digits for dominant industry             │
+    └──────────────────┬──────────────────────────────────────┘
+                       ▼
+        ┌───────────────────────────────────────────────┐
+        │ Clean Wage Records:                            │
+        │   - Remove zero wages                          │
+        │   - Remove duplicate BLS_IDs                   │
+        └──────────────────┬─────────────────────────────┘
+                           ▼
+        ┌───────────────────────────────────────────────┐
+        │ Merge wage records with NAICS data             │
+        │ on UI + RUN keys                               │
+        └──────────────────┬─────────────────────────────┘
+                           ▼
+        ┌───────────────────────────────────────────────┐
+        │ Enhance merged data:                           │
+        │   - Final dedupe                               │
+        │   - Add readable sector name                   │
+        │   - Add year-quarter string                    │
+        │   - Add full state name                        │
+        └──────────────────┬─────────────────────────────┘
+                           ▼
+        ┌──────────────────────────────────────────────┐
+        │ Group & summarize by yr_qtr, state, sector   │
+        │   - Count IDs                                │
+        │   - Mean/median wage                         │
+        │   - 25th & 75th percentiles                  │
+        └──────────────────┬────────────────────────────┘
+                           ▼
+      ┌──────────────────────────────────────────────────┐
+      │ Print results (“X unique IDs found…”)            │
+      │ Return full dataset + summary table              │
+      └──────────────────┬───────────────────────────────┘
+                         ▼
+              ┌─────────────────────────┐
+              │           END           │
+              └─────────────────────────┘
