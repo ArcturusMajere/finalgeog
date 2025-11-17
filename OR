@@ -1,41 +1,63 @@
-
 import polars as pl
 import pandas as pd
 import us
 
-def naics2_6_state_matrix(year, qtr, states):
+def naics_2_6_with_us_unknown(year, qtr, states):
     def abbr2fips(x):
         return us.states.lookup(x).fips.lstrip("0")
 
     fips_list = [abbr2fips(s) for s in states]
-    all_levels = []
 
-    # Gather all state-level records
     state_frames = []
-
     for s, f in zip(states, fips_list):
         df = Fetch_DOM_QTR(year, qtr, f)
         if df.empty:
             continue
 
         pdf = pl.from_pandas(df)
+
+        # create unknown flag: dom NAICS6 != WR NAICS6
+        pdf = pdf.with_columns(
+            (pl.col("naics6") != pl.col("wr_naics6")).alias("unknown_flag")
+        )
+
         pdf = pdf.with_columns(pl.lit(s).alias("state"))
         state_frames.append(pdf)
 
-    # Build one big dataset for US totals
     us_all = pl.concat(state_frames, how="vertical")
 
-    # Summaries for state + US
+    # NAICS definitions
+    naics_cols = [
+        ("naics2", "naics2"),
+        ("naics3", "naics3"),
+        ("naics4", "naics4"),
+        ("naics5", "naics5"),
+        ("naics6", "naics6"),
+    ]
+
+    # agg_lvl mapper
+    def agg_level_func(x):
+        l = len(str(x))
+        if l == 2: return 54
+        if l == 3: return 55
+        if l == 4: return 56
+        if l == 5: return 57
+        if l == 6: return 58
+        return 99  # unknown
+
     out_frames = []
 
+    # STATE-LEVEL SUMMARIES
     for s in states:
         sdf = us_all.filter(pl.col("state") == s)
         if sdf.is_empty():
             continue
+
         total_s = sdf.height()
 
-        def summarize(col, level_name):
-            return (
+        # normal NAICS summaries
+        for col, lvl in naics_cols:
+            out_frames.append(
                 sdf.group_by(col)
                 .agg([
                     pl.len().alias("count"),
@@ -44,26 +66,30 @@ def naics2_6_state_matrix(year, qtr, states):
                 .rename({col: "naics"})
                 .with_columns([
                     pl.lit(s).alias("state"),
-                    pl.lit(level_name).alias("naics_level")
+                    pl.lit(lvl).alias("naics_level")
                 ])
             )
 
-        out_frames.extend([
-            summarize("naics2", "naics2"),
-            summarize("naics3", "naics3"),
-            summarize("naics4", "naics4"),
-            summarize("naics6", "naics6")
-        ])
+        # UNKNOWN row
+        unk_ct = sdf.filter(pl.col("unknown_flag") == True).height()
+        unk_pct = round(100 * unk_ct / total_s, 2)
 
-    # U.S. totals
+        out_frames.append(
+            pl.DataFrame({
+                "naics": ["unknown"],
+                "count": [unk_ct],
+                "pct": [unk_pct],
+                "state": [s],
+                "naics_level": ["unknown"]
+            })
+        )
+
+    # US TOTALS
+    total_us = us_all.height()
     out_us = []
-    for col, lvl in [("naics2", "naics2"),
-                     ("naics3", "naics3"),
-                     ("naics4", "naics4"),
-                     ("naics6", "naics6")]:
 
-        total_us = us_all.height()
-
+    # normal NAICS levels
+    for col, lvl in naics_cols:
         out_us.append(
             us_all.group_by(col)
             .agg([
@@ -77,11 +103,28 @@ def naics2_6_state_matrix(year, qtr, states):
             ])
         )
 
+    # US UNKNOWN
+    unk_ct_us = us_all.filter(pl.col("unknown_flag") == True).height()
+    unk_pct_us = round(100 * unk_ct_us / total_us, 2)
+
+    out_us.append(
+        pl.DataFrame({
+            "naics": ["unknown"],
+            "count": [unk_ct_us],
+            "pct": [unk_pct_us],
+            "state": ["US"],
+            "naics_level": ["unknown"]
+        })
+    )
+
     combined = pl.concat(out_frames + out_us, how="vertical")
     pdf = combined.to_pandas()
 
+    # agg_lvl assignment
+    pdf["agg_lvl"] = pdf["naics"].astype(str).apply(agg_level_func)
+
     wide = pdf.pivot_table(
-        index=["naics_level", "naics"],
+        index=["naics_level", "naics", "agg_lvl"],
         columns="state",
         values=["count", "pct"],
         fill_value=0
@@ -94,10 +137,5 @@ def naics2_6_state_matrix(year, qtr, states):
 
     wide = wide.sort_index(axis=1, level=0)
     return wide.sort_index()
-
-states = ["AL","AR","CT","FL","GA","IA","IL","IN","ID","KS","LA","MD","ME","MN",
-          "MT","NE","NJ","NM","OH","OK","OR","PA","RI","SC","SD","WA","WI","WV",
-          "WY","TX","UT"]
-
-result = naics2_6_state_matrix(2023, 2, states)
-print(result)
+tbl = naics_2_6_with_us_unknown(2023, 2, states)
+print(tbl)
