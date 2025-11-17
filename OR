@@ -1,1 +1,103 @@
 
+import polars as pl
+import pandas as pd
+import us
+
+def naics2_6_state_matrix(year, qtr, states):
+    def abbr2fips(x):
+        return us.states.lookup(x).fips.lstrip("0")
+
+    fips_list = [abbr2fips(s) for s in states]
+    all_levels = []
+
+    # Gather all state-level records
+    state_frames = []
+
+    for s, f in zip(states, fips_list):
+        df = Fetch_DOM_QTR(year, qtr, f)
+        if df.empty:
+            continue
+
+        pdf = pl.from_pandas(df)
+        pdf = pdf.with_columns(pl.lit(s).alias("state"))
+        state_frames.append(pdf)
+
+    # Build one big dataset for US totals
+    us_all = pl.concat(state_frames, how="vertical")
+
+    # Summaries for state + US
+    out_frames = []
+
+    for s in states:
+        sdf = us_all.filter(pl.col("state") == s)
+        if sdf.is_empty():
+            continue
+        total_s = sdf.height()
+
+        def summarize(col, level_name):
+            return (
+                sdf.group_by(col)
+                .agg([
+                    pl.len().alias("count"),
+                    (pl.len() / total_s * 100).round(2).alias("pct")
+                ])
+                .rename({col: "naics"})
+                .with_columns([
+                    pl.lit(s).alias("state"),
+                    pl.lit(level_name).alias("naics_level")
+                ])
+            )
+
+        out_frames.extend([
+            summarize("naics2", "naics2"),
+            summarize("naics3", "naics3"),
+            summarize("naics4", "naics4"),
+            summarize("naics6", "naics6")
+        ])
+
+    # U.S. totals
+    out_us = []
+    for col, lvl in [("naics2", "naics2"),
+                     ("naics3", "naics3"),
+                     ("naics4", "naics4"),
+                     ("naics6", "naics6")]:
+
+        total_us = us_all.height()
+
+        out_us.append(
+            us_all.group_by(col)
+            .agg([
+                pl.len().alias("count"),
+                (pl.len() / total_us * 100).round(2).alias("pct")
+            ])
+            .rename({col: "naics"})
+            .with_columns([
+                pl.lit("US").alias("state"),
+                pl.lit(lvl).alias("naics_level")
+            ])
+        )
+
+    combined = pl.concat(out_frames + out_us, how="vertical")
+    pdf = combined.to_pandas()
+
+    wide = pdf.pivot_table(
+        index=["naics_level", "naics"],
+        columns="state",
+        values=["count", "pct"],
+        fill_value=0
+    )
+
+    wide.columns = pd.MultiIndex.from_tuples(
+        [(col[1], col[0]) for col in wide.columns],
+        names=["state", "stat"]
+    )
+
+    wide = wide.sort_index(axis=1, level=0)
+    return wide.sort_index()
+
+states = ["AL","AR","CT","FL","GA","IA","IL","IN","ID","KS","LA","MD","ME","MN",
+          "MT","NE","NJ","NM","OH","OK","OR","PA","RI","SC","SD","WA","WI","WV",
+          "WY","TX","UT"]
+
+result = naics2_6_state_matrix(2023, 2, states)
+print(result)
