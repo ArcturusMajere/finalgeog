@@ -15,7 +15,7 @@ def dict_to_wide_with_agg(Q):
         t = t.rename(columns={code_col: "code"})
 
         state_roots = sorted({
-            c[:-4] for c in t.columns
+            c[:-4] for c in t.columns 
             if c.endswith("_cnt") and c != "US_cnt"
         })
 
@@ -39,15 +39,16 @@ def dict_to_wide_with_agg(Q):
 
         out.append(t)
 
-    final_df = pd.concat(out, ignore_index=True)
+    df_final = pd.concat(out, ignore_index=True)
 
-    col_order = (
-        ["level", "code", "agg_lvl"] +
-        [c for c in final_df.columns if c not in ["level", "code", "agg_lvl"]]
-    )
+    ordered_cols = ["level", "code", "agg_lvl"]
+    for st in state_roots:
+        ordered_cols += [f"{st}_cnt", f"{st}_pct"]
+    ordered_cols += ["US_cnt", "US_pct"]
 
-    final_df = final_df[col_order]
-    return final_df
+    df_final = df_final[ordered_cols]
+
+    return df_final
 
 
 df_final = dict_to_wide_with_agg(Q)
