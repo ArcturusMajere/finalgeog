@@ -1,40 +1,17 @@
-def summarize_naics_all_states(year=2025, quarter=1):
+def melt_naics_dict(Q):
     out = []
-    for st in states:
-        fips = abbr2fips(st)
-        df_full, df_sub = Extract_QTR(fips, year, quarter)
-        df_full = df_full.copy()
-        df_full['state'] = st
-        out.append(df_full)
+    for level, tab in Q.items():
+        t = tab.reset_index()
+        idx = t.columns[0]
+        state_roots = sorted({c[:-4] for c in t.columns if c.endswith('_cnt') and c not in ['US_cnt']})
+        for st in state_roots:
+            sub = t[[idx, f"{st}_cnt", f"{st}_pct", "US_cnt", "US_pct"]].copy()
+            sub["state"] = st
+            sub["level"] = level
+            sub = sub.rename(columns={idx: "naics", f"{st}_cnt": "count", f"{st}_pct": "pct"})
+            out.append(sub)
+    long_df = pd.concat(out, ignore_index=True)
+    long_df = long_df[["level", "naics", "state", "count", "pct", "US_cnt", "US_pct"]]
+    return long_df
 
-    big = pd.concat(out, ignore_index=True)
-
-    levels = {
-        'naics2': 'naics2',
-        'naics3': 'naics3',
-        'naics4': 'naics4',
-        'naics5': 'naics5',
-        'naics6': 'naics6'
-    }
-
-    final_list = []
-
-    for lvl, col in levels.items():
-        tmp = big.dropna(subset=[col])
-        g = tmp.groupby([col, 'state'])['BLS_ID'].nunique().reset_index()
-        g = g.rename(columns={'BLS_ID': 'counts'})
-
-        total = g.groupby(col)['counts'].sum().rename('US_cnt').reset_index()
-        g = g.merge(total, on=col, how='left')
-        g['US_pct'] = 1.0
-        g['pct'] = g['counts'] / g['US_cnt']
-
-        g.insert(0, 'level', lvl)
-        g = g.rename(columns={col: 'code'})
-
-        final_list.append(g)
-
-    final_df = pd.concat(final_list, ignore_index=True)
-    final_df = final_df.fillna(0)
-
-    return final_df
+df_long = melt_naics_dict(Q)
