@@ -10,8 +10,9 @@ def dict_to_wide_with_agg(Q):
     out = []
 
     for level, df in Q.items():
-        t = df.reset_index()
-        naics_col = t.columns[0]
+        t = df.reset_index().copy()
+        code_col = t.columns[0]
+        t = t.rename(columns={code_col: "code"})
 
         state_roots = sorted({
             c[:-4] for c in t.columns
@@ -21,21 +22,18 @@ def dict_to_wide_with_agg(Q):
         cnt_cols = [f"{s}_cnt" for s in state_roots]
         pct_cols = [f"{s}_pct" for s in state_roots]
 
-        # recompute US_cnt as the sum of all state counts for each NAICS
         t["US_cnt"] = t[cnt_cols].sum(axis=1)
+        total_us = t["US_cnt"].sum()
+        t["US_pct"] = t["US_cnt"] / total_us
 
-        # recompute US_pct as pct of national total across all NAICS
-        national_total = t["US_cnt"].sum()
-        t["US_pct"] = t["US_cnt"] / national_total
-
-        keep_cols = (
-            [naics_col] +
+        keep = (
+            ["code"] +
             cnt_cols +
             pct_cols +
             ["US_cnt", "US_pct"]
         )
 
-        t = t[keep_cols].copy()
+        t = t[keep]
         t["agg_lvl"] = level_map[level]
         t["level"] = level
 
@@ -44,12 +42,11 @@ def dict_to_wide_with_agg(Q):
     final_df = pd.concat(out, ignore_index=True)
 
     col_order = (
-        ["level", naics_col, "agg_lvl"] +
-        [c for c in final_df.columns if c not in ["level", naics_col, "agg_lvl"]]
+        ["level", "code", "agg_lvl"] +
+        [c for c in final_df.columns if c not in ["level", "code", "agg_lvl"]]
     )
 
     final_df = final_df[col_order]
-
     return final_df
 
 
