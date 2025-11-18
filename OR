@@ -14,15 +14,24 @@ def dict_to_wide_with_agg(Q):
         naics_col = t.columns[0]
 
         state_roots = sorted({
-            c[:-4] for c in t.columns 
-            if (c.endswith("_cnt") or c.endswith("_pct")) 
-            and c not in ["US_cnt", "US_pct"]
+            c[:-4] for c in t.columns
+            if c.endswith("_cnt") and c != "US_cnt"
         })
+
+        cnt_cols = [f"{s}_cnt" for s in state_roots]
+        pct_cols = [f"{s}_pct" for s in state_roots]
+
+        # recompute US_cnt as the sum of all state counts for each NAICS
+        t["US_cnt"] = t[cnt_cols].sum(axis=1)
+
+        # recompute US_pct as pct of national total across all NAICS
+        national_total = t["US_cnt"].sum()
+        t["US_pct"] = t["US_cnt"] / national_total
 
         keep_cols = (
             [naics_col] +
-            [f"{s}_cnt" for s in state_roots] +
-            [f"{s}_pct" for s in state_roots] +
+            cnt_cols +
+            pct_cols +
             ["US_cnt", "US_pct"]
         )
 
