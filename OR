@@ -15,18 +15,14 @@ def naics_2_6_with_us_unknown(year, qtr, states):
             continue
 
         pdf = pl.from_pandas(df)
-
-        # create unknown flag: dom NAICS6 != WR NAICS6
         pdf = pdf.with_columns(
             (pl.col("naics6") != pl.col("wr_naics6")).alias("unknown_flag")
         )
-
         pdf = pdf.with_columns(pl.lit(s).alias("state"))
         state_frames.append(pdf)
 
     us_all = pl.concat(state_frames, how="vertical")
 
-    # NAICS definitions
     naics_cols = [
         ("naics2", "naics2"),
         ("naics3", "naics3"),
@@ -35,19 +31,22 @@ def naics_2_6_with_us_unknown(year, qtr, states):
         ("naics6", "naics6"),
     ]
 
-    # agg_lvl mapper
     def agg_level_func(x):
         l = len(str(x))
-        if l == 2: return 54
-        if l == 3: return 55
-        if l == 4: return 56
-        if l == 5: return 57
-        if l == 6: return 58
-        return 99  # unknown
+        if l == 2:
+            return 54
+        if l == 3:
+            return 55
+        if l == 4:
+            return 56
+        if l == 5:
+            return 57
+        if l == 6:
+            return 58
+        return 99
 
     out_frames = []
 
-    # STATE-LEVEL SUMMARIES
     for s in states:
         sdf = us_all.filter(pl.col("state") == s)
         if sdf.is_empty():
@@ -55,7 +54,6 @@ def naics_2_6_with_us_unknown(year, qtr, states):
 
         total_s = sdf.height()
 
-        # normal NAICS summaries
         for col, lvl in naics_cols:
             out_frames.append(
                 sdf.group_by(col)
@@ -70,7 +68,6 @@ def naics_2_6_with_us_unknown(year, qtr, states):
                 ])
             )
 
-        # UNKNOWN row
         unk_ct = sdf.filter(pl.col("unknown_flag") == True).height()
         unk_pct = round(100 * unk_ct / total_s, 2)
 
@@ -84,11 +81,9 @@ def naics_2_6_with_us_unknown(year, qtr, states):
             })
         )
 
-    # US TOTALS
     total_us = us_all.height()
     out_us = []
 
-    # normal NAICS levels
     for col, lvl in naics_cols:
         out_us.append(
             us_all.group_by(col)
@@ -103,7 +98,6 @@ def naics_2_6_with_us_unknown(year, qtr, states):
             ])
         )
 
-    # US UNKNOWN
     unk_ct_us = us_all.filter(pl.col("unknown_flag") == True).height()
     unk_pct_us = round(100 * unk_ct_us / total_us, 2)
 
@@ -120,8 +114,14 @@ def naics_2_6_with_us_unknown(year, qtr, states):
     combined = pl.concat(out_frames + out_us, how="vertical")
     pdf = combined.to_pandas()
 
-    # agg_lvl assignment
     pdf["agg_lvl"] = pdf["naics"].astype(str).apply(agg_level_func)
+
+    level_order = ["unknown", "naics2", "naics3", "naics4", "naics5", "naics6"]
+    pdf["naics_level"] = pd.Categorical(pdf["naics_level"], categories=level_order, ordered=True)
+
+    pdf["naics"] = pdf["naics"].astype(str)
+    naics_cats = ["unknown"] + sorted([x for x in pdf["naics"].unique() if x != "unknown"])
+    pdf["naics"] = pd.Categorical(pdf["naics"], categories=naics_cats, ordered=True)
 
     wide = pdf.pivot_table(
         index=["naics_level", "naics", "agg_lvl"],
@@ -137,5 +137,3 @@ def naics_2_6_with_us_unknown(year, qtr, states):
 
     wide = wide.sort_index(axis=1, level=0)
     return wide.sort_index()
-tbl = naics_2_6_with_us_unknown(2023, 2, states)
-print(tbl)
