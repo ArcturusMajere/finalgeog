@@ -1,1 +1,111 @@
 
+import polars as pl
+import pandas as pd
+import us
+
+def naics_matrix(year, qtr, states):
+    def abbr2fips(x):
+        return us.states.lookup(x).fips.lstrip("0")
+
+    fips_list = [abbr2fips(s) for s in states]
+
+    state_frames = []
+    for s, f in zip(states, fips_list):
+        df = Fetch_DOM_QTR(year, qtr, f)
+        if df.empty:
+            continue
+
+        pdf = pl.from_pandas(df)
+        pdf = pdf.with_columns(pl.lit(s).alias("state"))
+        state_frames.append(pdf)
+
+    us_all = pl.concat(state_frames, how="vertical")
+
+    naics_cols = [
+        ("naics2", "naics2"),
+        ("naics3", "naics3"),
+        ("naics4", "naics4"),
+        ("naics5", "naics5"),
+        ("naics6", "naics6"),
+    ]
+
+    def agg_level_func(x):
+        l = len(str(x))
+        if l == 2: return 54
+        if l == 3: return 55
+        if l == 4: return 56
+        if l == 5: return 57
+        if l == 6: return 58
+        return None
+
+    out_frames = []
+
+    for s in states:
+        sdf = us_all.filter(pl.col("state") == s)
+        if sdf.is_empty():
+            continue
+
+        total_s = sdf.height()
+
+        for col, lvl in naics_cols:
+            out_frames.append(
+                sdf.group_by(col)
+                .agg([
+                    pl.len().alias("count"),
+                    (pl.len() / total_s * 100).round(2).alias("pct")
+                ])
+                .rename({col: "naics"})
+                .with_columns([
+                    pl.lit(s).alias("state"),
+                    pl.lit(lvl).alias("naics_level")
+                ])
+            )
+
+    total_us = us_all.height()
+    out_us = []
+
+    for col, lvl in naics_cols:
+        out_us.append(
+            us_all.group_by(col)
+            .agg([
+                pl.len().alias("count"),
+                (pl.len() / total_us * 100).round(2).alias("pct")
+            ])
+            .rename({col: "naics"})
+            .with_columns([
+                pl.lit("US").alias("state"),
+                pl.lit(lvl).alias("naics_level")
+            ])
+        )
+
+    combined = pl.concat(out_frames + out_us, how="vertical")
+
+    pdf = combined.to_pandas()
+    pdf["naics"] = pdf["naics"].astype(str)
+    pdf["agg_lvl"] = pdf["naics"].apply(agg_level_func)
+
+    wide = pdf.pivot_table(
+        index=["naics_level", "naics", "agg_lvl"],
+        columns="state",
+        values=["count", "pct"],
+        fill_value=0
+    )
+
+    wide.columns = pd.MultiIndex.from_tuples(
+        [(col[1], col[0]) for col in wide.columns],
+        names=["state", "stat"]
+    )
+
+    wide = wide.sort_index(axis=1, level=0)
+    return wide.sort_index()
+
+
+states = [
+    "AL","AR","CT","FL","GA","IA","IL","IN","ID","KS","LA","MD","ME","MN",
+    "MT","NE","NJ","NM","OH","OK","OR","PA","RI","SC","SD","WA","WI","WV",
+    "WY","TX","UT"
+]
+
+tbl = naics_matrix(2023, 2, states)
+print(tbl)
+
