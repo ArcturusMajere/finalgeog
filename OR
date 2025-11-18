@@ -1,105 +1,104 @@
-import polars as pl
 import pandas as pd
+import polars as pl
 import us
+from openpyxl import Workbook
 
-def naics_2_6_with_us(year, qtr, states):
-    def abbr2fips(x):
-        return us.states.lookup(x).fips.lstrip("0")
-
+def build_naics_xlsx(year, quarter, output_path):
+    states = ['AL','AR','CT','FL','GA','IA','IL','IN','ID','KS','LA','MD','ME','MN',
+              'MT','NE','NJ','NM','OH','OK','OR','PA','RI','SC','SD','WA','WI','WV',
+              'WY','TX','UT']
+    
+    def abbr2fips(abbr):
+        return us.states.lookup(abbr).fips.lstrip("0")
+    
     fips_list = [abbr2fips(s) for s in states]
 
-    # collect all state-level data in one master table
-    state_frames = []
-    for s, f in zip(states, fips_list):
-        df = Fetch_DOM_QTR(year, qtr, f)
-        if df.empty:
+    # collect all state DF
+    state_dfs = []
+    for st, f in zip(states, fips_list):
+        print(f"Processing {st} {year} Q{quarter} ...")
+        dom = Fetch_DOM_QTR(year, quarter, f)
+        if dom.empty:
+            print(f"Skipping: {st} empty DOM")
             continue
-        pdf = pl.from_pandas(df)
-        pdf = pdf.with_columns(pl.lit(s).alias("state"))
-        state_frames.append(pdf)
+        dom["state"] = st
+        state_dfs.append(dom)
 
-    us_all = pl.concat(state_frames, how="vertical")
+    # US-combined table
+    us_all = pd.concat(state_dfs, ignore_index=True)
 
-    # function to compute agg_lvl
-    def agg_level_func(x):
-        l = len(str(x))
-        if l == 2: return 54
-        if l == 3: return 55
-        if l == 4: return 56
-        if l == 5: return 57
-        if l == 6: return 58
+    # NAICS fields + mapping
+    naics_cols = ["naics2", "naics3", "naics4", "naics5", "naics6"]
+
+    def agg_lvl(code):
+        l = len(str(code))
+        if l == 2: return 55
+        if l == 3: return 56
+        if l == 4: return 57
+        if l == 5: return 58
+        if l == 6: return 59
         return None
 
-    # NAICS columns and labels
-    naics_cols = [
-        ("naics2", "naics2"),
-        ("naics3", "naics3"),
-        ("naics4", "naics4"),
-        ("naics5", "naics5"),
-        ("naics6", "naics6"),
-    ]
+    # build an empty list to collect all rows
+    master_rows = []
 
-    out_frames = []
-
-    # create state-level summaries
-    for s in states:
-        sdf = us_all.filter(pl.col("state") == s)
-        if sdf.is_empty():
+    # For each state
+    for st in states:
+        sdf = us_all[us_all["state"] == st]
+        if sdf.empty:
             continue
-        total_s = sdf.height()
+        total_s = len(sdf)
 
-        for col, lvl in naics_cols:
-            out_frames.append(
-                sdf.group_by(col)
-                .agg([
-                    pl.len().alias("count"),
-                    (pl.len() / total_s * 100).round(2).alias("pct")
-                ])
-                .rename({col: "naics"})
-                .with_columns([
-                    pl.lit(s).alias("state"),
-                    pl.lit(lvl).alias("naics_level")
-                ])
-            )
+        # loop NAICS levels
+        for col in naics_cols:
+            sub = sdf.groupby(col).size().reset_index(name="count")
+            sub["pct"] = (sub["count"] / total_s * 100).round(2)
+            sub["naics"] = sub[col].astype(str)
+            sub["agg_lvl"] = sub["naics"].apply(agg_lvl)
 
-    # create US-level summaries
-    out_us = []
-    total_us = us_all.height()
+            # create rows: one per NAICS per state
+            for _, r in sub.iterrows():
+                master_rows.append({
+                    "naics": r["naics"],
+                    "agg_lvl": r["agg_lvl"],
+                    f"{st}_count": r["count"],
+                    f"{st}_pct": r["pct"]
+                })
 
-    for col, lvl in naics_cols:
-        out_us.append(
-            us_all.group_by(col)
-            .agg([
-                pl.len().alias("count"),
-                (pl.len() / total_us * 100).round(2).alias("pct")
-            ])
-            .rename({col: "naics"})
-            .with_columns([
-                pl.lit("US").alias("state"),
-                pl.lit(lvl).alias("naics_level")
-            ])
-        )
+    # Convert to DF
+    df = pd.DataFrame(master_rows)
 
-    # combine everything
-    combined = pl.concat(out_frames + out_us, how="vertical")
+    # aggregate over duplicates (multiple states merged)
+    df = df.groupby(["naics","agg_lvl"], as_index=False).agg("sum")
 
-    # add agg_lvl column
-    pdf = combined.to_pandas()
-    pdf["agg_lvl"] = pdf["naics"].astype(str).apply(agg_level_func)
+    # add U.S. totals
+    us_totals = {}
 
-    # pivot to matrix
-    wide = pdf.pivot_table(
-        index=["naics_level", "naics", "agg_lvl"],
-        columns="state",
-        values=["count", "pct"],
-        fill_value=0
+    total_us = len(us_all)
+
+    for col in naics_cols:
+        sub = us_all.groupby(col).size().reset_index(name="count")
+        sub["pct"] = (sub["count"] / total_us * 100).round(2)
+        sub["naics"] = sub[col].astype(str)
+        sub["agg_lvl"] = sub["naics"].apply(agg_lvl)
+        for _, r in sub.iterrows():
+            us_totals.setdefault((r["naics"], r["agg_lvl"]), {})
+            us_totals[(r["naics"], r["agg_lvl"])]["US_count"] = r["count"]
+            us_totals[(r["naics"], r["agg_lvl"])]["US_pct"] = r["pct"]
+
+    # merge US totals
+    us_df = pd.DataFrame(
+        [
+            {"naics": k[0], "agg_lvl": k[1], **v}
+            for k, v in us_totals.items()
+        ]
     )
 
-    # flatten multiindex columns so they appear as (state, metric)
-    wide.columns = pd.MultiIndex.from_tuples(
-        [(col[1], col[0]) for col in wide.columns],
-        names=["state", "stat"]
-    )
+    final = df.merge(us_df, on=["naics","agg_lvl"], how="outer")
 
-    wide = wide.sort_index(axis=1, level=0)
-    return wide.sort_index()
+    # sort nicely
+    final = final.sort_values(["agg_lvl","naics"])
+
+    # output XLSX
+    final.to_excel(output_path, index=False)
+    print(f"Saved: {output_path}")
