@@ -1,104 +1,112 @@
 import pandas as pd
-import polars as pl
 import us
-from openpyxl import Workbook
 
 def build_naics_xlsx(year, quarter, output_path):
+
     states = ['AL','AR','CT','FL','GA','IA','IL','IN','ID','KS','LA','MD','ME','MN',
               'MT','NE','NJ','NM','OH','OK','OR','PA','RI','SC','SD','WA','WI','WV',
               'WY','TX','UT']
-    
+
     def abbr2fips(abbr):
         return us.states.lookup(abbr).fips.lstrip("0")
-    
+
     fips_list = [abbr2fips(s) for s in states]
 
-    # collect all state DF
-    state_dfs = []
+    naics_levels = [
+        ("naics2", 55),
+        ("naics3", 56),
+        ("naics4", 57),
+        ("naics5", 58),
+        ("naics6", 59),
+    ]
+
+    all_rows = []
+    us_df_list = []
+
+    # ----------------------------------------------------------------
+    # Process each state using Extract_QTR
+    # ----------------------------------------------------------------
     for st, f in zip(states, fips_list):
+
         print(f"Processing {st} {year} Q{quarter} ...")
-        dom = Fetch_DOM_QTR(year, quarter, f)
-        if dom.empty:
-            print(f"Skipping: {st} empty DOM")
+
+        try:
+            df1, _ = Extract_QTR(f, year, quarter)
+        except Exception as e:
+            print(f"Error with state {st}: {e}")
             continue
-        dom["state"] = st
-        state_dfs.append(dom)
 
-    # US-combined table
-    us_all = pd.concat(state_dfs, ignore_index=True)
-
-    # NAICS fields + mapping
-    naics_cols = ["naics2", "naics3", "naics4", "naics5", "naics6"]
-
-    def agg_lvl(code):
-        l = len(str(code))
-        if l == 2: return 55
-        if l == 3: return 56
-        if l == 4: return 57
-        if l == 5: return 58
-        if l == 6: return 59
-        return None
-
-    # build an empty list to collect all rows
-    master_rows = []
-
-    # For each state
-    for st in states:
-        sdf = us_all[us_all["state"] == st]
-        if sdf.empty:
+        if df1.empty:
             continue
-        total_s = len(sdf)
 
-        # loop NAICS levels
-        for col in naics_cols:
-            sub = sdf.groupby(col).size().reset_index(name="count")
+        df1 = df1.copy()
+        df1["state"] = st
+        us_df_list.append(df1)
+
+        total_s = len(df1)
+
+        # generate rows for each NAICS level
+        for col, lvl in naics_levels:
+
+            # ensure string NAICS
+            df1[col] = df1[col].astype(str)
+
+            sub = df1.groupby(col).size().reset_index(name="count")
             sub["pct"] = (sub["count"] / total_s * 100).round(2)
-            sub["naics"] = sub[col].astype(str)
-            sub["agg_lvl"] = sub["naics"].apply(agg_lvl)
+            sub["code"] = sub[col]
+            sub["agg_lvl"] = lvl
 
-            # create rows: one per NAICS per state
             for _, r in sub.iterrows():
-                master_rows.append({
-                    "naics": r["naics"],
+                all_rows.append({
+                    "code": r["code"],
                     "agg_lvl": r["agg_lvl"],
                     f"{st}_count": r["count"],
                     f"{st}_pct": r["pct"]
                 })
 
-    # Convert to DF
-    df = pd.DataFrame(master_rows)
+    # ----------------------------------------------------------------
+    # COMBINE ALL STATES
+    # ----------------------------------------------------------------
+    df = pd.DataFrame(all_rows)
 
-    # aggregate over duplicates (multiple states merged)
-    df = df.groupby(["naics","agg_lvl"], as_index=False).agg("sum")
+    # merge states into single row per NAICS/agg_lvl
+    df = df.groupby(["code", "agg_lvl"], as_index=False).sum()
 
-    # add U.S. totals
-    us_totals = {}
-
+    # ----------------------------------------------------------------
+    # U.S. TOTALS
+    # ----------------------------------------------------------------
+    us_all = pd.concat(us_df_list, ignore_index=True)
     total_us = len(us_all)
 
-    for col in naics_cols:
+    us_totals = []
+
+    for col, lvl in naics_levels:
+        us_all[col] = us_all[col].astype(str)
+
         sub = us_all.groupby(col).size().reset_index(name="count")
         sub["pct"] = (sub["count"] / total_us * 100).round(2)
-        sub["naics"] = sub[col].astype(str)
-        sub["agg_lvl"] = sub["naics"].apply(agg_lvl)
+        sub["code"] = sub[col]
+        sub["agg_lvl"] = lvl
+
         for _, r in sub.iterrows():
-            us_totals.setdefault((r["naics"], r["agg_lvl"]), {})
-            us_totals[(r["naics"], r["agg_lvl"])]["US_count"] = r["count"]
-            us_totals[(r["naics"], r["agg_lvl"])]["US_pct"] = r["pct"]
+            us_totals.append({
+                "code": r["code"],
+                "agg_lvl": r["agg_lvl"],
+                "US_count": r["count"],
+                "US_pct": r["pct"]
+            })
+
+    us_df = pd.DataFrame(us_totals)
 
     # merge US totals
-    us_df = pd.DataFrame(
-        [
-            {"naics": k[0], "agg_lvl": k[1], **v}
-            for k, v in us_totals.items()
-        ]
-    )
+    final = df.merge(us_df, on=["code", "agg_lvl"], how="outer")
 
-    final = df.merge(us_df, on=["naics","agg_lvl"], how="outer")
+    # sort
+    final = final.sort_values(["agg_lvl", "code"])
 
-    # sort nicely
-    final = final.sort_values(["agg_lvl","naics"])
-
-    # output XLSX
+    # ----------------------------------------------------------------
+    # EXPORT XLSX
+    # ----------------------------------------------------------------
     final.to_excel(output_path, index=False)
-    print(f"Saved: {output_path}")
+    print(f"\nSaved → {output_path}")
+build_naics_xlsx(2025, 1, "NAICS_State_US_2025_Q1.xlsx")
