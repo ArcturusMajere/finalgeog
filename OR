@@ -15,3 +15,12 @@ def melt_naics_dict(Q):
     return long_df
 
 df_long = melt_naics_dict(Q)
+
+df_long = melt_naics_dict(Q)
+df_long["agg_lvl"] = df_long["level"].map({
+    "naics2": 54,
+    "naics3": 55,
+    "naics4": 56,
+    "naics5": 57,
+    "naics6": 59
+})
