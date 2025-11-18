@@ -1,26 +1,39 @@
-def melt_naics_dict(Q):
-    out = []
-    for level, tab in Q.items():
-        t = tab.reset_index()
-        idx = t.columns[0]
-        state_roots = sorted({c[:-4] for c in t.columns if c.endswith('_cnt') and c not in ['US_cnt']})
-        for st in state_roots:
-            sub = t[[idx, f"{st}_cnt", f"{st}_pct", "US_cnt", "US_pct"]].copy()
-            sub["state"] = st
-            sub["level"] = level
-            sub = sub.rename(columns={idx: "naics", f"{st}_cnt": "count", f"{st}_pct": "pct"})
-            out.append(sub)
-    long_df = pd.concat(out, ignore_index=True)
-    long_df = long_df[["level", "naics", "state", "count", "pct", "US_cnt", "US_pct"]]
-    return long_df
+def dict_to_wide_with_agg(Q):
+    level_map = {
+        "naics2": 54,
+        "naics3": 55,
+        "naics4": 56,
+        "naics5": 57,
+        "naics6": 59
+    }
 
-df_long = melt_naics_dict(Q)
+    final_list = []
 
-df_long = melt_naics_dict(Q)
-df_long["agg_lvl"] = df_long["level"].map({
-    "naics2": 54,
-    "naics3": 55,
-    "naics4": 56,
-    "naics5": 57,
-    "naics6": 59
-})
+    for level, df in Q.items():
+        t = df.reset_index()
+        naics_col = t.columns[0]
+
+        state_roots = sorted({c[:-4] for c in t.columns if c.endswith("_cnt") and c != "US_cnt"})
+
+        cols = [naics_col] + \
+               [f"{s}_cnt" for s in state_roots] + \
+               [f"{s}_pct" for s in state_roots] + \
+               ["US_cnt", "US_pct"]
+
+        t = t[cols].copy()
+        t["agg_lvl"] = level_map[level]
+        t["level"] = level
+
+        final_list.append(t)
+
+    final_df = pd.concat(final_list, ignore_index=True)
+
+    col_order = ["level", naics_col, "agg_lvl"] + \
+                [c for c in final_df.columns if c not in ["level", naics_col, "agg_lvl"]]
+
+    final_df = final_df[col_order]
+
+    return final_df
+
+
+df_final = dict_to_wide_with_agg(Q)
