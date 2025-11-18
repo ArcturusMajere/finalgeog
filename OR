@@ -25,17 +25,18 @@ def summarize_naics_all_states(year=2025, quarter=1):
         codecol = col
 
         g = tmp.groupby([codecol,'state'])['counts'].sum().reset_index()
-        total = g.groupby(codecol)['counts'].sum().rename('US_total').reset_index()
+        total = g.groupby(codecol)['counts'].sum().rename('US_cnt').reset_index()
         g = g.merge(total,on=codecol,how='left')
-        g['pct'] = g['counts'] / g['US_total']
+        g['US_pct'] = g['counts'] / g['US_cnt']
 
         wide_cnt = g.pivot(index=codecol, columns='state', values='counts')
-        wide_pct = g.pivot(index=codecol, columns='state', values='pct')
+        wide_pct = g.pivot(index=codecol, columns='state', values='US_pct')
 
         wide_cnt.columns = [f"{c}_cnt" for c in wide_cnt.columns]
         wide_pct.columns = [f"{c}_pct" for c in wide_pct.columns]
 
-        final = pd.concat([wide_cnt, wide_pct, total.set_index(codecol)], axis=1)
+        us_cols = total.set_index(codecol)
+        final = pd.concat([wide_cnt, wide_pct, us_cols], axis=1)
         final = final.fillna(0)
 
         final_tables[lvl] = final
