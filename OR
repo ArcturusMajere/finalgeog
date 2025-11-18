@@ -7,29 +7,37 @@ def dict_to_wide_with_agg(Q):
         "naics6": 59
     }
 
-    final_list = []
+    out = []
 
     for level, df in Q.items():
         t = df.reset_index()
         naics_col = t.columns[0]
 
-        state_roots = sorted({c[:-4] for c in t.columns if c.endswith("_cnt") and c != "US_cnt"})
+        state_roots = sorted({
+            c[:-4] for c in t.columns 
+            if (c.endswith("_cnt") or c.endswith("_pct")) 
+            and c not in ["US_cnt", "US_pct"]
+        })
 
-        cols = [naics_col] + \
-               [f"{s}_cnt" for s in state_roots] + \
-               [f"{s}_pct" for s in state_roots] + \
-               ["US_cnt", "US_pct"]
+        keep_cols = (
+            [naics_col] +
+            [f"{s}_cnt" for s in state_roots] +
+            [f"{s}_pct" for s in state_roots] +
+            ["US_cnt", "US_pct"]
+        )
 
-        t = t[cols].copy()
+        t = t[keep_cols].copy()
         t["agg_lvl"] = level_map[level]
         t["level"] = level
 
-        final_list.append(t)
+        out.append(t)
 
-    final_df = pd.concat(final_list, ignore_index=True)
+    final_df = pd.concat(out, ignore_index=True)
 
-    col_order = ["level", naics_col, "agg_lvl"] + \
-                [c for c in final_df.columns if c not in ["level", naics_col, "agg_lvl"]]
+    col_order = (
+        ["level", naics_col, "agg_lvl"] +
+        [c for c in final_df.columns if c not in ["level", naics_col, "agg_lvl"]]
+    )
 
     final_df = final_df[col_order]
 
