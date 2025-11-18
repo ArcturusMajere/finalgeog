@@ -1,1 +1,46 @@
 
+
+def summarize_naics_all_states(year=2025, quarter=1):
+    out = []
+    for st in states:
+        fips = abbr2fips(st)
+        df_full, df_sub = Extract_QTR(fips, year, quarter)
+        df_full = df_full.copy()
+        df_full['state'] = st
+        out.append(df_full)
+
+    big = pd.concat(out, ignore_index=True)
+
+    levels = {
+        'naics2': 'naics2',
+        'naics3': 'naics3',
+        'naics4': 'naics4',
+        'naics5': 'naics5',
+        'naics6': 'naics6'
+    }
+
+    final_tables = {}
+
+    for lvl, col in levels.items():
+        tmp = big.dropna(subset=[col])
+        g = tmp.groupby([col, 'state'])['BLS_ID'].nunique().reset_index()
+        g = g.rename(columns={'BLS_ID': 'counts'})
+        total = g.groupby(col)['counts'].sum().rename('US_cnt').reset_index()
+        g = g.merge(total, on=col, how='left')
+        g['pct'] = g['counts'] / g['US_cnt']
+
+        wide_cnt = g.pivot(index=col, columns='state', values='counts')
+        wide_pct = g.pivot(index=col, columns='state', values='pct')
+
+        wide_cnt.columns = [f"{c}_cnt" for c in wide_cnt.columns]
+        wide_pct.columns = [f"{c}_pct" for c in wide_pct.columns]
+
+        us_cols = total.set_index(col)
+        us_cols['US_pct'] = 1.0
+
+        final = pd.concat([wide_cnt, wide_pct, us_cols], axis=1)
+        final = final.fillna(0)
+
+        final_tables[lvl] = final
+
+    return final_tables
