@@ -1,1 +1,55 @@
 
+import os
+import pandas as pd
+import pyreadstat
+
+input_dir = r"/path/to/your/csv_directory"
+output_dir = r"/path/to/output_sas_directory"
+
+os.makedirs(output_dir, exist_ok=True)
+
+for fname in os.listdir(input_dir):
+    if fname.lower().endswith(".csv"):
+        csv_path = os.path.join(input_dir, fname)
+        df = pd.read_csv(csv_path)
+        base = os.path.splitext(fname)[0]
+        sas_path = os.path.join(output_dir, base + ".sas7bdat")
+        pyreadstat.write_sas7bdat(df, sas_path)
+
+
+import os
+import saspy
+
+# ---- CONFIGURE SAS SESSION ----
+# If you have SAS locally and want STDIO connection:
+sas = saspy.SASsession(cfgname='sdio')
+
+# If you use a remote SAS server, use the correct cfgname instead.
+# sas = saspy.SASsession(cfgname='your_config')
+
+input_dir = r"/path/to/your/csv_directory"
+output_dir = r"/path/to/output_sas_directory"
+
+os.makedirs(output_dir, exist_ok=True)
+
+for fname in os.listdir(input_dir):
+    if fname.lower().endswith(".csv"):
+        csv_path = os.path.join(input_dir, fname)
+        basename = os.path.splitext(fname)[0]
+
+        # Import CSV into SAS
+        sasdata = sas.read_csv(csv_path, table=basename)
+
+        # Write SAS dataset
+        sas_output_path = os.path.join(output_dir, basename + ".sas7bdat")
+        sasdata.to_sasdata(libref="", table=basename, results='text')
+        
+        # Physically copy the file into the output directory
+        sas.saslib("work", path=output_dir)
+        sas.submit(f"""
+            data work.{basename};
+                set {basename};
+            run;
+        """)
+
+        print(f"Converted: {fname} → {sas_output_path}")
