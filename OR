@@ -1,23 +1,52 @@
-import os
-import saspy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-sas = saspy.SASsession()
+def build_task_list_for_state(state_abbr, years, quarters):
+    fips = abbr2fips(state_abbr)
+    tasks = []
+    for yr in years:
+        for q in quarters:
+            tasks.append((fips, yr, q, state_abbr))
+    return tasks
 
-input_dir = r"C:\path\to\csv_directory"
-output_dir = r"C:\path\to\output_sas_directory"
+def build_task_list_for_states(state_list, years, quarters):
+    tasks = []
+    for st in state_list:
+        tasks.extend(build_task_list_for_state(st, years, quarters))
+    return tasks
 
-os.makedirs(output_dir, exist_ok=True)
+def run_extract_multithread(tasks, max_workers=8):
+    results_full = []
+    results_sub = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {
+            executor.submit(Extract_QTR, fips, year, qtr): (fips, year, qtr, st)
+            for (fips, year, qtr, st) in tasks
+        }
+        for future in tqdm(as_completed(future_map), total=len(future_map)):
+            fips, year, qtr, st = future_map[future]
+            try:
+                df_full, df_sub = future.result()
+            except Exception as e:
+                print(f"Error for {st} {year} Q{qtr}: {e}")
+                continue
+            df_full = df_full.assign(state_abbr=st, year=year, quarter=qtr)
+            df_sub = df_sub.assign(state_abbr=st, year=year, quarter=qtr)
+            results_full.append(df_full)
+            results_sub.append(df_sub)
+    all_full = pd.concat(results_full, ignore_index=True) if results_full else pd.DataFrame()
+    all_sub = pd.concat(results_sub, ignore_index=True) if results_sub else pd.DataFrame()
+    return all_full, all_sub
 
-sas.saslib("out", path=output_dir)
+def extract_state_over_time_multithread(state_abbr, years, quarters, max_workers=4):
+    tasks = build_task_list_for_state(state_abbr, years, quarters)
+    return run_extract_multithread(tasks, max_workers=max_workers)
 
-for fname in os.listdir(input_dir):
-    if fname.lower().endswith(".csv"):
-        csv_path = os.path.join(input_dir, fname)
-        table = os.path.splitext(fname)[0]
-        sas.read_csv(csv_path, table=table, libref="work")
-        sas.submit(f"""
-data out.{table};
-    set work.{table};
-run;
-""")
-        print(f"Converted {fname} to {os.path.join(output_dir, table + '.sas7bdat')}")
+def extract_all_states_over_time_multithread(years, quarters, max_workers=8):
+    tasks = build_task_list_for_states(states, years, quarters)
+    return run_extract_multithread(tasks, max_workers=max_workers)
+
+# examples of use:
+# years = [2022, 2023, 2024]
+# quarters = [1, 2, 3, 4]
+# full_one_state, sub_one_state = extract_state_over_time_multithread("NM", years, quarters, max_workers=4)
+# full_all, sub_all = extract_all_states_over_time_multithread(years, quarters, max_workers=16)
