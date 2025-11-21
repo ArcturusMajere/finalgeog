@@ -1,3 +1,97 @@
+
+
+
+
+@timer
+def Extract_QTR(fips, year, quarter, naics=None):
+    
+    # -------------------------------------------------------------
+    # 1) Build optional SQL NAICS filter
+    # -------------------------------------------------------------
+    naics_sql, naics_param = build_naics_filter_sql(naics)
+
+    query = f"""
+        SELECT *
+        FROM YQQ
+        WHERE state_code = :fips
+          AND YR = :year
+          AND qtr = :quarter
+          {naics_sql}
+    """
+
+    params = {
+        'fips': fips,
+        'year': year,
+        'quarter': quarter
+    }
+    params.update(naics_param)
+
+    # -------------------------------------------------------------
+    # 2) Execute query
+    # -------------------------------------------------------------
+    conn = oracledb.connect(
+        user=open('USER.txt').read(),
+        password=open('password.txt').read(),
+        dsn="XQQQ"
+    )
+
+    WR = Fetch_WR_QTR(query, params, conn)
+
+    # -------------------------------------------------------------
+    # 3) Fetch DOM and merge like before
+    # -------------------------------------------------------------
+    D = Fetch_DOM_QTR(year, quarter, fips)
+    D['UI'] = D['UI'].str.zfill(10)
+
+    WR1 = WR[WR['WAGE'] != 0]
+    WR2 = dupeID(WR1)
+
+    df = pd.merge(WR2, D, how='left', on=['UI', 'RUN'], indicator=True)
+    df1 = dupeID(df)
+
+    q2 = df1.shape[0]
+    df1['yr_qtr'] = df1['YR'].astype(str) + "-" + df1['QTR'].astype(str)
+    df1['state'] = [fips2name(code) for code in df1['fips']]
+    df1['sector'] = [lookup_naics2(code) for code in df1['naics2']]
+
+    df_subset = df1.groupby(['yr_qtr', 'state', 'sector']).agg(
+        counts=('BLS_ID', 'count'),
+        mean_wage=('WAGE', 'mean'),
+        median_wage=('WAGE', 'median'),
+        percentile75=('WAGE', lambda x: x.quantile(0.75)),
+        percentile25=('WAGE', lambda x: x.quantile(0.25))
+    ).reset_index()
+
+    print(f"{q2} unique IDs in {fips2name(fips)} @ {year} Q{quarter} (NAICS={naics})")
+    return df1, df_subset
+
+Extract_QTR("35", 2024, 2)
+
+
+def build_naics_filter_sql(naics):
+    """
+    Returns SQL snippet and parameters for optional NAICS filter.
+    """
+    if naics is None:
+        return "", {}     # no filter
+    
+    if not naics.isdigit():
+        raise ValueError("NAICS filter must be numeric")
+
+    length = len(naics)
+
+    if length == 2:
+        return " AND naics2 LIKE :naics", {"naics": naics + "%"}
+    elif length == 3:
+        return " AND naics3 LIKE :naics", {"naics": naics + "%"}
+    elif length == 4:
+        return " AND naics4 LIKE :naics", {"naics": naics + "%"}
+    elif length in (5, 6):
+        return " AND naics6 LIKE :naics", {"naics": naics + "%"}
+    else:
+        raise ValueError("NAICS must be 2–6 digits")
+#******************************************************************************
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def build_task_list_for_state(state_abbr, years, quarters):
