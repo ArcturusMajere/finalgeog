@@ -1,27 +1,56 @@
-
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def process_one_qtr(year, qtr):
-    df = Extract_QTR(year, qtr)
-    df_hi = df[df["WAGE"] > 1_000_000].copy()
-    if df_hi.empty: return None
-    summary = df_hi.groupby("st").agg(high_wage_count=("UI", "nunique"),max_wage=("WAGE", "max"),min_wage=("WAGE", "min"),total_high_wages=("WAGE", "sum")).reset_index()
-    summary["year"] = year
-    summary["quarter"] = qtr
-    return summary
+    """Worker function for one year–quarter."""
+    try:
+        df = Extract_QTR(year, qtr)
+
+        # Filter high wages
+        df_hi = df[df["WAGE"] > 1_000_000].copy()
+
+        if df_hi.empty:
+            return None
+
+        summary = df_hi.groupby("st").agg(
+            high_wage_count=("UI", "nunique"),
+            max_wage=("WAGE", "max"),
+            min_wage=("WAGE", "min"),
+            total_high_wages=("WAGE", "sum")
+        ).reset_index()
+
+        summary["year"] = year
+        summary["quarter"] = qtr
+
+        return summary
+    
+    except Exception as e:
+        print(f"Error in {year} Q{qtr}: {e}")
+        return None
 
 
-def high_wage_summary(start_year=2020, end_year=2025, max_workers=12):
+def high_wage_summary_mt(start_year=2020, end_year=2025, max_workers=12):
+    """Multithreaded extraction of >$1M wages."""
     tasks = []
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
+
         for year in range(start_year, end_year + 1):
-            if year == 2025: year_quarters = [1]   
-            else:year_quarters = [1,2,3,4]
-            for qtr in year_quarters:tasks.append(executor.submit(process_one_qtr, year, qtr))
+            if year == 2025:
+                year_quarters = [1]    # only 2025 Q1
+            else:
+                year_quarters = [1,2,3,4]
+
+            for qtr in year_quarters:
+                tasks.append(executor.submit(process_one_qtr, year, qtr))
+
         results = []
-        for t in as_completed(tasks):r = t.result()
-            if r is not None: results.append(r)
-     return pd.concat(results, ignore_index=True)
+        for t in as_completed(tasks):
+            r = t.result()
+            if r is not None:
+                results.append(r)
 
-
-a  = high_wage_summary()
-
+    if results:
+        return pd.concat(results, ignore_index=True)
+    else:
+        return pd.DataFrame()
