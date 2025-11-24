@@ -1,1 +1,54 @@
 
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# 1. Total high-wage count per FIPS (Bar Chart)
+# -----------------------------
+df_total = df.groupby("fips_used")["high_wage_count"].sum().reset_index()
+
+plt.figure(figsize=(12,6))
+plt.bar(df_total["fips_used"], df_total["high_wage_count"])
+plt.xlabel("FIPS Code")
+plt.ylabel("Total High-Wage Count (2020–2025Q1)")
+plt.title("Total Workers With Wages > $1M per FIPS")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# -----------------------------
+# 2. Trend over time for a selected FIPS (Line Chart)
+# -----------------------------
+fips_focus = df["fips_used"].iloc[0]   # auto-select first FIPS in df
+
+df_fips = df[df["fips_used"] == fips_focus].copy()
+df_fips["year_qtr"] = df_fips["year"].astype(str) + "Q" + df_fips["quarter"].astype(str)
+
+plt.figure(figsize=(14,6))
+plt.plot(df_fips["year_qtr"], df_fips["high_wage_count"])
+plt.title(f"High-Wage Count Over Time for FIPS {fips_focus}")
+plt.xlabel("Year–Quarter")
+plt.ylabel("Count > $1M")
+plt.xticks(rotation=60)
+plt.tight_layout()
+plt.show()
+
+# -----------------------------
+# 3. Heatmap of FIPS vs Year (High-Wage Count)
+# -----------------------------
+pivot = df.pivot_table(
+    index="fips_used",
+    columns="year",
+    values="high_wage_count",
+    aggfunc="sum",
+    fill_value=0
+)
+
+plt.figure(figsize=(14,8))
+plt.imshow(pivot, aspect="auto")
+plt.colorbar(label="High-Wage Count")
+plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=45)
+plt.yticks(range(len(pivot.index)), pivot.index)
+plt.title("Heatmap: High-Wage Counts by FIPS and Year")
+plt.tight_layout()
+plt.show()
