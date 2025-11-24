@@ -1,54 +1,110 @@
+import polars as pl
+import oracledb
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import pandas as pd
-import matplotlib.pyplot as plt
 
-# -----------------------------
-# 1. Total high-wage count per FIPS (Bar Chart)
-# -----------------------------
-df_total = df.groupby("fips_used")["high_wage_count"].sum().reset_index()
+# -----------------------------------------------------------
+# 1. Fetch logic: runs one SQL query for one year/quarter
+# -----------------------------------------------------------
+def Fetch_WR_QTR(query: str, params: dict, conn) -> pl.DataFrame:
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
 
-plt.figure(figsize=(12,6))
-plt.bar(df_total["fips_used"], df_total["high_wage_count"])
-plt.xlabel("FIPS Code")
-plt.ylabel("Total High-Wage Count (2020–2025Q1)")
-plt.title("Total Workers With Wages > $1M per FIPS")
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.show()
+            df = pl.DataFrame(rows, schema=columns)
 
-# -----------------------------
-# 2. Trend over time for a selected FIPS (Line Chart)
-# -----------------------------
-fips_focus = df["fips_used"].iloc[0]   # auto-select first FIPS in df
+            # Convert STATE_CODE to text
+            df = df.with_columns(
+                pl.col("STATE_CODE").cast(pl.Utf8)
+            )
 
-df_fips = df[df["fips_used"] == fips_focus].copy()
-df_fips["year_qtr"] = df_fips["year"].astype(str) + "Q" + df_fips["quarter"].astype(str)
+            # Map FIPS -> full state name
+            df = df.with_columns(
+                pl.col("STATE_CODE")
+                .map_elements(lambda code: fips2name(code), return_dtype=pl.Utf8)
+                .alias("state")
+            )
 
-plt.figure(figsize=(14,6))
-plt.plot(df_fips["year_qtr"], df_fips["high_wage_count"])
-plt.title(f"High-Wage Count Over Time for FIPS {fips_focus}")
-plt.xlabel("Year–Quarter")
-plt.ylabel("Count > $1M")
-plt.xticks(rotation=60)
-plt.tight_layout()
-plt.show()
+            # Build yr_qtr string like "2021.3"
+            df = df.with_columns(
+                (pl.col("YEAR").cast(pl.Utf8) + "." +
+                 pl.col("QTR").cast(pl.Utf8)).alias("yr_qtr")
+            )
 
-# -----------------------------
-# 3. Heatmap of FIPS vs Year (High-Wage Count)
-# -----------------------------
-pivot = df.pivot_table(
-    index="fips_used",
-    columns="year",
-    values="high_wage_count",
-    aggfunc="sum",
-    fill_value=0
-)
+            # Return only required output columns
+            return df.select([
+                "yr_qtr",
+                "state",
+                "zero_wage_count",
+                "million_wage_count"
+            ])
 
-plt.figure(figsize=(14,8))
-plt.imshow(pivot, aspect="auto")
-plt.colorbar(label="High-Wage Count")
-plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=45)
-plt.yticks(range(len(pivot.index)), pivot.index)
-plt.title("Heatmap: High-Wage Counts by FIPS and Year")
-plt.tight_layout()
-plt.show()
+    except oracledb.Error as e:
+        print("WTF?:", e)
+        return pl.DataFrame()
+
+
+# -----------------------------------------------------------
+# 2. Worker that runs one quarter in one thread
+# -----------------------------------------------------------
+def process_one_period(year, qtr, conn_string):
+    conn = oracledb.connect(conn_string)
+
+    query = """
+        SELECT
+            t.STATE_CODE,
+            t.YEAR,
+            t.QTR,
+            COUNT(CASE WHEN t.WAGE = 0 THEN 1 END) AS zero_wage_count,
+            COUNT(CASE WHEN t.WAGE > 1000000 THEN 1 END) AS million_wage_count
+        FROM WAGE_RECORDS t
+        WHERE t.YEAR = :year
+          AND t.QTR  = :qtr
+        GROUP BY
+            t.STATE_CODE,
+            t.YEAR,
+            t.QTR
+        ORDER BY
+            t.STATE_CODE,
+            t.YEAR,
+            t.QTR
+    """
+
+    df = Fetch_WR_QTR(query, {"year": year, "qtr": qtr}, conn)
+    conn.close()
+    return df
+
+
+# -----------------------------------------------------------
+# 3. Full multithread driver - 2020Q1 to 2025Q1
+# -----------------------------------------------------------
+def get_all_zero_and_million_counts(conn_string, max_workers=24):
+
+    # year-quarter list
+    quarters = [(y, q) for y in range(2020, 2026) for q in range(1, 5)]
+    # stop at 2025 Q1
+    quarters = [(y, q) for (y, q) in quarters if not (y == 2025 and q > 1)]
+
+    tasks = []
+    results = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for year, qtr in quarters:
+            tasks.append(
+                executor.submit(process_one_period, year, qtr, conn_string)
+            )
+
+        for task in as_completed(tasks):
+            results.append(task.result())
+
+    return pl.concat(results, how="vertical")
+
+
+
+# -----------------------------------------------------------
+# Example use:
+# df = get_all_zero_and_million_counts("user/pw@host:1521/service", max_workers=24)
+# print(df)
+# -----------------------------------------------------------
