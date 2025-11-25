@@ -1,1 +1,20 @@
+SELECT
+    x.STATE_CODE,
+    x.YEAR,
+    x.QTR,
+    COUNT(CASE WHEN x.WAGE = 0 THEN 1 END) AS zero_wage_count,
+    COUNT(CASE WHEN x.WAGE > 1000000 THEN 1 END) AS million_wage_count,
+    COUNT(CASE WHEN x.WAGE > 1000000000 THEN 1 END) AS billion_wage_count
+FROM WAGE_RECORDS x
+WHERE x.YEAR = :year
+  AND x.QTR  = :qtr
+  AND x.STATE_CODE = :fips
+GROUP BY
+    x.STATE_CODE,
+    x.YEAR,
+    x.QTR
+ORDER BY
+    x.STATE_CODE,
+    x.YEAR,
+    x.QTR;
 
