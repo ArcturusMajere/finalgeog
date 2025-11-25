@@ -1,8 +1,1 @@
 
-
-def outlier(fips,year,qtr):
-    with conn.cursor() as cur:
-        cur.execute(sql, params or {})
-        rows = cur.fetchall()
-        cols = [desc[0] for desc in cur.description]
-    return pd.DataFrame(rows, columns=cols)
