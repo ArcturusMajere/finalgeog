@@ -1,1 +1,17 @@
 
+# ---------------------------------------------------------
+# LOAD DATASET ONCE — MASSIVE SPEEDUP
+# ---------------------------------------------------------
+PARQUET_DIR = "c/files"
+DATASET = ds.dataset(PARQUET_DIR, format="parquet")
+SCAN = pl.scan_pyarrow_dataset(DATASET)
+
+# ---------------------------------------------------------
+# OPTIMIZED FUNCTION
+# ---------------------------------------------------------
+
+def fetch_dom_qtr(f,y,q):
+    return (SCAN.filter((pl.col("fips")==f.lstrip("0"))&(pl.col("year")==y)&(pl.col("qtr")==q))
+        .select(["ui_acct","fips","naics2","naics3","naics4","naics5","naics6","run"])
+        .rename({"ui_acct":"UI","run":"RUN"})
+        .collect())
