@@ -15,3 +15,18 @@ def fetch_dom_qtr(f,y,q):
         .select(["ui_acct","fips","naics2","naics3","naics4","naics5","naics6","run"])
         .rename({"ui_acct":"UI","run":"RUN"})
         .collect())
+
+
+
+def merge_wr_dom(WR, DOM, runfips, fips):
+    # DOM is Polars → convert
+    DOMp = DOM.to_pandas()
+
+    # Choose merge keys
+    if fips in runfips:
+        keys = ["UI", "RUN"]
+    else:
+        keys = ["UI"]
+
+    # Merge (WR always on the left)
+    return WR.merge(DOMp, on=keys, how="left")
