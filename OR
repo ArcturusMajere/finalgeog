@@ -1,1 +1,10 @@
 
+def wageextract(fips,year,qtr):
+    conn = blahblahblah
+    sql="SELECT :year year,:qtr quarter,:fips fips,t.state,t.sector,t.wage FROM wage_table t WHERE t.year=:year AND t.qtr=:qtr AND t.fips=:fips"
+    p={"year":year,"qtr":qtr,"fips":fips}
+    with conn.cursor() as c:
+        c.execute(sql,p);r=c.fetchall();col=[x[0] for x in c.description]
+    print("records:",len(r))
+    return pd.DataFrame(r,columns=col)
+
