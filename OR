@@ -7,3 +7,15 @@ def wageextract(fips,year,qtr):
         c.execute(sql,p); r=c.fetchall(); cols=[x[0] for x in c.description]
     print(f"rows={len(r)}")
     return pd.DataFrame(r,columns=cols)
+
+import oracledb, pandas as pd
+
+def extract(conn, yr, qtr, fips):
+    sql = "SELECT t.ID,t.UI,t.RUN,t.WAGE,t.YR,t.QTR,t.FIPS FROM wage_table t WHERE t.YR=:yr AND t.QTR=:qtr AND t.FIPS=:fips"
+    p={"yr":yr,"qtr":qtr,"fips":fips}
+    with conn.cursor() as c:
+        c.execute(sql,p)
+        r=c.fetchall()
+        cols=[x[0] for x in c.description]
+    print(len(r),"records")
+    return pd.DataFrame(r,columns=cols)
