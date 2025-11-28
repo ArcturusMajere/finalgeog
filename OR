@@ -30,3 +30,68 @@ def merge_wr_dom(WR, DOM, runfips, fips):
 
     # Merge (WR always on the left)
     return WR.merge(DOMp, on=keys, how="left")
+
+import oracledb
+import polars as pl
+import pyarrow.dataset as ds
+
+# -------------------------
+# WR extraction → Polars
+# -------------------------
+def extract_pl(conn, yr, qtr, fips):
+    sql = """
+        SELECT t.ID,t.UI,t.RUN,t.WAGE,t.YR,t.QTR,t.FIPS
+        FROM wage_table t
+        WHERE t.YR=:yr AND t.QTR=:qtr AND t.FIPS=:fips
+    """
+    p = {"yr": yr, "qtr": qtr, "fips": fips}
+
+    with conn.cursor() as c:
+        c.execute(sql, p)
+        rows = c.fetchall()
+        cols  = [x[0] for x in c.description]
+
+    print(len(rows), "records")
+    return pl.DataFrame(rows, schema=cols)
+
+
+# -------------------------
+# DOM extraction (already Polars)
+# -------------------------
+PARQUET_DIR = "c/files"
+DATASET = ds.dataset(PARQUET_DIR, format="parquet")
+SCAN = pl.scan_pyarrow_dataset(DATASET)
+
+def fetch_dom_qtr(f, y, q):
+    return (
+        SCAN
+        .filter(
+            (pl.col("fips") == f.lstrip("0")) &
+            (pl.col("year") == y) &
+            (pl.col("qtr") == q)
+        )
+        .select(["ui_acct", "fips", "naics2", "naics3", "naics4",
+                 "naics5", "naics6", "run"])
+        .rename({"ui_acct": "UI", "run": "RUN"})
+        .collect()
+    )
+
+
+# -------------------------
+# PURE POLARS MERGE
+# -------------------------
+def merge_wr_dom_pl(WR, DOM, runfips, fips):
+    if fips in runfips:
+        keys = ["UI", "RUN"]
+    else:
+        keys = ["UI"]
+
+    return WR.join(DOM, on=keys, how="left")
+
+WR = extract_pl(conn, 2024, 3, "35001")
+DOM = fetch_dom_qtr("35001", 2024, 3)
+
+runfips = ["35001","35005","48029"]
+
+merged = merge_wr_dom_pl(WR, DOM, runfips, "35001")
+print(merged)
