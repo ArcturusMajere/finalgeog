@@ -1,3 +1,28 @@
+# ============================
+# USER-ONLY JULIA + JUPYTERLAB INSTALL (NO SUDO)
+# ============================
+
+# ---- Install Julia locally ----
+cd ~
+curl -LO https://julialang-s3.julialang.org/bin/linux/x64/1.11/julia-1.11.2-linux-x86_64.tar.gz
+tar -xzf julia-1.11.2-linux-x86_64.tar.gz
+mv julia-1.11.2 julia
+
+# Add Julia to PATH
+echo 'export PATH="$HOME/julia/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# ---- Optional: Create Python venv for JupyterLab ----
+python3 -m venv jl
+source jl/bin/activate
+pip install --upgrade pip
+pip install jupyterlab
+
+# ---- Install Julia kernel (IJulia) locally ----
+julia -e 'using Pkg; Pkg.add("IJulia"); using IJulia; IJulia.installkernel("Julia")'
+
+# ---- Launch JupyterLab ----
+jupyter lab
 
 # ---------------------------------------------------------
 # LOAD DATASET ONCE — MASSIVE SPEEDUP
