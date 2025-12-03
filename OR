@@ -1,1 +1,105 @@
 
+*****************************************
+
+High-level requirements 
+
+***MAXIMUM IMPORTANCE***
+
+1. Physical database design tuned for analytical workloads
+We need the physical design of wagerecusr to support analytical queries accordingly:
+Partitioning
+The wage table should be partitioned by time (ideally by quarter, or by date) using Postgres/Aurora range partitioning, so that quarter-restricted queries only scan the relevant partitions rather than the entire table. It looks like this is already done, but wanted to double check.
+
+Indexing
+We frequently filter/join on:
+•	qtr/ yr-qtr (this would be nice as a date, as well), 
+•	state_code, 
+•	ui, 
+•	bls_id
+•	(state_code, ui_id) 
+•	(state_code, ui, bls_id)
+
+We need B-tree indexes on these keys, including composite indexes where they match our typical join patterns. The goal is to avoid full scans for selective joins and filters.
+
+Materialized views
+For common aggregates (e.g., wage by quarter/state, ui-level or bls_id-level history summaries), we want to use materialized views so heavy summaries are precomputed once per quarter rather than per-query. I believe we will need privileges in order to create materialized views.
+
+2. Dominant NAICS and Dynamic LDB tables must be in the same schema/database so that they can be merged to the wage records seamlessly. They both should be available for years as far back as the full wage records goes. 
+
+
+***SECOND TIER IMPORTANCE***
+
+1. Dedicated research schema and privileges in Aurora
+We need an area in the database to create our own objects without affecting the core wage records tables.
+This wold be a dedicated schema (e.g., research) in the same Aurora database. The research role/user would grant:
+•	USAGE and CREATE on that schema, so we can create tables and materialized views.
+•	SELECT on the core wage and dimension schemas (read-only).
+•	The ability to CREATE MATERIALIZED VIEW and REFRESH MATERIALIZED VIEW in research.
+This schema would be used for
+•	Supplemental/lookup tables (crosswalks, geographic mappings, etc.).
+•	Derived feature tables (e.g., bls_id job history)
+•	Materialized views that pre-aggregate or pre-join wage records for common analytical use cases.
+
+The core wage records tables would remain read-only for us.
+
+2. S3 data area for supplemental and columnar copies
+We would like a data area in S3 within GovCloud, with:
+•	A bucket dedicated to research supplemental/derived data
+•	An IAM role/instance profile on the analytics EC2 with read/write access to that area.
+
+This serves two purposes:
+•	Storing supplemental datasets that don’t need to live in Postgres but are needed in analysis (CSV/Parquet/etc.).
+•	Optionally storing Parquet copies of the wage data (e.g., by quarter) for:
+o	more efficient large-scale scans via columnar formats, and
+o	potential future use with Athena, Redshift Spectrum, or other engines.
+
+We don’t need Athena/Redshift immediately, but we’d like the S3 layout to be compatible with that option.
+
+
+3. Co-located analytics compute environment (EC2) next to Aurora
+To avoid pushing large intermediate datasets back on-prem, we would like a dedicated “analytics” EC2 instance in the same VPC/region as the Aurora cluster that has sufficient RAM/CPU to handle tens of millions of rows (or more) in memory for modeling 
+
+Stack suitable for research:
+•	Python (pandas / Polars / statsmodels / scikit-learn, etc.),
+•	Access for our research team via the same secure connectivity (SSH would be ideal)
+
+6. Longer-term architecture direction (for planning)
+We are fine treating Aurora PostgreSQL as the system of record for wage records for now. For planning, it would help to know whether your preferred pattern in GovCloud is:
+“Aurora as system of record, with an optional columnar analytics layer (Athena/Redshift) backed by S3 Parquet,” or
+“S3+Athena as the primary analytical store for large panels, with Aurora used mainly for transactional/relational needs.”
+
+We don’t need a second engine immediately, but we want to align with your standard pattern so we don’t design ourselves into a corner.
+
+****Questions needing answers / decisions****
+A. Aurora DB instance class / capacity configuration
+As of right now, I don’t think we know what the correct capacity is for our use case. 
+-	Do our queries hit 100% CPU utilization when looking at CloudWatch or Performance Insights?
+-	What instance class are we currently using?
+-	What larger instance class would you recommend for our analytical workload? What is the additional financial cost?
+
+
+B. Aurora / database design and performance
+- Is the main wage records table currently partitioned (e.g., by quarter or by date)?
+-- If yes, how is it partitioned (range list, partition key, naming convention)?
+
+- What indexes currently exist on the wage records table? 
+- Is Aurora Parallel Query or any other analytics-oriented feature enabled or recommended in this environment?
+- Can we be granted a dedicated schema (e.g., research) with CREATE privileges for our role, while keeping the core wage schemas read-only?
+-- If yes, can our role also be granted permissions to CREATE MATERIALIZED VIEW and REFRESH MATERIALIZED VIEW in that schema?
+-- If not, is there an alternative mechanism for us to maintain persistent derived tables/materialized views (e.g., a shared “analytics” schema managed by your team where we can request objects)?
+
+C. Analytics compute (EC2) and access model
+- Is there an existing standard in our environment for a shared analytics EC2 instance?
+-- If not, can we provision one in the same VPC as Aurora with sufficient CPU/RAM for analytical workloads, and what size would you recommend?
+
+D. S3, Parquet, and columnar analytics
+- Is there already an S3 bucket in GovCloud that we should use for research supplemental/derived data, or should a new bucket be created?
+-- We need read/write access from the analytics EC2, and possibly from our on-prem environment depending on policy.
+- Are there any policy or financial constraints on:
+-- maintaining Parquet copies of the wage records on S3 alongside Aurora, and
+-- using Athena or Redshift Spectrum for ad-hoc analytical queries on those Parquet datasets in the future?
+
+- Beyond raw storage costs, is there any internal guidance we should follow to control query/scan costs if we use Athena or Redshift on S3 (e.g., partitioning standards, compression/format standards)?
+
+From your perspective, in this GovCloud environment, what is the preferred target if we later move heavy multi-year panel workloads to a columnar engine such as Athena on S3?
+
