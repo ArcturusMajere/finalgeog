@@ -2,6 +2,7 @@ combo_rank = (df.groupby(['CATEGORY_1','CATEGORY_2','CATEGORY_3'])['WAGE']
                 .mean()
                 .reset_index(name='avg_wage')
                 .sort_values('avg_wage', ascending=False))
+
 combo_rank['combo_rank'] = combo_rank['avg_wage'].rank(method='dense', ascending=False)
-df['rank_within_combo'] = df.groupby(['CATEGORY_1','CATEGORY_2','CATEGORY_3'])['WAGE'].rank(method='dense', ascending=False)
-df = df.merge(combo_rank, on=['CATEGORY_1','CATEGORY_2','CATEGORY_3'], how='left')
+
+combo_rank
