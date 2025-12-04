@@ -1,9 +1,1 @@
 
-df["wage_per_hour"] = df["WAGE"] / df["HOURS"]
-
-df["rank_within_group"] = (
-    df.groupby(["CATEGORY_1", "CATEGORY_2", "CATEGORY_3"])["wage_per_hour"]
-      .rank(method="dense", ascending=False)
-)
-
-df["rank_global"] = df["wage_per_hour"].rank(method="dense", ascending=False)
