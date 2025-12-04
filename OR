@@ -1,18 +1,1 @@
-import numpy as np
 
-combo_rank = (
-    df.groupby(['CATEGORY_1','CATEGORY_2','CATEGORY_3'])
-      .agg(
-          avg_wage = ('WAGE', 'mean'),
-          median_wage = ('WAGE', 'median'),
-          p25_wage = ('WAGE', lambda x: np.percentile(x, 25)),
-          p75_wage = ('WAGE', lambda x: np.percentile(x, 75)),
-          id_count = ('ID', 'nunique')
-      )
-      .reset_index()
-      .sort_values('avg_wage', ascending=False)
-)
-
-combo_rank['combo_rank'] = combo_rank['avg_wage'].rank(method='dense', ascending=False)
-
-combo_rank
