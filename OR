@@ -1,1 +1,16 @@
 
+import time
+import pandas as pd
+
+def speed_test_states(fipslist,year=2025,qtr=1):
+    results=[]
+    for fips in fipslist:
+        start=time.perf_counter()
+        try:
+            get_cohort(fips,year,qtr)
+            status="ok"
+        except Exception as e:
+            status="error"
+        elapsed=time.perf_counter()-start
+        results.append({"fips":fips,"year":year,"qtr":qtr,"seconds":elapsed,"status":status})
+    return pd.DataFrame(results)
