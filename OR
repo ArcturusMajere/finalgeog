@@ -14,3 +14,61 @@ def speed_test_states(fipslist,year=2025,qtr=1):
         elapsed=time.perf_counter()-start
         results.append({"fips":fips,"year":year,"qtr":qtr,"seconds":elapsed,"status":status})
     return pd.DataFrame(results)
+
+
+import time
+import us
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def speed_test_and_viz(fipslist,year=2025,qtr=1,top_n=None,saveprefix=None):
+    rows=[]
+    for fips in fipslist:
+        f=str(fips).zfill(2)
+        state=us.states.lookup(f)
+        name=state.name if state else "Unknown"
+        start=time.perf_counter()
+        try:
+            get_cohort(fips,year,qtr)
+            status="ok"
+        except Exception:
+            status="error"
+        rows.append({"state":name,"seconds":time.perf_counter()-start,"status":status})
+    df=pd.DataFrame(rows).sort_values(["status","seconds"],ascending=[True,False])
+    df_plot=df.head(int(top_n)) if top_n is not None else df
+    ok=df_plot["status"].eq("ok").to_numpy()
+    x=np.arange(len(df_plot))
+    fig1=plt.figure(figsize=(14,max(6,0.35*len(df_plot)+3)))
+    ax1=fig1.add_subplot(111)
+    bars=ax1.barh(x,df_plot["seconds"].to_numpy(),edgecolor="black",linewidth=0.8)
+    for i,b in enumerate(bars):
+        if not ok[i]:
+            b.set_hatch("//")
+            b.set_linewidth(1.2)
+    ax1.set_yticks(x)
+    ax1.set_yticklabels(df_plot["state"].to_list(),fontsize=10)
+    ax1.invert_yaxis()
+    ax1.set_xlabel("Seconds")
+    ax1.set_title(f"get_cohort runtime by state ({year} Q{qtr})")
+    ax1.grid(True,axis="x",alpha=0.3)
+    for i,v in enumerate(df_plot["seconds"].to_numpy()):
+        ax1.text(v,i,f"  {v:.2f}s",va="center",fontsize=9)
+    fig1.tight_layout()
+    if saveprefix:
+        fig1.savefig(f"{saveprefix}_by_state.png",dpi=200,bbox_inches="tight")
+    fig2=plt.figure(figsize=(12,5))
+    ax2=fig2.add_subplot(111)
+    ok_sec=df.loc[df["status"].eq("ok"),"seconds"].to_numpy()
+    err_sec=df.loc[~df["status"].eq("ok"),"seconds"].to_numpy()
+    ax2.hist(ok_sec,bins=max(10,min(50,int(np.sqrt(len(ok_sec))) if len(ok_sec) else 10)),edgecolor="black")
+    if len(err_sec):
+        ax2.hist(err_sec,bins=max(5,min(30,int(np.sqrt(len(err_sec))) if len(err_sec) else 5)),edgecolor="black",hatch="//",alpha=0.7)
+    ax2.set_xlabel("Seconds")
+    ax2.set_ylabel("Count of states")
+    ax2.set_title(f"get_cohort runtime distribution ({year} Q{qtr})")
+    ax2.grid(True,axis="y",alpha=0.3)
+    fig2.tight_layout()
+    if saveprefix:
+        fig2.savefig(f"{saveprefix}_distribution.png",dpi=200,bbox_inches="tight")
+    return df,fig1,fig2
