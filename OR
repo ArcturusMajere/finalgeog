@@ -1,1 +1,17 @@
 
+from concurrent.futures import ThreadPoolExecutor,as_completed
+import pandas as pd
+
+def run_extract_qtr_threaded_df(fips_list,year,qtr,max_workers=8):
+    dfs=[]
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures=[ex.submit(EXTRACT_QTR,f,year,qtr) for f in fips_list]
+        for fut in as_completed(futures):
+            dfs.append(fut.result())
+    if not dfs:
+        return pd.DataFrame()
+    return pd.concat(dfs,ignore_index=True)
+
+
+df["naics2"]=df["naics2"].astype(int)
+df["naics2"]=df["naics2"].astype("string")
