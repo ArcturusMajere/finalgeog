@@ -1,1 +1,2 @@
 
+df["naics"] = df.apply(lambda r: DOM(r["fips"], r["yr"], r["qtr"]),axis=1)
