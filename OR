@@ -1,6 +1,3 @@
-df["naics2"]=df.apply(lambda r:DOM(r["fips"],r["year"],r["qtr"]),axis=1)
-
-df["naics2"]=[DOM(f,y,q) for f,y,q in zip(df["fips"],df["year"],df["qtr"])]
-
-df["naics2"]=DOM(df["fips"],df["year"],df["qtr"])
+df["col"]=df["col"].apply(lambda x:x.item() if isinstance(x,np.ndarray) else x)
+df["col"]=df["col"].apply(lambda x:str(x.item()) if isinstance(x,np.ndarray) else str(x))
 
