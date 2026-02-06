@@ -1,7 +1,11 @@
-def DOM_dispatch(f,y,q,ui):
-    f=str(f)
-    if f in ("53","27"):
-        return DOM2(f,y,q,ui)
-    return DOM(f,y,q,ui)
-df["naics2"]=df.apply(lambda r:DOM_dispatch(r.fips,r.yr,r.qtr,r.ui),axis=1)
+import pandas as pd
+
+def ok_vs_not_ok(df):
+    d=df.copy()
+    d["is_ok"]=d["state"].eq("OKLAHOMA")
+    out=d.groupby("yr_qtr")["is_ok"].agg(
+        Oklahoma="sum",
+        not_Oklahoma=lambda x:(~x).sum()
+    ).reset_index()
+    return out
 
