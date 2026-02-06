@@ -1,4 +1,2 @@
-df["col"]=df["col"].apply(
-    lambda x:x.ravel()[0] if isinstance(x,np.ndarray) else x
-)
+def DOM(f,y,q,ui):return (SCAN.filter((pl.col("fips")==f)&(pl.col("year")==y)&(pl.col("qtr")==q)&(pl.col("ui_acct")==ui)).select(["naics2"]).collect().to_pandas())
 
