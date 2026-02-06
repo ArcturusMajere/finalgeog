@@ -1,14 +1,1 @@
-import pandas as pd
 
-def ok_vs_not_ok(df):
-    d=df.copy()
-    d["is_ok"]=d["state"].eq("OKLAHOMA")
-    out=d.groupby("yr_qtr").agg(
-        Oklahoma=("is_ok","sum"),
-        not_Oklahoma=("is_ok",lambda x:(~x).sum()),
-        mean_wage=("wage","mean"),
-        median_wage=("wage","median"),
-        wage_25=("wage",lambda x:x.quantile(0.25)),
-        wage_75=("wage",lambda x:x.quantile(0.75))
-    ).reset_index()
-    return out
