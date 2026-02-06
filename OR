@@ -1,31 +1,14 @@
-from openpyxl import load_workbook
-def round_cols_to_tens_xlsx(in_path,headers,out_path=None,header_row=1):
-    wb=load_workbook(in_path)
-    targets=set(str(h).strip() for h in headers)
-    currency_fmt='$#,##0'
-    for ws in wb.worksheets:
-        max_row=ws.max_row or 0
-        max_col=ws.max_column or 0
-        if max_row<header_row+1 or max_col<1:continue
-        col_map={}
-        for c in range(1,max_col+1):
-            h=ws.cell(row=header_row,column=c).value
-            h=str(h).strip() if h is not None else ""
-            if h in targets:col_map[h]=c
-        if not col_map:continue
-        for c in col_map.values():
-            for r in range(header_row+1,max_row+1):
-                cell=ws.cell(row=r,column=c)
-                v=cell.value
-                if isinstance(v,(int,float)):
-                    cell.value=int(round(v,-1))
-                    cell.number_format=currency_fmt
-    if out_path is None:
-        out_path=in_path[:-5]+"_rounded_tens.xlsx" if in_path.lower().endswith(".xlsx") else in_path+"_rounded_tens.xlsx"
-    wb.save(out_path)
-    return out_path
-out=round_cols_to_tens_xlsx(
-    "input.xlsx",
-    ["WAGE_MEAN","WAGE_25","WAGE_MEDIAN","WAGE_75"]
-)
-print(out)
+import pandas as pd
+
+def ok_vs_not_ok(df):
+    d=df.copy()
+    d["is_ok"]=d["state"].eq("OKLAHOMA")
+    out=d.groupby("yr_qtr").agg(
+        Oklahoma=("is_ok","sum"),
+        not_Oklahoma=("is_ok",lambda x:(~x).sum()),
+        mean_wage=("wage","mean"),
+        median_wage=("wage","median"),
+        wage_25=("wage",lambda x:x.quantile(0.25)),
+        wage_75=("wage",lambda x:x.quantile(0.75))
+    ).reset_index()
+    return out
