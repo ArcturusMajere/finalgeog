@@ -1,3 +1,48 @@
+def gapmap(df, ids=None, yr_qtrs=None):
+    df['ID_enc']=df['ST_RETURN_ID'].astype(str).str[-5:].apply(lambda x: x[::-1])
+    if ids is None: ids=df['ID_enc'].unique()
+    else: ids=[str(i)[-5:] for i in ids]
+    if yr_qtrs is None: yr_qtrs=sorted(df['yr_qtr'].unique())
+    mat=pd.DataFrame(0,index=yr_qtrs,columns=ids)
+    for _,r in df.iterrows():
+        if r['ID_enc'] in ids and r['yr_qtr'] in yr_qtrs:
+            mat.loc[r['yr_qtr'],r['ID_enc']]=1
+
+    longest_gaps={}
+    for col in mat.columns:
+        arr=mat[col].values
+        gaps=[]
+        c=0
+        for v in arr:
+            if v==0: c+=1
+            else:
+                gaps.append(c)
+                c=0
+        gaps.append(c)
+        longest_gaps[col]=max(gaps)
+    avg_gap=np.mean(list(longest_gaps.values()))
+    plt.figure(figsize=(len(ids)/3,len(yr_qtrs)/3))
+    ax=sns.heatmap(mat,cmap=sns.color_palette(["black","green"]),cbar=False,annot=False)
+    
+    for j,col in enumerate(mat.columns):
+        arr=mat[col].values
+        c=0
+        best=0
+        end=-1
+        for i,v in enumerate(arr):
+            if v==0:
+                c+=1
+                if c>best:
+                    best=c
+                    end=i
+            else: c=0
+        if best>0:
+            start=end-best+1
+            ax.text(j+0.5,start+best/2,str(best),ha='center',va='center',color='white')
+    plt.title(f"Average longest gap length: {avg_gap:.2f} | IDs with gap: {(sum(v!=0 for v in longest_gaps.values()))} | IDs without gap: {(sum(v==0 for v in longest_gaps.values()))}")
+    plt.xlabel("Encryp ID")
+    plt.ylabel("yr_qtr")
+    plt.show()
 
 pq_cols=["PQ-4","PQ-3","PQ-2","PQ-1","PQ+1","PQ+2","PQ+3","PQ+4"]
 key_cols=["ST_RETURN_ID","UI","NAICS"]
