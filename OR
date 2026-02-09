@@ -1,1 +1,63 @@
 
+import numpy as np,pandas as pd,matplotlib.pyplot as plt,seaborn as sns
+
+def gapmap(df,ids=None,yr_qtrs=None,wage_col="wage"):
+    d=df.copy()
+    d["ID_enc"]=d["ST_RETURN_ID"].astype(str).str[-5:].apply(lambda x:x[::-1])
+    if ids is None: ids=sorted(d["ID_enc"].unique())
+    else: ids=[str(i)[-5:][::-1] for i in ids]
+    if yr_qtrs is None: yr_qtrs=sorted(d["yr_qtr"].unique())
+    mat=pd.DataFrame(0,index=yr_qtrs,columns=ids)
+    for _,r in d.iterrows():
+        i=r["ID_enc"];y=r["yr_qtr"]
+        if i in mat.columns and y in mat.index: mat.loc[y,i]=1
+
+    gaps_out=[]
+    longest_gaps={}
+    for col in mat.columns:
+        arr=mat[col].to_numpy()
+        c=0;best=0;end=-1
+        for i,v in enumerate(arr):
+            if v==0:
+                c+=1
+                if c>best: best=c;end=i
+            else: c=0
+        if best>0:
+            start=end-best+1
+            pre=d.loc[(d["ID_enc"]==col)&(d["yr_qtr"].isin(yr_qtrs[:start])),wage_col]
+            post=d.loc[(d["ID_enc"]==col)&(d["yr_qtr"].isin(yr_qtrs[end+1:])),wage_col]
+            pre_mean=float(pre.mean()) if len(pre) else 0.0
+            post_mean=float(post.mean()) if len(post) else 0.0
+            gaps_out.append({
+                "ID_enc":col,
+                "gap_len":best,
+                "gap_start":yr_qtrs[start],
+                "gap_end":yr_qtrs[end],
+                "pre_gap_mean":pre_mean,
+                "post_gap_mean":post_mean,
+                "delta_post_minus_pre":post_mean-pre_mean
+            })
+        longest_gaps[col]=best
+
+    avg_gap=np.mean(list(longest_gaps.values())) if len(longest_gaps) else 0.0
+    plt.figure(figsize=(max(4,len(ids)/3),max(4,len(yr_qtrs)/3)))
+    ax=sns.heatmap(mat,cmap=sns.color_palette(["black","green"]),cbar=False,annot=False)
+
+    for j,col in enumerate(mat.columns):
+        best=longest_gaps[col]
+        if best>0:
+            arr=mat[col].to_numpy()
+            c=0;end=-1
+            for i,v in enumerate(arr):
+                if v==0:
+                    c+=1
+                    if c==best: end=i
+                else: c=0
+            start=end-best+1
+            ax.text(j+0.5,start+best/2,str(best),ha="center",va="center",color="white")
+
+    plt.title(f"Average longest gap length: {avg_gap:.2f} | IDs with gap: {sum(v>0 for v in longest_gaps.values())} | IDs without gap: {sum(v==0 for v in longest_gaps.values())}")
+    plt.xlabel("Encryp ID")
+    plt.ylabel("yr_qtr")
+    plt.show()
+    return pd.DataFrame(gaps_out).sort_values(["gap_len","ID_enc"],ascending=[False,True]).reset_index(drop=True)
