@@ -13,11 +13,9 @@ J_wage=J[key_cols].drop_duplicates().merge(w,on=key_cols,how="left")
 pq_minus=["PQ-4","PQ-3","PQ-2","PQ-1"]
 pq_plus=["PQ+1","PQ+2","PQ+3","PQ+4"]
 all_pq=pq_minus+pq_plus
-complete=J_wage.dropna(subset=all_pq)
-complete["mean_minus"]=complete[pq_minus].mean(axis=1)
-complete["mean_plus"]=complete[pq_plus].mean(axis=1)
-complete["diff"]=complete["mean_plus"]-complete["mean_minus"]
-overall_minus=complete["mean_minus"].mean()
-overall_plus=complete["mean_plus"].mean()
-overall_diff=complete["diff"].mean()
-overall_minus,overall_plus,overall_diff
+J_wage["mean_minus"]=J_wage[pq_minus].mean(axis=1)
+J_wage["mean_plus"]=J_wage[pq_plus].mean(axis=1)
+J_wage["diff"]=J_wage["mean_plus"]-J_wage["mean_minus"]
+mask=J_wage[all_pq].notna().all(axis=1)
+J_wage.loc[~mask,["mean_minus","mean_plus","diff"]]=float("nan")
+
