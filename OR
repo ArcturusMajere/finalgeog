@@ -19,3 +19,9 @@ J_wage["diff"]=J_wage["mean_plus"]-J_wage["mean_minus"]
 mask=J_wage[all_pq].notna().all(axis=1)
 J_wage.loc[~mask,["mean_minus","mean_plus","diff"]]=float("nan")
 
+def sectorCount2(df):
+    counts=df["sector2"].value_counts().rename("count")
+    stats=df.groupby("sector2")[["mean_minus","mean_plus","diff"]].mean()
+    out=pd.concat([counts,stats],axis=1).reset_index()
+    out=out.rename(columns={"index":"sector2"})
+    return out.sort_values("count",ascending=False)
