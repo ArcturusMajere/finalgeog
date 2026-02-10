@@ -1,9 +1,1 @@
-pq_cols=["PQ-4","PQ-3","PQ-2","PQ-1","PQ+1","PQ+2","PQ+3","PQ+4"]
-key_cols=["ST_RETURN_ID","UI","NAICS"]
-j_long=J.melt(id_vars=key_cols,value_vars=pq_cols,var_name="pq_col",value_name="PQ")
-j_long["PQ"]=j_long["PQ"].astype("int64")
-p3_key=p1[["ST_RETURN_ID","PQ","WAGE","state"]].copy()
-p3_key["PQ"]=p3_key["PQ"].astype("int64")
-m=j_long.merge(p3_key,on=["ST_RETURN_ID","PQ"],how="left")
-w=m.pivot_table(index=key_cols,columns="pq_col",values="WAGE",aggfunc="first").reset_index()
-J_wage=J[key_cols].drop_duplicates().merge(w,on=key_cols,how="left").merge(p1[["ST_RETURN_ID","state"]].drop_duplicates(),on="ST_RETURN_ID",how="left")
+
