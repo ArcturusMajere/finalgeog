@@ -1,1 +1,10 @@
 
+pq=pq.merge(p1[["ST_RETURN_ID","UI","state"]],on=["ST_RETURN_ID","UI"],how="left")
+
+pq_col=pd.pivot_table(
+    pq,
+    index=["ST_RETURN_ID","UI","state"],
+    columns="pq_col",
+    values="WAGE",
+    aggfunc="first"
+).reset_index()
