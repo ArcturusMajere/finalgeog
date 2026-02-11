@@ -1,21 +1,178 @@
-So, I’m using a compare function to show me the difference between 2 dataframes. This is simple enough but now I’m trying to create functions, that compares multiple dataframes to call later. 
+import pandas as pd
 
-I created the following functions as well because I need to ETL before the compare:
+def _standardize_columns(df):
+    d=df.copy()
+    d.columns=[str(c).strip() for c in d.columns]
+    return d
 
-- read_csv_files (take file path and put dataframe into a list)
+def _coerce_common_dtypes(df_a, df_b):
+    a=df_a.copy()
+    b=df_b.copy()
+    common=[c for c in a.columns if c in b.columns]
+    for c in common:
+        ta=a[c].dtype
+        tb=b[c].dtype
+        if ta==tb:
+            continue
+        if pd.api.types.is_datetime64_any_dtype(ta) or pd.api.types.is_datetime64_any_dtype(tb):
+            a[c]=pd.to_datetime(a[c], errors="coerce")
+            b[c]=pd.to_datetime(b[c], errors="coerce")
+        elif pd.api.types.is_numeric_dtype(ta) or pd.api.types.is_numeric_dtype(tb):
+            a[c]=pd.to_numeric(a[c], errors="coerce")
+            b[c]=pd.to_numeric(b[c], errors="coerce")
+        else:
+            a[c]=a[c].astype("string")
+            b[c]=b[c].astype("string")
+    return a,b
 
--compare_data_types (take dataframe list and shows datatypes. I need to change this one so that it will automatically make the datatypes the same but for now it is just used as a check)
+def _align_for_compare(df_left, df_right, key_cols, all_columns=True):
+    l=_standardize_columns(df_left)
+    r=_standardize_columns(df_right)
+    if key_cols is None or len(key_cols)==0:
+        l=l.reset_index(drop=True)
+        r=r.reset_index(drop=True)
+    else:
+        for k in key_cols:
+            if k not in l.columns or k not in r.columns:
+                raise KeyError(f"Key column '{k}' must exist in both dataframes")
+        l=l.sort_values(key_cols, kind="mergesort").reset_index(drop=True)
+        r=r.sort_values(key_cols, kind="mergesort").reset_index(drop=True)
+        l=l.set_index(key_cols, drop=False)
+        r=r.set_index(key_cols, drop=False)
+    if all_columns:
+        cols=sorted(set(l.columns).union(set(r.columns)))
+    else:
+        cols=[c for c in l.columns if c in r.columns]
+    l=l.reindex(columns=cols)
+    r=r.reindex(columns=cols)
+    l,r=_coerce_common_dtypes(l,r)
+    l=l.sort_index()
+    r=r.sort_index()
+    return l,r
 
-- check_and_standardize_columns (Check to see if column names are same if not change names to one of the dataframe in a list)
+def compare_two(df_left, df_right, key_cols=None, all_columns=True, keep_equal=False):
+    l,r=_align_for_compare(df_left, df_right, key_cols=key_cols, all_columns=all_columns)
+    left_only=l.index.difference(r.index)
+    right_only=r.index.difference(l.index)
+    common=l.index.intersection(r.index)
+    l_common=l.loc[common]
+    r_common=r.loc[common]
+    diff=l_common.compare(r_common, keep_equal=keep_equal, keep_shape=False)
+    meta={
+        "left_only_rows": left_only,
+        "right_only_rows": right_only,
+        "common_rows": common
+    }
+    return diff, meta
 
--sort_dataframes (Takes dataframe in list and column name from a list sorts them by those columns from small to largest)
+def compare_chain(dfs, key_cols=None, all_columns=True, keep_equal=False, names=None):
+    if len(dfs)<2:
+        raise ValueError("Need at least two dataframes")
+    if names is None:
+        names=[f"df{i}" for i in range(len(dfs))]
+    if len(names)!=len(dfs):
+        raise ValueError("names must match dfs length")
+    out=[]
+    metas=[]
+    for i in range(1,len(dfs)):
+        diff,meta=compare_two(dfs[i-1], dfs[i], key_cols=key_cols, all_columns=all_columns, keep_equal=keep_equal)
+        diff=diff.copy()
+        diff.insert(0,"compare",f"{names[i-1]} -> {names[i]}")
+        out.append(diff.reset_index())
+        metas.append((f"{names[i-1]} -> {names[i]}", meta))
+    all_diffs=pd.concat(out, ignore_index=True) if out else pd.DataFrame()
+    return all_diffs, metas
 
-- reset_indexes (takes dataframe list and reset the indexes)
+#******************************************
+"""How you use it:
 
-Now all of those function work fine. But my compare functions (I have a couple of examples), which I use to take the dataframe list into the function gives me an error. 
-ValueError: Can only compare identically-labeled (both index and columns) DataFrame objects
+If you have a natural key (recommended), like ["id","yr_qtr"] or whatever uniquely identifies a row:
 
-I think this is because the data frames are in a list so they index as 0 and 1 plus their nested index of however many rows in the dataframes. I am also trying to compare more then one dataframe so that might be an issue, but I also have a compare function that splits the dataframe hoping it will compare then.
+diff, meta = compare_two(df1, df2, key_cols=["id","yr_qtr"])
+diff gives you per-cell differences
+meta["left_only_rows"] and meta["right_only_rows"] tell you which keys exist in only one side
 
-At a lost. Been working at this for 2 weeks now. And I bet you’re going to tell me to just merge but I’m trying to use compare because it will give me the difference and missing values of two dataframe. But I might need to compare more then one which might be easier with merge. 
+For multiple files in order:
+
+all_diffs, metas = compare_chain(df_list, key_cols=["id","yr_qtr"], names=file_names)"""
+
+#+++++++++++++++++++++++++++
+
+import pandas as pd
+
+def normalize_df(df,colmap=None,schema=None,key_cols=None,keep_cols=None):
+    d=df.copy()
+    d.columns=[str(c).strip() for c in d.columns]
+    if colmap: d=d.rename(columns=colmap)
+    if keep_cols is not None: d=d[[c for c in keep_cols if c in d.columns]]
+    if schema:
+        for c,t in schema.items():
+            if c not in d.columns: continue
+            if t=="datetime": d[c]=pd.to_datetime(d[c],errors="coerce")
+            elif t=="int": d[c]=pd.to_numeric(d[c],errors="coerce").astype("Int64")
+            elif t=="float": d[c]=pd.to_numeric(d[c],errors="coerce").astype("Float64")
+            elif t=="bool": d[c]=d[c].astype("boolean")
+            else: d[c]=d[c].astype("string")
+    else:
+        for c in d.columns: d[c]=d[c].astype("string")
+    if key_cols:
+        for k in key_cols:
+            if k not in d.columns: raise KeyError(f"missing key {k}")
+        d=d.sort_values(key_cols,kind="mergesort").set_index(key_cols,drop=False)
+    return d
+
+def align_pair(a,b,all_columns=True):
+    if all_columns: cols=sorted(set(a.columns).union(b.columns))
+    else: cols=[c for c in a.columns if c in b.columns]
+    a=a.reindex(columns=cols)
+    b=b.reindex(columns=cols)
+    a=a.sort_index()
+    b=b.sort_index()
+    return a,b
+
+def row_hash(df,exclude_cols=None):
+    d=df.drop(columns=[c for c in (exclude_cols or []) if c in df.columns])
+    return pd.util.hash_pandas_object(d,index=False)
+
+def compare_fast(a,b,key_cols,all_columns=True,exclude_from_hash=None,keep_equal=False):
+    a=a.copy();b=b.copy()
+    a,b=align_pair(a,b,all_columns=all_columns)
+    left_only=a.index.difference(b.index)
+    right_only=b.index.difference(a.index)
+    common=a.index.intersection(b.index)
+    a0=a.loc[common];b0=b.loc[common]
+    ha=row_hash(a0,exclude_cols=exclude_from_hash)
+    hb=row_hash(b0,exclude_cols=exclude_from_hash)
+    changed=common[ha.ne(hb).to_numpy()]
+    diff=a.loc[changed].compare(b.loc[changed],keep_equal=keep_equal)
+    meta={"left_only":left_only,"right_only":right_only,"changed":changed,"common":common}
+    return diff,meta
+
+def compare_many(dfs,names,key_cols,colmap=None,schema=None,keep_cols=None,all_columns=True,exclude_from_hash=None):
+    norm=[]
+    for df in dfs:
+        norm.append(normalize_df(df,colmap=colmap,schema=schema,key_cols=key_cols,keep_cols=keep_cols))
+    out=[]
+    metas=[]
+    for i in range(1,len(norm)):
+        diff,meta=compare_fast(norm[i-1],norm[i],key_cols=key_cols,all_columns=all_columns,exclude_from_hash=exclude_from_hash)
+        if not diff.empty:
+            d=diff.reset_index()
+            d.insert(0,"compare",f"{names[i-1]} -> {names[i]}")
+            out.append(d)
+        metas.append((f"{names[i-1]} -> {names[i]}",meta))
+    return (pd.concat(out,ignore_index=True) if out else pd.DataFrame()),metas
+
+
+"""How to run it
+
+Define:
+key_cols: columns that uniquely identify a row
+schema: dict column→type, where type is "string","int","float","datetime","bool"
+colmap: optional renames to standardize headers (if files vary)
+keep_cols: optional list of columns you care about (drops noise early)
+
+Example:
+schema={"id":"string","yr_qtr":"string","wage":"float","state":"string"}
+diffs, metas = compare_many(df_list,file_names,key_cols=["id","yr_qtr"],schema=schema)"""
 
