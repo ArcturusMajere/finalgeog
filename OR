@@ -1,178 +1,340 @@
-import pandas as pd
+def read_csv_files(file_paths):
+    """
+    Reads in muliple CSV files and returns a list of dataframes.
 
-def _standardize_columns(df):
-    d=df.copy()
-    d.columns=[str(c).strip() for c in d.columns]
-    return d
+    Parameters:
+        file_paths: A list containing path to the CSV files.
 
-def _coerce_common_dtypes(df_a, df_b):
-    a=df_a.copy()
-    b=df_b.copy()
-    common=[c for c in a.columns if c in b.columns]
-    for c in common:
-        ta=a[c].dtype
-        tb=b[c].dtype
-        if ta==tb:
+    Return: 
+        List of dataframes read from CSV file with pandas.
+    """
+    dataframes = []
+
+    for path in file_paths:
+        try:
+            df = pd.read_csv(path)
+            dataframes.append(df)
+        except Exception as e:
+            print(f"Error reading {path}: {e}")
+
+    return dataframes
+
+def compare_data_types(dataframes):
+    """
+    Compares the data types of columns in a list of dataFrames.
+
+    Parameters:
+    dataframes: List of dataFrames to compare.
+
+    Returns:
+    dict: A dictionary where keys are DataFrame indices and values are their respective column data types.
+    """
+    data_types = {}
+
+    for i, df in enumerate(dataframes):
+        data_types[i] = df.dtypes.to_dict()  # Convert to dictionary
+
+    return data_types
+    
+def check_and_standardize_columns(dataframes):
+    """
+    Check if column names of dataframes are the same or different.
+    
+    Parameters:
+        dataframes: A list containing pandas dataframe
+
+    Return: 
+        same: If all dataframes have the column name return string 'same'.
+        different: If column name differ, return string 'different'. 
+    """
+    # Get the coulmn names from the first dataframe.
+    first_columns = list(dataframes[0].columns)
+
+    # Check columns names with first_columns name to see if they match
+    for df in dataframes[1:]:
+        if list(df.columns) != first_columns:
+            # If differnt, standardize to the first dataframe's columns
+            df.columns = first_columns
+            
+    return dataframes
+
+def sort_dataframes(dataframes, column_names, ascending = True):
+    """
+    Sorts dataframe by given coulmn names.
+    
+    Parameters:
+        dataframes: A list containing pandas dataframe
+        column_names: list of column names
+        ascending (True): Sort by smallest to largest 
+
+    Return: 
+        sorted_dfs: Sorted dataframe list 
+    """
+    sorted_dfs = []
+    for df in dataframes:
+        #Ensure dataframe sorted by specified columns:
+        if not all(col in df.columns for col in column_names):
+            raise ValueError("One or more columns are not present in the dataframe.")
+
+        # Sort by specified columns:
+        sorted_df = df.sort_values(by=column_names, ascending = ascending)
+        sorted_dfs.append(sorted_df)
+
+    return sorted_dfs
+
+def split_dataframe(dataframes, index):
+    """
+    Return a dataframe from a list of dataframes at the specified index
+    and print the number of available indexes.
+
+    Parameters:
+    dataframes: list of pd.DataFrame
+    index: int
+
+    Returns:
+    pd.DataFrame: The dataframe at the specified index
+    """
+    # Print the number of available indexes
+    print(f"Number of available DataFrames: {len(dataframes)}")
+    
+    if index < 0 or index >= len(dataframes):
+        raise IndexError("Index out of range.")
+    
+    return dataframes[index]
+
+def reset_indexes(dataframes):
+    """
+    Resets indexes of all dataframe in a give list.
+
+    Parameters:
+    dataframes: list of pandas dataframes.
+
+    Returns:
+    List of dataframes with reset indexes.
+    """
+
+    return[df.reset_index(drop = True) for df in dataframes]
+
+def compare_dataframes(dataframes):
+    """
+    Compare consecutive DataFrames in a list and return their differences.
+    
+    Parameters:
+    dataframes (list): A list of pandas DataFrames to compare.
+    
+    Returns:
+    results (list): A list of DataFrames showing the differences.
+    """
+    if len(dataframes) < 2:
+        raise ValueError("The list must contain at least 2 DataFrames to compare.")
+
+    results = []
+    
+    for i in range(len(dataframes) - 1):
+        comparison = dataframes[i].compare(dataframes[i + 1], keep_shape=True, keep_equal=True)
+        results.append(comparison)
+    
+    return results
+
+def compare_dataframes(*dataframes):
+    """
+    """
+    comparison_results = []
+    
+    if len(dataframes) < 2: 
+        return "Need at least 2 dataframes to compare."
+
+    for i in range(len(dataframes)):
+        for j in range(i + 1, len(dataframes)):
+            df1 = dataframes[i]
+            df2 = dataframes[j]
+            # Compare the dataframes
+            comparison = df1.compare(df2)
+            comparison_results.append({
+                'comparison': comparison if not comparison.empty else "No differences found",
+                'dataframes': (i + 1, j + 1)
+            })
+
+    return comparison_results
+
+def compare_dataframes(dataframes, reference_index=0):
+    """
+    Compare multiple DataFrames in a list and identify differences relative to a reference DataFrame.
+
+    Parameters:
+    - dfs (list of pd.DataFrame): List of DataFrames to compare.
+    - reference_index (int): Index of the DataFrame to use as a reference.
+
+    Returns:
+    - differences (list): List of DataFrames showing differences.
+    """
+    if not isinstance(dataframes, list) or len(dataframes) < 2:
+        raise ValueError("Input must be a list of at least two DataFrames.")
+
+    #Reset indices for all Dataframes
+    dataframes = reset_indexes(dataframes)
+    
+    reference_df = dataframes[reference_index]
+    differences = []
+
+    for i in range(len(dataframes)):
+        if i == reference_index:
             continue
-        if pd.api.types.is_datetime64_any_dtype(ta) or pd.api.types.is_datetime64_any_dtype(tb):
-            a[c]=pd.to_datetime(a[c], errors="coerce")
-            b[c]=pd.to_datetime(b[c], errors="coerce")
-        elif pd.api.types.is_numeric_dtype(ta) or pd.api.types.is_numeric_dtype(tb):
-            a[c]=pd.to_numeric(a[c], errors="coerce")
-            b[c]=pd.to_numeric(b[c], errors="coerce")
-        else:
-            a[c]=a[c].astype("string")
-            b[c]=b[c].astype("string")
-    return a,b
+        diff = reference_df.compare(dataframes[i])
+        differences.append((i, diff))
 
-def _align_for_compare(df_left, df_right, key_cols, all_columns=True):
-    l=_standardize_columns(df_left)
-    r=_standardize_columns(df_right)
-    if key_cols is None or len(key_cols)==0:
-        l=l.reset_index(drop=True)
-        r=r.reset_index(drop=True)
-    else:
-        for k in key_cols:
-            if k not in l.columns or k not in r.columns:
-                raise KeyError(f"Key column '{k}' must exist in both dataframes")
-        l=l.sort_values(key_cols, kind="mergesort").reset_index(drop=True)
-        r=r.sort_values(key_cols, kind="mergesort").reset_index(drop=True)
-        l=l.set_index(key_cols, drop=False)
-        r=r.set_index(key_cols, drop=False)
-    if all_columns:
-        cols=sorted(set(l.columns).union(set(r.columns)))
-    else:
-        cols=[c for c in l.columns if c in r.columns]
-    l=l.reindex(columns=cols)
-    r=r.reindex(columns=cols)
-    l,r=_coerce_common_dtypes(l,r)
-    l=l.sort_index()
-    r=r.sort_index()
-    return l,r
+    return differences
 
-def compare_two(df_left, df_right, key_cols=None, all_columns=True, keep_equal=False):
-    l,r=_align_for_compare(df_left, df_right, key_cols=key_cols, all_columns=all_columns)
-    left_only=l.index.difference(r.index)
-    right_only=r.index.difference(l.index)
-    common=l.index.intersection(r.index)
-    l_common=l.loc[common]
-    r_common=r.loc[common]
-    diff=l_common.compare(r_common, keep_equal=keep_equal, keep_shape=False)
-    meta={
-        "left_only_rows": left_only,
-        "right_only_rows": right_only,
-        "common_rows": common
-    }
-    return diff, meta
+def compare_dataframes(dataframes, reference_index=0):
+    """
+    Compare multiple DataFrames in a list and identify differences relative to a reference DataFrame.
 
-def compare_chain(dfs, key_cols=None, all_columns=True, keep_equal=False, names=None):
-    if len(dfs)<2:
-        raise ValueError("Need at least two dataframes")
-    if names is None:
-        names=[f"df{i}" for i in range(len(dfs))]
-    if len(names)!=len(dfs):
-        raise ValueError("names must match dfs length")
-    out=[]
-    metas=[]
-    for i in range(1,len(dfs)):
-        diff,meta=compare_two(dfs[i-1], dfs[i], key_cols=key_cols, all_columns=all_columns, keep_equal=keep_equal)
-        diff=diff.copy()
-        diff.insert(0,"compare",f"{names[i-1]} -> {names[i]}")
-        out.append(diff.reset_index())
-        metas.append((f"{names[i-1]} -> {names[i]}", meta))
-    all_diffs=pd.concat(out, ignore_index=True) if out else pd.DataFrame()
-    return all_diffs, metas
+    Parameters:
+    - dfs (list of pd.DataFrame): List of DataFrames to compare.
+    - reference_index (int): Index of the DataFrame to use as a reference.
 
-#******************************************
-"""How you use it:
+    Returns:
+    - differences (list): List of tuples (index, diff) for each comparison.
+    """
+    # Ensure DataFrames have the same columns
+    if not isinstance(dataframes, list) or len(dataframes) < 2:
+        raise ValueError("Input must be a list of at least two DataFrames.")
+    
+    # Reset indices for all DataFrames
+    dfdataframess = reset_indexes(dataframes)
+    
+    reference_df = dataframes[reference_index]  # Select the reference DataFrame
+    differences = []
 
-If you have a natural key (recommended), like ["id","yr_qtr"] or whatever uniquely identifies a row:
+    for i in range(len(dataframes)):
+        if i == reference_index:
+            continue
+        
+        compared_df = dataframes[i]  # No need to reset index again
+        
+        # Align DataFrames by filling missing rows with NaN
+        combined_df = pd.concat([reference_df, compared_df], keys=['Reference', 'Compared'])
+        combined_df = combined_df.groupby(level=1).first()  # Keep the first (non-NaN) entries
 
-diff, meta = compare_two(df1, df2, key_cols=["id","yr_qtr"])
-diff gives you per-cell differences
-meta["left_only_rows"] and meta["right_only_rows"] tell you which keys exist in only one side
-
-For multiple files in order:
-
-all_diffs, metas = compare_chain(df_list, key_cols=["id","yr_qtr"], names=file_names)"""
-
-#+++++++++++++++++++++++++++
-
-import pandas as pd
-
-def normalize_df(df,colmap=None,schema=None,key_cols=None,keep_cols=None):
-    d=df.copy()
-    d.columns=[str(c).strip() for c in d.columns]
-    if colmap: d=d.rename(columns=colmap)
-    if keep_cols is not None: d=d[[c for c in keep_cols if c in d.columns]]
-    if schema:
-        for c,t in schema.items():
-            if c not in d.columns: continue
-            if t=="datetime": d[c]=pd.to_datetime(d[c],errors="coerce")
-            elif t=="int": d[c]=pd.to_numeric(d[c],errors="coerce").astype("Int64")
-            elif t=="float": d[c]=pd.to_numeric(d[c],errors="coerce").astype("Float64")
-            elif t=="bool": d[c]=d[c].astype("boolean")
-            else: d[c]=d[c].astype("string")
-    else:
-        for c in d.columns: d[c]=d[c].astype("string")
-    if key_cols:
-        for k in key_cols:
-            if k not in d.columns: raise KeyError(f"missing key {k}")
-        d=d.sort_values(key_cols,kind="mergesort").set_index(key_cols,drop=False)
-    return d
-
-def align_pair(a,b,all_columns=True):
-    if all_columns: cols=sorted(set(a.columns).union(b.columns))
-    else: cols=[c for c in a.columns if c in b.columns]
-    a=a.reindex(columns=cols)
-    b=b.reindex(columns=cols)
-    a=a.sort_index()
-    b=b.sort_index()
-    return a,b
-
-def row_hash(df,exclude_cols=None):
-    d=df.drop(columns=[c for c in (exclude_cols or []) if c in df.columns])
-    return pd.util.hash_pandas_object(d,index=False)
-
-def compare_fast(a,b,key_cols,all_columns=True,exclude_from_hash=None,keep_equal=False):
-    a=a.copy();b=b.copy()
-    a,b=align_pair(a,b,all_columns=all_columns)
-    left_only=a.index.difference(b.index)
-    right_only=b.index.difference(a.index)
-    common=a.index.intersection(b.index)
-    a0=a.loc[common];b0=b.loc[common]
-    ha=row_hash(a0,exclude_cols=exclude_from_hash)
-    hb=row_hash(b0,exclude_cols=exclude_from_hash)
-    changed=common[ha.ne(hb).to_numpy()]
-    diff=a.loc[changed].compare(b.loc[changed],keep_equal=keep_equal)
-    meta={"left_only":left_only,"right_only":right_only,"changed":changed,"common":common}
-    return diff,meta
-
-def compare_many(dfs,names,key_cols,colmap=None,schema=None,keep_cols=None,all_columns=True,exclude_from_hash=None):
-    norm=[]
-    for df in dfs:
-        norm.append(normalize_df(df,colmap=colmap,schema=schema,key_cols=key_cols,keep_cols=keep_cols))
-    out=[]
-    metas=[]
-    for i in range(1,len(norm)):
-        diff,meta=compare_fast(norm[i-1],norm[i],key_cols=key_cols,all_columns=all_columns,exclude_from_hash=exclude_from_hash)
+        # Compare and find differences
+        diff = reference_df.compare(combined_df, keep_equal=True)
+        diff = diff.dropna(how='all')  # Drop all-Nan rows (if any)
+        
         if not diff.empty:
-            d=diff.reset_index()
-            d.insert(0,"compare",f"{names[i-1]} -> {names[i]}")
-            out.append(d)
-        metas.append((f"{names[i-1]} -> {names[i]}",meta))
-    return (pd.concat(out,ignore_index=True) if out else pd.DataFrame()),metas
+            differences.append((i, diff))
+
+    return differences
+  # file_paths = ['wage_summary_AWS.csv', 'wage_summary_Oracle.csv']
+# dfs = read_csv_files(file_paths)
+
+# column_standardized_dfs = check_and_standardize_columns(dfs)
+
+# column_sort = ['STATE_CODE', 'YR', 'QTR']
+
+# sorted_data = sort_dataframes(column_standardized_dfs, column_sort)
+
+# results  = compare_dataframes(sorted_data)
+
+# # Printed result of compare
+# for key, value in results.item():
+#     print(f"{key}:\n{value}\n")
+
+def test_functions():
+    """
+    Tests the implemented functions by creating sample CSV files and performing operations.
+    """ 
+    # Step 2: Read multiple CSV files
+    file_paths = ['wage_summary_AWS.csv', 'wage_summary_Oracle.csv']
+    dataframes = read_csv_files(file_paths)
 
 
-"""How to run it
+    # Step 3: Check and standardize columns
+    standardized_dfs = check_and_standardize_columns(dataframes)
 
-Define:
-key_cols: columns that uniquely identify a row
-schema: dict column→type, where type is "string","int","float","datetime","bool"
-colmap: optional renames to standardize headers (if files vary)
-keep_cols: optional list of columns you care about (drops noise early)
+    # Step 4: Sort DataFrames by one or more columns
+    sorted_dfs = sort_dataframes(standardized_dfs, column_names=['STATE_CODE', 'YR', 'QTR'], ascending = True)
 
-Example:
-schema={"id":"string","yr_qtr":"string","wage":"float","state":"string"}
-diffs, metas = compare_many(df_list,file_names,key_cols=["id","yr_qtr"],schema=schema)"""
+    # Step 5: Reset indexes
+    
+    reset_dfs = reset_indexes(sorted_dfs)
 
+    # indices = [0,1]
+    
+    # selected_data = [split_dataframe(reset_dfs, index) for index in indices]
+
+    # # Step 3: Compare DataFrames
+    # comparison_results = compare_dataframes(*selected_data)
+
+    # # Output results
+    # for result in comparison_results:
+    #     print(f"Comparison between DataFrame {result['dataframes'][0]} and DataFrame {result['dataframes'][1]}:")
+    #     print(result['comparison'])
+    #     print("-" * 40)
+
+
+    # Call the function and print the results
+    differences = compare_dataframes(reset_dfs)
+    
+    for i, result in enumerate(differences):
+        print(f"Differences between DataFrame {i} and DataFrame {i + 1}:\n{result}\n")
+
+
+
+
+# Run the test
+#test_functions()
+
+def test_functions():
+    """
+    Test function to print outputs to see why compare functions are not working. 
+    """
+    # Read multiple CSV files
+    file_paths = ['wage_summary_AWS.csv', 'wage_summary_Oracle.csv']
+    dataframes = read_csv_files(file_paths)
+
+    # Print the shape of each DataFrame after reading
+    for i, df in enumerate(dataframes):
+        print(f"\nOriginal DataFrame {i + 1} shape: {df.shape}")
+        print(f"Columns: {df.columns.tolist()}")
+
+    # Compare data types
+    data_type_comparison = compare_data_types(dataframes)
+
+    # Print data types for each DataFrame
+    for index, types in data_type_comparison.items():
+        print(f"\nDataFrame {index + 1} column data types:")
+        for column, data_type in types.items():
+            print(f"  {column}: {data_type}")
+    
+    # Check and standardize columns
+    standardized_dfs = check_and_standardize_columns(dataframes)
+
+    # Print the shape of each DataFrame after standardization
+    for i, df in enumerate(standardized_dfs):
+        print(f"\nStandardized DataFrame {i + 1} shape: {df.shape}")
+        print(f"Columns: {df.columns.tolist()}")
+
+    # Sort DataFrames by column 'A'
+    sorted_dfs = sort_dataframes(standardized_dfs, column_names=['STATE_CODE', 'YR', 'QTR'])
+
+    # Print the shape after sorting
+    for i, df in enumerate(sorted_dfs):
+        print(f"\nSorted DataFrame {i + 1} shape: {df.shape}")
+
+    # Reset indexes
+    reset_dfs = reset_indexes(sorted_dfs)
+
+    # Print outputs for each DataFrame
+    for i, df in enumerate(reset_dfs):
+        print(f"\nDataFrame {i + 1} after processing:\n{df}")
+
+# Run the test
+#test_functions()
+
+# Merge the DataFrames based on common columns 
+#merged_df = pd.merge(df1_sorted, df2_sorted, how='outer', indicator=True) 
+# Identify differences 
+#differences = merged_df[merged_df['_merge'] != 'both'] 
+# Display results 
+#print("Merged DataFrame with Differences:") 
+#print(differences[0]) 
