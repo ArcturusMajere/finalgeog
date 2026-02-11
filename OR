@@ -1,1 +1,21 @@
+So, I’m using a compare function to show me the difference between 2 dataframes. This is simple enough but now I’m trying to create functions, that compares multiple dataframes to call later. 
+
+I created the following functions as well because I need to ETL before the compare:
+
+- read_csv_files (take file path and put dataframe into a list)
+
+-compare_data_types (take dataframe list and shows datatypes. I need to change this one so that it will automatically make the datatypes the same but for now it is just used as a check)
+
+- check_and_standardize_columns (Check to see if column names are same if not change names to one of the dataframe in a list)
+
+-sort_dataframes (Takes dataframe in list and column name from a list sorts them by those columns from small to largest)
+
+- reset_indexes (takes dataframe list and reset the indexes)
+
+Now all of those function work fine. But my compare functions (I have a couple of examples), which I use to take the dataframe list into the function gives me an error. 
+ValueError: Can only compare identically-labeled (both index and columns) DataFrame objects
+
+I think this is because the data frames are in a list so they index as 0 and 1 plus their nested index of however many rows in the dataframes. I am also trying to compare more then one dataframe so that might be an issue, but I also have a compare function that splits the dataframe hoping it will compare then.
+
+At a lost. Been working at this for 2 weeks now. And I bet you’re going to tell me to just merge but I’m trying to use compare because it will give me the difference and missing values of two dataframe. But I might need to compare more then one which might be easier with merge. 
 
