@@ -1,1 +1,29 @@
+df.columns = first_columns
 
+That does not rename matching columns. It blindly replaces the column labels by position.
+
+If DF2 has an extra/missing column or different order, you just mislabeled every column.
+
+Now when you sort/reset, you can still end up with different shapes/labels and compare blows up (or worse, compare succeeds but is meaningless).
+
+Also: reset_index(drop=True) only fixes the index labels. compare still requires identical columns AND identical index labels.
+
+If one DF has extra rows after sorting (missing some keys), resetting index won’t make them align logically.
+
+
+
+
+df.columns = first_columns
+blindly renames columns by position. If a DataFrame has missing, extra, or reordered columns, you corrupt the labels. 
+
+Then compare() sees mismatched columns and throws:
+ValueError: Can only compare identically-labeled DataFrame objects
+
+
+df = df.reindex(columns=first_columns)
+does three critical things:
+
+Keeps correct column names
+Adds missing columns as NaN
+Drops extra columns
+Preserves column order
