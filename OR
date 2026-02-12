@@ -1,1 +1,42 @@
-out = df.groupby("ID", as_index=False)["wage"].sum()
+Oklahoma
+
+Neighboring states
+Texas
+Arkansas
+Kansas
+
+West
+California
+New Mexico
+Washington
+Utah
+Oregon
+Idaho
+Montana
+
+Southeast
+Louisiana
+Florida
+Georgia
+Alabama
+South Carolina
+
+Midwest
+Indiana
+Ohio
+Illinois
+Wisconsin
+Minnesota
+Iowa
+Nebraska
+South Dakota
+Wyoming
+
+
+MidAtlantic/NE
+Pennsylvania
+New Jersey
+Maryland
+West Virginia
+Connecticut
+
