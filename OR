@@ -1,42 +1,19 @@
-Oklahoma
+import pandas as pd
 
-Neighboring states
-Texas
-Arkansas
-Kansas
+def add_region(xlsx_path,out_path=None,state_col="state",sheet_name=0):
+    df=pd.read_excel(xlsx_path,sheet_name=sheet_name)
+    s=df[state_col].astype(str).str.strip().str.title()
+    region_map={
+        "Oklahoma":"Oklahoma",
+        "Texas":"Neighboring states","Arkansas":"Neighboring states","Kansas":"Neighboring states",
+        "California":"West","New Mexico":"West","Washington":"West","Utah":"West","Oregon":"West","Idaho":"West","Montana":"West",
+        "Louisiana":"Southeast","Florida":"Southeast","Georgia":"Southeast","Alabama":"Southeast","South Carolina":"Southeast",
+        "Indiana":"Midwest","Ohio":"Midwest","Illinois":"Midwest","Wisconsin":"Midwest","Minnesota":"Midwest","Iowa":"Midwest","Nebraska":"Midwest","South Dakota":"Midwest","Wyoming":"Midwest",
+        "Pennsylvania":"MidAtlantic/NE","New Jersey":"MidAtlantic/NE","Maryland":"MidAtlantic/NE","West Virginia":"MidAtlantic/NE","Connecticut":"MidAtlantic/NE"
+    }
+    df["region"]=s.map(region_map)
+    if out_path:
+        df.to_excel(out_path,index=False)
+    return df
 
-West
-California
-New Mexico
-Washington
-Utah
-Oregon
-Idaho
-Montana
-
-Southeast
-Louisiana
-Florida
-Georgia
-Alabama
-South Carolina
-
-Midwest
-Indiana
-Ohio
-Illinois
-Wisconsin
-Minnesota
-Iowa
-Nebraska
-South Dakota
-Wyoming
-
-
-MidAtlantic/NE
-Pennsylvania
-New Jersey
-Maryland
-West Virginia
-Connecticut
-
+# df=add_region("input.xlsx","output.xlsx")
