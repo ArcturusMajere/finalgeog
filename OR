@@ -1,19 +1,60 @@
+import os
 import pandas as pd
+import numpy as np
+import oracledb
 
-def add_region(xlsx_path,out_path=None,state_col="state",sheet_name=0):
-    df=pd.read_excel(xlsx_path,sheet_name=sheet_name)
-    s=df[state_col].astype(str).str.strip().str.title()
-    region_map={
-        "Oklahoma":"Oklahoma",
-        "Texas":"Neighboring states","Arkansas":"Neighboring states","Kansas":"Neighboring states",
-        "California":"West","New Mexico":"West","Washington":"West","Utah":"West","Oregon":"West","Idaho":"West","Montana":"West",
-        "Louisiana":"Southeast","Florida":"Southeast","Georgia":"Southeast","Alabama":"Southeast","South Carolina":"Southeast",
-        "Indiana":"Midwest","Ohio":"Midwest","Illinois":"Midwest","Wisconsin":"Midwest","Minnesota":"Midwest","Iowa":"Midwest","Nebraska":"Midwest","South Dakota":"Midwest","Wyoming":"Midwest",
-        "Pennsylvania":"MidAtlantic/NE","New Jersey":"MidAtlantic/NE","Maryland":"MidAtlantic/NE","West Virginia":"MidAtlantic/NE","Connecticut":"MidAtlantic/NE"
-    }
-    df["region"]=s.map(region_map)
-    if out_path:
-        df.to_excel(out_path,index=False)
-    return df
+def get_conn():
+    user=os.getenv("ORACLE_USER")
+    password=os.getenv("ORACLE_PASSWORD")
+    dsn=os.getenv("ORACLE_DSN")
+    if not user or not password or not dsn:
+        raise ValueError("Set ORACLE_USER, ORACLE_PASSWORD, ORACLE_DSN")
+    return oracledb.connect(user=user,password=password,dsn=dsn)
 
-# df=add_region("input.xlsx","output.xlsx")
+def get_cohort(yr,qtr,conn,table="YOUR_TABLE",id_col="ID",naics_col="NAICS3",yr_col="YR",qtr_col="QTR"):
+    sql=f"""
+        SELECT {naics_col} AS naics3,
+               COUNT(DISTINCT {id_col}) AS ids
+        FROM {table}
+        WHERE {yr_col}=:yr AND {qtr_col}=:qtr
+        GROUP BY {naics_col}
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql,{"yr":int(yr),"qtr":int(qtr)})
+        rows=cur.fetchall()
+        cols=[d[0].lower() for d in cur.description]
+    return pd.DataFrame(rows,columns=cols)
+
+def naics3_relative_losses_2022Q2_to_2025Q2(conn,table="YOUR_TABLE"):
+    quarters=[
+        (2022,2),(2022,3),(2022,4),
+        (2023,1),(2023,2),(2023,3),(2023,4),
+        (2024,1),(2024,2),(2024,3),(2024,4),
+        (2025,1),(2025,2)
+    ]
+    frames=[]
+    for y,q in quarters:
+        df=get_cohort(y,q,conn,table=table)
+        df=df[["naics3","ids"]].dropna()
+        df["naics3"]=df["naics3"].astype(str)
+        df["ids"]=pd.to_numeric(df["ids"],errors="coerce").fillna(0)
+        df["yr_qtr"]=f"{y}Q{q}"
+        frames.append(df)
+    panel=pd.concat(frames,ignore_index=True)
+    start=panel[panel["yr_qtr"]=="2022Q2"].set_index("naics3")["ids"]
+    end=panel[panel["yr_qtr"]=="2025Q2"].set_index("naics3")["ids"]
+    out=pd.DataFrame({"naics3":sorted(set(start.index)|set(end.index))})
+    out["start_ids"]=out["naics3"].map(start).fillna(0).astype(float)
+    out["end_ids"]=out["naics3"].map(end).fillna(0).astype(float)
+    out["abs_change"]=out["end_ids"]-out["start_ids"]
+    out["rel_loss"]=np.where(out["start_ids"]>0,out["abs_change"]/out["start_ids"],np.nan)
+    out=out.sort_values("rel_loss",na_position="last").reset_index(drop=True)
+    return out[["naics3","start_ids","end_ids","abs_change","rel_loss"]]
+
+conn=get_conn()
+try:
+    losses=naics3_relative_losses_2022Q2_to_2025Q2(conn,table="YOUR_TABLE")
+finally:
+    conn.close()
+
+print(losses.head())
