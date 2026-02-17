@@ -1,60 +1,66 @@
-import os
 import pandas as pd
-import numpy as np
-import oracledb
+import glob
+import os
 
-def get_conn():
-    user=os.getenv("ORACLE_USER")
-    password=os.getenv("ORACLE_PASSWORD")
-    dsn=os.getenv("ORACLE_DSN")
-    if not user or not password or not dsn:
-        raise ValueError("Set ORACLE_USER, ORACLE_PASSWORD, ORACLE_DSN")
-    return oracledb.connect(user=user,password=password,dsn=dsn)
+def top30_naics_diff(dir_path):
+    files=glob.glob(os.path.join(dir_path,"*.csv"))
+    dfs=[pd.read_csv(f) for f in files]
+    df=pd.concat(dfs,ignore_index=True)
 
-def get_cohort(yr,qtr,conn,table="YOUR_TABLE",id_col="ID",naics_col="NAICS3",yr_col="YR",qtr_col="QTR"):
-    sql=f"""
-        SELECT {naics_col} AS naics3,
-               COUNT(DISTINCT {id_col}) AS ids
-        FROM {table}
-        WHERE {yr_col}=:yr AND {qtr_col}=:qtr
-        GROUP BY {naics_col}
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql,{"yr":int(yr),"qtr":int(qtr)})
-        rows=cur.fetchall()
-        cols=[d[0].lower() for d in cur.description]
-    return pd.DataFrame(rows,columns=cols)
+    df["period"]=df["year"].astype(str)+"Q"+df["qtr"].astype(str)
 
-def naics3_relative_losses_2022Q2_to_2025Q2(conn,table="YOUR_TABLE"):
-    quarters=[
-        (2022,2),(2022,3),(2022,4),
-        (2023,1),(2023,2),(2023,3),(2023,4),
-        (2024,1),(2024,2),(2024,3),(2024,4),
-        (2025,1),(2025,2)
-    ]
-    frames=[]
-    for y,q in quarters:
-        df=get_cohort(y,q,conn,table=table)
-        df=df[["naics3","ids"]].dropna()
-        df["naics3"]=df["naics3"].astype(str)
-        df["ids"]=pd.to_numeric(df["ids"],errors="coerce").fillna(0)
-        df["yr_qtr"]=f"{y}Q{q}"
-        frames.append(df)
-    panel=pd.concat(frames,ignore_index=True)
-    start=panel[panel["yr_qtr"]=="2022Q2"].set_index("naics3")["ids"]
-    end=panel[panel["yr_qtr"]=="2025Q2"].set_index("naics3")["ids"]
-    out=pd.DataFrame({"naics3":sorted(set(start.index)|set(end.index))})
-    out["start_ids"]=out["naics3"].map(start).fillna(0).astype(float)
-    out["end_ids"]=out["naics3"].map(end).fillna(0).astype(float)
-    out["abs_change"]=out["end_ids"]-out["start_ids"]
-    out["rel_loss"]=np.where(out["start_ids"]>0,out["abs_change"]/out["start_ids"],np.nan)
-    out=out.sort_values("rel_loss",na_position="last").reset_index(drop=True)
-    return out[["naics3","start_ids","end_ids","abs_change","rel_loss"]]
+    agg=df.groupby(["naics3","period"],as_index=False)["count"].sum()
 
-conn=get_conn()
-try:
-    losses=naics3_relative_losses_2022Q2_to_2025Q2(conn,table="YOUR_TABLE")
-finally:
-    conn.close()
+    results=[]
 
-print(losses.head())
+    for p in agg["period"].unique():
+        sub=agg[agg["period"]==p].copy()
+        cutoff=sub["count"].quantile(0.7)
+        top=sub[sub["count"]>=cutoff]
+        results.append(top)
+
+    top30=pd.concat(results)
+
+    wide=top30.pivot(index="naics3",columns="period",values="count").sort_index(axis=1)
+
+    diffs=wide.diff(axis=1).abs()
+
+    max_diff=diffs.max().max()
+
+    out=diffs.stack().reset_index()
+    out.columns=["naics3","period","abs_diff"]
+    out=out.sort_values("abs_diff",ascending=False)
+
+    return max_diff,out
+
+# Example
+# max_change,detail=top30_naics_diff("path/to/dir")
+s
+
+def top30_naics_delta(dir_path):
+    files=glob.glob(os.path.join(dir_path,"*.csv"))
+    dfs=[pd.read_csv(f) for f in files]
+    df=pd.concat(dfs,ignore_index=True)
+
+    df["period"]=df["year"].astype(int)*10+df["qtr"].astype(int)
+
+    agg=df.groupby(["naics3","period"],as_index=False)["count"].sum()
+
+    agg=agg.sort_values(["naics3","period"])
+
+    agg["delta"]=agg.groupby("naics3")["count"].diff()
+
+    agg["abs_delta"]=agg["delta"].abs()
+
+    deltas=agg.dropna(subset=["abs_delta"])
+
+    cutoff=deltas["abs_delta"].quantile(0.7)
+
+    top30=deltas[deltas["abs_delta"]>=cutoff]
+
+    top30=top30.sort_values("abs_delta",ascending=False)
+
+    return top30[["naics3","period","count","delta","abs_delta"]]
+
+# Example
+# result=top30_naics_delta("path/to/dir")
