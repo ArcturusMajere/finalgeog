@@ -1,5 +1,116 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
+import ipywidgets as w
+from IPython.display import display, clear_output
+
+def naics_trend_tool(dir_path,mode="single",start=(2020,1),end=(2025,2),metric="count"):
+    def qlabel(qi):
+        y=qi//4
+        r=qi%4
+        q=4 if r==0 else r
+        return f"{y}Q{q}"
+    files=list(Path(dir_path).glob("*.csv"))
+    if not files:
+        raise ValueError("No CSV files found.")
+    dfs=[pd.read_csv(f) for f in files]
+    df=pd.concat(dfs,ignore_index=True)
+    df["year"]=pd.to_numeric(df["year"])
+    df["qtr"]=pd.to_numeric(df["qtr"])
+    df[metric]=pd.to_numeric(df[metric])
+    df["naics6"]=df["naics6"].astype(str).str.zfill(6)
+    df=df.groupby(["year","qtr","naics6"],as_index=False)[metric].sum()
+    df["qindex"]=df["year"]*4+df["qtr"]
+    df["yr_qtr"]=df["qindex"].map(qlabel)
+    df=df.sort_values(["naics6","qindex"]).reset_index(drop=True)
+    q_start=start[0]*4+start[1]
+    q_end=end[0]*4+end[1]
+    df_rng=df[(df["qindex"]>=q_start)&(df["qindex"]<=q_end)].copy()
+    naics_list=sorted(df["naics6"].unique().tolist())
+    def top10(kind):
+        s=df[(df["year"]==start[0])&(df["qtr"]==start[1])][["naics6",metric]].rename(columns={metric:"c0"})
+        e=df[(df["year"]==end[0])&(df["qtr"]==end[1])][["naics6",metric]].rename(columns={metric:"c1"})
+        ch=s.merge(e,on="naics6",how="inner")
+        ch["delta"]=ch["c1"]-ch["c0"]
+        if kind=="abs_gain":
+            t=ch[ch["delta"]>0].sort_values("delta",ascending=False).head(10)["naics6"].tolist()
+        elif kind=="abs_loss":
+            t=ch[ch["delta"]<0].sort_values("delta").head(10)["naics6"].tolist()
+        elif kind=="rel_gain":
+            ch=ch[ch["c0"]>0].copy()
+            ch["rel"]=ch["delta"]/ch["c0"]
+            t=ch[ch["rel"]>0].sort_values("rel",ascending=False).head(10)["naics6"].tolist()
+        elif kind=="rel_loss":
+            ch=ch[ch["c0"]>0].copy()
+            ch["rel"]=ch["delta"]/ch["c0"]
+            t=ch[ch["rel"]<0].sort_values("rel").head(10)["naics6"].tolist()
+        else:
+            raise ValueError("kind must be one of: abs_gain, abs_loss, rel_gain, rel_loss")
+        if not t:
+            raise ValueError("No NAICS6 matched the selected top-10 criteria.")
+        return t
+    mode_dd=w.Dropdown(options=["single","multi","top10_abs_gain","top10_abs_loss","top10_rel_gain","top10_rel_loss"],value=mode,description="mode")
+    start_y=w.IntText(value=start[0],description="start_y")
+    start_q=w.IntSlider(value=start[1],min=1,max=4,step=1,description="start_q")
+    end_y=w.IntText(value=end[0],description="end_y")
+    end_q=w.IntSlider(value=end[1],min=1,max=4,step=1,description="end_q")
+    naics_dd=w.Dropdown(options=naics_list,value=naics_list[0],description="naics6")
+    naics_ms=w.SelectMultiple(options=naics_list,value=(naics_list[0],),description="naics6")
+    out=w.Output()
+    def plot_series(sel,sy,sq,ey,eq):
+        qs=sy*4+sq
+        qe=ey*4+eq
+        d=df[(df["qindex"]>=qs)&(df["qindex"]<=qe)&(df["naics6"].isin(sel))].copy()
+        if d.empty:
+            raise ValueError("No data in selected range/NAICS6.")
+        fig,ax=plt.subplots()
+        for n in sel:
+            s=d[d["naics6"]==n]
+            ax.plot(s["yr_qtr"],s[metric],label=n)
+        ax.set_xlabel("Quarter")
+        ax.set_ylabel(metric)
+        ax.tick_params(axis="x",rotation=90)
+        if len(sel)>1:
+            ax.legend()
+        plt.tight_layout()
+        plt.show()
+    def redraw(change=None):
+        with out:
+            clear_output(wait=True)
+            sy=int(start_y.value);sq=int(start_q.value);ey=int(end_y.value);eq=int(end_q.value)
+            if sy*4+sq>ey*4+eq:
+                print("Invalid range: start must be <= end")
+                return
+            m=mode_dd.value
+            if m=="single":
+                sel=[naics_dd.value]
+            elif m=="multi":
+                sel=list(naics_ms.value)
+                if not sel:
+                    print("Select at least one NAICS6")
+                    return
+            else:
+                kind=m.replace("top10_","")
+                sel=top10(kind)
+                print(f"{m} ({sy}Q{sq}→{ey}Q{eq}): {', '.join(sel)}")
+            plot_series(sel,sy,sq,ey,eq)
+    for wid in [mode_dd,start_y,start_q,end_y,end_q,naics_dd,naics_ms]:
+        wid.observe(redraw,names="value")
+    ui=w.VBox([w.HBox([mode_dd,start_y,start_q,end_y,end_q]),w.HBox([naics_dd,naics_ms]),out])
+    display(ui)
+    redraw()
+    return df
+df_all=naics_trend_tool("X",mode="top10_rel_loss",start=(2020,1),end=(2025,2))
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+import pandas as pd
+import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from pathlib import Path
 
