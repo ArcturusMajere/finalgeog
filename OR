@@ -1,26 +1,49 @@
 import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
-bucket="YOUR_BUCKET_NAME"
-key="hothouse.csv"  # or folder/hothouse.csv
-
-path=f"s3://{bucket}/{key}"
-
-df=pd.read_csv(path)
-
-df.head()
-
-
-import pandas as pd
-import s3fs
-
-fs=s3fs.S3FileSystem(
-    key="AWS_ACCESS_KEY",
-    secret="AWS_SECRET_KEY",
-    client_kwargs={"region_name":"us-west-2"}
-)
-
-with fs.open("YOUR_BUCKET_NAME/hothouse.csv") as f:
-    df=pd.read_csv(f)
-
-df.head()
-
+def animate_top10_decrease(df,start=(2020,1),end=(2025,2),save_path=None,fps=6):
+    d=df.copy()
+    d["year"]=pd.to_numeric(d["year"])
+    d["qtr"]=pd.to_numeric(d["qtr"])
+    d["count"]=pd.to_numeric(d["count"])
+    d["naics6"]=d["naics6"].astype(str).str.zfill(6)
+    d=d.groupby(["naics6","year","qtr"],as_index=False)["count"].sum()
+    s=d[(d["year"]==start[0])&(d["qtr"]==start[1])][["naics6","count"]].rename(columns={"count":"c0"})
+    e=d[(d["year"]==end[0])&(d["qtr"]==end[1])][["naics6","count"]].rename(columns={"count":"c1"})
+    ch=s.merge(e,on="naics6",how="inner")
+    ch["delta"]=ch["c1"]-ch["c0"]
+    top=ch[ch["delta"]<0].sort_values("delta").head(10)["naics6"].tolist()
+    if not top:
+        raise ValueError("No NAICS6 decreased between the specified quarters.")
+    q_start=start[0]*4+start[1]
+    q_end=end[0]*4+end[1]
+    d["qindex"]=d["year"]*4+d["qtr"]
+    d=d[(d["qindex"]>=q_start)&(d["qindex"]<=q_end)&(d["naics6"].isin(top))]
+    qs=sorted(d["qindex"].unique().tolist())
+    qlab={qi:f"{qi//4}Q{qi%4 if qi%4 else 4}" for qi in qs}
+    d["label"]=d["qindex"].map(qlab)
+    d["naics6"]=pd.Categorical(d["naics6"],categories=top,ordered=True)
+    fig,ax=plt.subplots()
+    ax.set_title(f"Top 10 NAICS6 decreases: {start[0]}Q{start[1]} to {end[0]}Q{end[1]}")
+    ax.set_xlabel("Count")
+    bars=ax.barh(top,[0]*len(top))
+    allmax=d["count"].max()
+    ax.set_xlim(0,max(1,allmax*1.05))
+    txt=ax.text(0.98,0.02,"",transform=ax.transAxes,ha="right",va="bottom")
+    def frame(i):
+        qi=qs[i]
+        cur=d[d["qindex"]==qi].set_index("naics6")["count"]
+        vals=[float(cur.get(n,0.0)) for n in top]
+        for b,v in zip(bars,vals):
+            b.set_width(v)
+        txt.set_text(qlab[qi])
+        return (*bars,txt)
+    anim=FuncAnimation(fig,frame,frames=len(qs),interval=int(1000/max(1,fps)),blit=False,repeat=True)
+    if save_path:
+        ext=str(save_path).lower()
+        if ext.endswith(".gif"):
+            anim.save(save_path,writer="pillow",fps=fps)
+        else:
+            anim.save(save_path,writer="ffmpeg",fps=fps)
+    return anim,top
