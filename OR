@@ -1,15 +1,37 @@
-import pyreadstat
-import pandas as pd
+import numpy as np,pandas as pd,matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation,HTMLWriter
 
-def read_sas_to_pandas(path,encoding="utf-8"):
-    df,_=pyreadstat.read_sas7bdat(path,encoding=encoding)
-    for c in df.columns:
-        if df[c].dtype=="object":
-            if df[c].dropna().apply(lambda x:isinstance(x,bytes)).any():
-                df[c]=df[c].str.decode(encoding,errors="ignore")
-            num=pd.to_numeric(df[c],errors="coerce")
-            if num.notna().sum()>0 and num.notna().sum()==df[c].notna().sum():
-                df[c]=num.astype(float)
-            else:
-                df[c]=df[c].astype(str)
-    return df
+def animated_stacked_bars_html(df,output_path="/mnt/data/stacked_meei.html",state_col="state_name",time_col="YR_QTR",prefix="meei_pct_",interval_ms=3000,figsize=(12,6)):
+    d=df.copy()
+    d[time_col]=d[time_col].astype(str).str.replace(r"\.0$","",regex=True)
+    pct_cols=[c for c in d.columns if c.startswith(prefix)]
+    d[state_col]=d[state_col].astype(str)
+    states=sorted(d[state_col].dropna().unique())
+    times=sorted(d[time_col].dropna().unique())
+    fig,ax=plt.subplots(figsize=figsize)
+    x=np.arange(len(states))
+    bars={c:ax.bar(x,np.zeros(len(states)),bottom=np.zeros(len(states)),label=c) for c in pct_cols}
+    ax.set_xticks(x)
+    ax.set_xticklabels(states,rotation=45,ha="right")
+    ax.legend(loc="upper right",ncols=2,fontsize=9)
+    title=ax.set_title("")
+    def frame(i):
+        t=times[i]
+        sub=d.loc[d[time_col]==t,[state_col]+pct_cols].groupby(state_col,as_index=False)[pct_cols].mean().set_index(state_col).reindex(states).fillna(0.0)
+        bottom=np.zeros(len(states))
+        for c in pct_cols:
+            vals=sub[c].to_numpy(dtype=float)
+            for rect,v,b in zip(bars[c],vals,bottom):
+                rect.set_height(v)
+                rect.set_y(b)
+            bottom=bottom+vals
+        title.set_text(f"{time_col}={t}")
+        ax.set_ylim(0,max(1.0,float(np.nanmax(bottom))*1.05))
+        return [r for c in pct_cols for r in bars[c]]+[title]
+    ani=FuncAnimation(fig,frame,frames=len(times),interval=interval_ms,blit=False,repeat=True)
+    writer=HTMLWriter()
+    ani.save(output_path,writer=writer)
+    plt.close(fig)
+    return output_path
+
+print("Function ready. Call animated_stacked_bars_html(df) with your DataFrame.")
