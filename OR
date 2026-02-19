@@ -2,71 +2,24 @@ import pandas as pd,matplotlib.pyplot as plt,numpy as np
 
 def plot_state_meei(df,state,time_col="YR_QTR",state_col="state_name",prefix="meei_pct_"):
     d=df.copy()
-    d[state_col]=d[state_col].astype(str)
     d[time_col]=d[time_col].astype(str).str.replace(r"\.0$","",regex=True)
     pct_cols=[c for c in d.columns if c.startswith(prefix)]
-    d=d[d[state_col]==str(state)][[time_col]+pct_cols].groupby(time_col,as_index=False)[pct_cols].mean()
+    d=d[d[state_col].astype(str)==str(state)][[time_col]+pct_cols].groupby(time_col,as_index=False)[pct_cols].mean()
     if d.empty:
-        raise ValueError(f"No rows for state_name={state}")
-    s=d[pct_cols].sum(axis=1)
-    if s.max()<=1.5:
-        d[pct_cols]=d[pct_cols]*100.0
-    d=d.sort_values(time_col).set_index(time_col)
-    ax=d[pct_cols].plot(kind="bar",stacked=True,figsize=(12,6),colormap="tab20")
-    ax.set_ylim(0,100)
-    ax.set_ylabel("meei_pct (adds to 100)")
-    ax.set_xlabel(time_col)
-    plt.xticks(rotation=45,ha="right")
-    plt.title(state)
-    plt.legend(title="Category",bbox_to_anchor=(1.02,1),loc="upper left")
+        raise ValueError(f"No rows for state_name={state!r}")
+    d=d.sort_values(time_col)
+    x=np.arange(len(d[time_col]))
+    bottom=np.zeros(len(d))
+    plt.figure(figsize=(12,6))
+    for c in pct_cols:
+        vals=d[c].to_numpy(dtype=float)
+        plt.bar(x,vals,bottom=bottom,label=c)
+        bottom=bottom+vals
+    plt.xticks(x,d[time_col],rotation=45,ha="right")
+    plt.title(str(state))
+    plt.legend(bbox_to_anchor=(1.02,1),loc="upper left")
     plt.tight_layout()
     plt.show()
 
-state=input("Enter state_name: ").strip()
+state=input("state_name: ").strip()
 plot_state_meei(df,state)
-
-
-
-import pandas as pd,numpy as np,plotly.graph_objects as go,plotly.io as pio
-
-def meei_static_html(df,out_path="meei_stacked.html",state_col="state_name",time_col="YR_QTR",prefix="meei_pct_",title_prefix="MEEI % - "):
-    d=df.copy()
-    d[state_col]=d[state_col].astype(str)
-    d[time_col]=d[time_col].astype(str).str.replace(r"\.0$","",regex=True)
-    pct_cols=[c for c in d.columns if c.startswith(prefix)]
-    d=d[[state_col,time_col]+pct_cols].groupby([state_col,time_col],as_index=False)[pct_cols].mean()
-    s=d[pct_cols].sum(axis=1)
-    if s.max()<=1.5:
-        d[pct_cols]=d[pct_cols]*100.0
-    states=sorted(d[state_col].unique().tolist())
-    if not states: 
-        raise ValueError("No states found")
-    def build_state(st):
-        sub=d[d[state_col]==st].sort_values(time_col)
-        x=sub[time_col].tolist()
-        y=[sub[c].to_numpy(dtype=float) for c in pct_cols]
-        return x,y
-    x0,y0=build_state(states[0])
-    fig=go.Figure()
-    for c,yy in zip(pct_cols,y0):
-        fig.add_trace(go.Bar(x=x0,y=yy,name=c))
-    buttons=[]
-    for st in states:
-        x,y=build_state(st)
-        buttons.append(dict(label=st,method="update",args=[{"x":[x]*len(pct_cols),"y":y},{"title":title_prefix+st}]))
-    fig.update_layout(
-        template="plotly",
-        barmode="stack",
-        title=title_prefix+states[0],
-        xaxis_title=time_col,
-        yaxis_title="meei_pct (adds to 100)",
-        yaxis=dict(range=[0,100],ticksuffix="%"),
-        legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="left",x=0),
-        updatemenus=[dict(type="dropdown",x=0,y=1.18,xanchor="left",yanchor="top",buttons=buttons)],
-        margin=dict(l=60,r=20,t=90,b=60)
-    )
-    pio.write_html(fig,out_path,full_html=True,include_plotlyjs=True)
-    return out_path
-
-path=meei_static_html(df,"meei_stacked.html")
-print(path)
