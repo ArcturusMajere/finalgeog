@@ -1,8 +1,51 @@
-import boto3
-s=boto3.Session(
- aws_access_key_id="...",
- aws_secret_access_key="...",
- region_name="us-gov-east-1"
-)
-s3=s.client("s3")
-print([b["Name"] for b in s3.list_buckets()["Buckets"]])
+import boto3,botocore,time,urllib.parse
+def s3_diagnose(access_key,secret_key,bucket,key,region="us-east-1",token=None,profile=None,endpoint_url=None):
+ cfg=botocore.config.Config(connect_timeout=5,read_timeout=20,retries={"max_attempts":2,"mode":"standard"})
+ s=boto3.Session(profile_name=profile) if profile else boto3.Session(aws_access_key_id=access_key,aws_secret_access_key=secret_key,aws_session_token=token,region_name=region)
+ def out(msg):print(msg,flush=True)
+ out(f"SETUP: region={region} endpoint_url={endpoint_url or 'auto'} bucket={bucket} key={key}")
+ try:
+  sts=s.client("sts",config=cfg,endpoint_url=endpoint_url)
+  ident=sts.get_caller_identity()
+  out(f"AUTH: OK arn={ident.get('Arn')} account={ident.get('Account')}")
+ except Exception as e:
+  out(f"AUTH: FAIL {type(e).__name__}: {e}");return False
+ try:
+  s3=s.client("s3",config=cfg,endpoint_url=endpoint_url)
+  s3.head_bucket(Bucket=bucket)
+  out("S3: bucket access OK")
+ except Exception as e:
+  code=getattr(e,"response",{}).get("Error",{}).get("Code")
+  out(f"S3: bucket access FAIL code={code} err={type(e).__name__}: {e}")
+  if code in {"NoSuchBucket","404"}:out("HINT: bucket name wrong or in different partition/region (GovCloud vs commercial)")
+  if code in {"AccessDenied","403"}:out("HINT: auth OK but you lack permission to bucket")
+  return False
+ try:
+  meta=s3.head_object(Bucket=bucket,Key=key)
+  out(f"S3: object exists OK size={meta.get('ContentLength')} lastmod={meta.get('LastModified')}")
+ except Exception as e:
+  code=getattr(e,"response",{}).get("Error",{}).get("Code")
+  out(f"S3: object check FAIL code={code} err={type(e).__name__}: {e}")
+  if code in {"NoSuchKey","404"}:
+   out("HINT: key/path wrong (case-sensitive). Try listing the prefix:")
+   prefix=key.rsplit("/",1)[0]+"/" if "/" in key else ""
+   try:
+    resp=s3.list_objects_v2(Bucket=bucket,Prefix=prefix,MaxKeys=20)
+    names=[x["Key"] for x in resp.get("Contents",[])]
+    out(f"LIST: prefix='{prefix}' sample_keys={names[:10]}")
+   except Exception as e2:
+    out(f"LIST: FAIL {type(e2).__name__}: {e2}")
+  if code in {"AccessDenied","403"}:out("HINT: you can reach the bucket but lack s3:GetObject on this key")
+  return False
+ try:
+  t0=time.time()
+  obj=s3.get_object(Bucket=bucket,Key=key)
+  b=obj["Body"].read(1024)
+  obj["Body"].close()
+  out(f"STREAM: OK read {len(b)} bytes in {time.time()-t0:.2f}s")
+ except Exception as e:
+  out(f"STREAM: FAIL {type(e).__name__}: {e}")
+  out("HINT: if this hangs/timeouts, it's usually network/DNS/VPC endpoint/firewall, not auth/path")
+  return False
+ out("DONE: auth + path + basic read look good")
+ return True
