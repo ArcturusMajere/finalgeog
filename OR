@@ -1,3 +1,15 @@
 for c in df.select_dtypes(include="object"):
     if isinstance(df[c].dropna().iloc[0],bytes):
         df[c]=df[c].str.decode("utf-8",errors="ignore")
+
+
+import pyreadstat
+import pandas as pd
+
+def read_sas_to_pandas(path,encoding="utf-8"):
+    df,_=pyreadstat.read_sas7bdat(path,encoding=encoding)
+    for c in df.select_dtypes(include="object"):
+        if df[c].dropna().apply(lambda x:isinstance(x,bytes)).any():
+            df[c]=df[c].str.decode(encoding,errors="ignore")
+    return df
+
