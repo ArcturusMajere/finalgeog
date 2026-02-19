@@ -1,48 +1,8 @@
-
-import boto3,pandas as pd,io
-session=boto3.Session(aws_access_key_id="YOUR_ACCESS_KEY",aws_secret_access_key="YOUR_SECRET_KEY",region_name="us-east-1")
-s3=session.client("s3")
-obj=s3.get_object(Bucket="GOLD",Key="path/to/file.csv")
-df=pd.read_csv(io.BytesIO(obj["Body"].read()))
-df.head()
-
-import pandas as pd,s3fs
-fs=s3fs.S3FileSystem(key="YOUR_ACCESS_KEY",secret="YOUR_SECRET_KEY",client_kwargs={"region_name":"us-east-1"})
-with fs.open("GOLD/path/to/file.csv") as f:
- df=pd.read_csv(f)
-df.head()
-
-
-import boto3,botocore,time
-def aws_alerts(access_key,secret_key,region="us-east-1",token=None,bucket="GOLD",key="path/to/file.csv"):
- print("AWS: creating session...")
- s=boto3.Session(aws_access_key_id=access_key,aws_secret_access_key=secret_key,aws_session_token=token,region_name=region)
- print("AWS: session OK")
- c=s.client("sts",config=botocore.config.Config(connect_timeout=10,read_timeout=30,retries={"max_attempts":3,"mode":"standard"}))
- try:
-  ident=c.get_caller_identity()
-  print(f"AWS: auth OK | Account={ident.get('Account')} | Arn={ident.get('Arn')}")
- except Exception as e:
-  print(f"AWS: auth FAILED | {type(e).__name__}: {e}");raise
- s3=s.client("s3",config=botocore.config.Config(connect_timeout=10,read_timeout=120,retries={"max_attempts":5,"mode":"standard"}))
- try:
-  s3.head_bucket(Bucket=bucket)
-  print(f"S3: bucket access OK | {bucket}")
- except Exception as e:
-  print(f"S3: bucket access FAILED | {bucket} | {type(e).__name__}: {e}");raise
- try:
-  meta=s3.head_object(Bucket=bucket,Key=key)
-  print(f"S3: object access OK | s3://{bucket}/{key} | Size={meta.get('ContentLength')} bytes")
- except Exception as e:
-  print(f"S3: object access FAILED | s3://{bucket}/{key} | {type(e).__name__}: {e}");raise
- try:
-  t0=time.time()
-  obj=s3.get_object(Bucket=bucket,Key=key)
-  b=obj["Body"].read(1024*64)
-  obj["Body"].close()
-  dt=time.time()-t0
-  print(f"S3: streaming OK | first {len(b)} bytes read in {dt:.2f}s")
- except Exception as e:
-  print(f"S3: streaming FAILED | {type(e).__name__}: {e}");raise
- print("DONE: connection + permissions look good")
- return True
+import boto3
+s=boto3.Session(
+ aws_access_key_id="...",
+ aws_secret_access_key="...",
+ region_name="us-gov-east-1"
+)
+s3=s.client("s3")
+print([b["Name"] for b in s3.list_buckets()["Buckets"]])
