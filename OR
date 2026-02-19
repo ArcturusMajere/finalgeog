@@ -1,3 +1,32 @@
+import pandas as pd,matplotlib.pyplot as plt,numpy as np
+
+def plot_state_meei(df,state,time_col="YR_QTR",state_col="state_name",prefix="meei_pct_"):
+    d=df.copy()
+    d[state_col]=d[state_col].astype(str)
+    d[time_col]=d[time_col].astype(str).str.replace(r"\.0$","",regex=True)
+    pct_cols=[c for c in d.columns if c.startswith(prefix)]
+    d=d[d[state_col]==str(state)][[time_col]+pct_cols].groupby(time_col,as_index=False)[pct_cols].mean()
+    if d.empty:
+        raise ValueError(f"No rows for state_name={state}")
+    s=d[pct_cols].sum(axis=1)
+    if s.max()<=1.5:
+        d[pct_cols]=d[pct_cols]*100.0
+    d=d.sort_values(time_col).set_index(time_col)
+    ax=d[pct_cols].plot(kind="bar",stacked=True,figsize=(12,6),colormap="tab20")
+    ax.set_ylim(0,100)
+    ax.set_ylabel("meei_pct (adds to 100)")
+    ax.set_xlabel(time_col)
+    plt.xticks(rotation=45,ha="right")
+    plt.title(state)
+    plt.legend(title="Category",bbox_to_anchor=(1.02,1),loc="upper left")
+    plt.tight_layout()
+    plt.show()
+
+state=input("Enter state_name: ").strip()
+plot_state_meei(df,state)
+
+
+
 import pandas as pd,numpy as np,plotly.graph_objects as go,plotly.io as pio
 
 def meei_static_html(df,out_path="meei_stacked.html",state_col="state_name",time_col="YR_QTR",prefix="meei_pct_",title_prefix="MEEI % - "):
