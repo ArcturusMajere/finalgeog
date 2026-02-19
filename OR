@@ -1,19 +1,15 @@
-import numpy as np,pandas as pd,matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation,HTMLWriter
-
-def animated_stacked_bars_html(df,output_path="/mnt/data/stacked_meei.html",state_col="state_name",time_col="YR_QTR",prefix="meei_pct_",interval_ms=3000,figsize=(12,6)):
+def stacked_html(df,output_path="/stacked_meei.html",state_col="state_name",time_col="YR_QTR",prefix="meei_pct_",interval_ms=3000):
     d=df.copy()
     d[time_col]=d[time_col].astype(str).str.replace(r"\.0$","",regex=True)
     pct_cols=[c for c in d.columns if c.startswith(prefix)]
     d[state_col]=d[state_col].astype(str)
     states=sorted(d[state_col].dropna().unique())
     times=sorted(d[time_col].dropna().unique())
-    fig,ax=plt.subplots(figsize=figsize)
+    fig,ax=plt.subplots(figsize=(12,6))
     x=np.arange(len(states))
-    bars={c:ax.bar(x,np.zeros(len(states)),bottom=np.zeros(len(states)),label=c) for c in pct_cols}
+    bars={c:ax.bar(x,np.zeros(len(states)),bottom=np.zeros(len(states))) for c in pct_cols}
     ax.set_xticks(x)
     ax.set_xticklabels(states,rotation=45,ha="right")
-    ax.legend(loc="upper right",ncols=2,fontsize=9)
     title=ax.set_title("")
     def frame(i):
         t=times[i]
@@ -25,13 +21,9 @@ def animated_stacked_bars_html(df,output_path="/mnt/data/stacked_meei.html",stat
                 rect.set_height(v)
                 rect.set_y(b)
             bottom=bottom+vals
-        title.set_text(f"{time_col}={t}")
+        title.set_text(t)
         ax.set_ylim(0,max(1.0,float(np.nanmax(bottom))*1.05))
-        return [r for c in pct_cols for r in bars[c]]+[title]
+        return []
     ani=FuncAnimation(fig,frame,frames=len(times),interval=interval_ms,blit=False,repeat=True)
-    writer=HTMLWriter()
-    ani.save(output_path,writer=writer)
+    ani.save(output_path,writer=HTMLWriter())
     plt.close(fig)
-    return output_path
-
-print("Function ready. Call animated_stacked_bars_html(df) with your DataFrame.")
