@@ -1,1 +1,13 @@
 
+import boto3,pandas as pd,io
+session=boto3.Session(aws_access_key_id="YOUR_ACCESS_KEY",aws_secret_access_key="YOUR_SECRET_KEY",region_name="us-east-1")
+s3=session.client("s3")
+obj=s3.get_object(Bucket="GOLD",Key="path/to/file.csv")
+df=pd.read_csv(io.BytesIO(obj["Body"].read()))
+df.head()
+
+import pandas as pd,s3fs
+fs=s3fs.S3FileSystem(key="YOUR_ACCESS_KEY",secret="YOUR_SECRET_KEY",client_kwargs={"region_name":"us-east-1"})
+with fs.open("GOLD/path/to/file.csv") as f:
+ df=pd.read_csv(f)
+df.head()
