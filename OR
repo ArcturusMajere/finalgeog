@@ -1,19 +1,20 @@
-import pandas as pd
-from pathlib import Path
 
-def find_common_ids(folder_path,id_col="id"):
-    folder=Path(folder_path)
-    files=list(folder.glob("*.csv"))
-    if not files:
-        raise ValueError("No CSV files found")
-    common_ids=None
-    for file in files:
-        df=pd.read_csv(file,usecols=[id_col])
-        ids=set(df[id_col].dropna().astype(str))
-        if common_ids is None:
-            common_ids=ids
+
+def dupesum(df,id_col="id",wage_col="WAGE"):
+    if id_col not in df.columns:
+        raise ValueError(f"Missing column: {id_col}")
+    if wage_col not in df.columns:
+        raise ValueError(f"Missing column: {wage_col}")
+    df=df.copy()
+    df[wage_col]=pd.to_numeric(df[wage_col],errors="coerce").fillna(0)
+    agg={}
+    for c in df.columns:
+        if c==wage_col:
+            agg[c]="sum"
+        elif c==id_col:
+            agg[c]="first"
         else:
-            common_ids&=ids
-        if not common_ids:
-            break
-    return common_ids
+            agg[c]="first"
+    out=df.groupby(id_col,as_index=False).agg(agg)
+    return out
+dupesum(df,"ID","WAGE")
