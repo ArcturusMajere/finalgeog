@@ -1,12 +1,3 @@
-def sector_nm_j_counts(df):
-    out=(
-        df
-        .groupby("sector",as_index=False)
-        .agg(
-            In_NM=("NM","sum"),
-            Out_NM=("NM",lambda x:(~x).sum()),
-            In_J=("J","sum"),
-            Out_J=("J",lambda x:(~x).sum())
-        )
-    )
-    return out
+lst=list(map(str,arr))
+lst=[str(x) for x in arr.tolist()]
+lst=arr.astype(str).flatten().tolist()
