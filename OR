@@ -1,1 +1,4 @@
 
+def add_j_column(df, col_name, valid_list):
+    df["J"] = df[col_name].astype(str).isin(valid_list)
+    return df
