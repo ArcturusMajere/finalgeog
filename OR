@@ -1,3 +1,12 @@
-lst=list(map(str,arr))
-lst=[str(x) for x in arr.tolist()]
-lst=arr.astype(str).flatten().tolist()
+import pandas as pd
+import numpy as np
+
+def float_col_to_int_str(df,col):
+    df=df.copy()
+    df[col]=df[col].apply(
+        lambda x: "" if pd.isna(x) else str(int(float(x)))
+    )
+    return df
+
+
+df=float_col_to_int_str(df,"account_id")
