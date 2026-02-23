@@ -1,4 +1,12 @@
-
-def add_j_column(df, col_name, valid_list):
-    df["J"] = df[col_name].astype(str).isin(valid_list)
-    return df
+def sector_nm_j_counts(df):
+    out=(
+        df
+        .groupby("sector",as_index=False)
+        .agg(
+            In_NM=("NM","sum"),
+            Out_NM=("NM",lambda x:(~x).sum()),
+            In_J=("J","sum"),
+            Out_J=("J",lambda x:(~x).sum())
+        )
+    )
+    return out
