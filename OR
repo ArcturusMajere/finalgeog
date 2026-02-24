@@ -1,25 +1,4 @@
-import boto3
-
-s3=boto3.client(
- "s3",
- region_name="us-east-1",
- aws_access_key_id="AKIA...",
- aws_secret_access_key="...",
- aws_session_token="..." 
-)
-
-sts=boto3.client(
- "sts",
- region_name="us-east-1",
- aws_access_key_id="AKIA...",
- aws_secret_access_key="...",
- aws_session_token="..."
-)
-
-print(sts.get_caller_identity())
-
-s3.download_file(
- "my-bucket",
- "some/folder/file.csv",
- "file.csv"
-)
+python -m venv venv
+venv\Scripts\activate
+pip install notebook
+jupyter notebook
