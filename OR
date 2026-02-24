@@ -1,20 +1,25 @@
+import boto3
 
-julia -e 'using Pkg; Pkg.add.(["AWS","CSV","DataFrames"])'
+s3=boto3.client(
+ "s3",
+ region_name="us-east-1",
+ aws_access_key_id="AKIA...",
+ aws_secret_access_key="...",
+ aws_session_token="..." 
+)
 
+sts=boto3.client(
+ "sts",
+ region_name="us-east-1",
+ aws_access_key_id="AKIA...",
+ aws_secret_access_key="...",
+ aws_session_token="..."
+)
 
-using AWS,CSV,DataFrames
+print(sts.get_caller_identity())
 
-AWS.global_aws_config()
-
-bucket="your-bucket-name"
-key="path/to/file.csv"
-
-s3=AWS.S3Client()
-
-obj=AWS.s3_get_object(s3,bucket,key)
-
-data=String(obj.body)
-
-df=CSV.read(IOBuffer(data),DataFrame)
-
-first(df,5)
+s3.download_file(
+ "my-bucket",
+ "some/folder/file.csv",
+ "file.csv"
+)
