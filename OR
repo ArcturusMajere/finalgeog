@@ -1,2 +1,12 @@
 aws sts get-caller-identity
 aws configure list
+
+
+export AWS_SHARED_CREDENTIALS_FILE=/path/to/my_creds.txt
+aws s3 ls --profile work
+export AWS_PROFILE=work
+
+
+export AWS_ACCESS_KEY_ID=AKIA...
+export AWS_SECRET_ACCESS_KEY=xxxx...
+export AWS_SESSION_TOKEN=token   # if needed
