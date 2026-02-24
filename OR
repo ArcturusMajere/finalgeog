@@ -1,17 +1,20 @@
 
-import boto3
-import pandas as pd
-from io import StringIO
+julia -e 'using Pkg; Pkg.add.(["AWS","CSV","DataFrames"])'
 
-s3=boto3.client("s3")
+
+using AWS,CSV,DataFrames
+
+AWS.global_aws_config()
 
 bucket="your-bucket-name"
 key="path/to/file.csv"
 
-obj=s3.get_object(Bucket=bucket,Key=key)
+s3=AWS.S3Client()
 
-data=obj["Body"].read().decode("utf-8")
+obj=AWS.s3_get_object(s3,bucket,key)
 
-df=pd.read_csv(StringIO(data))
+data=String(obj.body)
 
-print(df.head())
+df=CSV.read(IOBuffer(data),DataFrame)
+
+first(df,5)
