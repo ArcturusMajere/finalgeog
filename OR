@@ -12,5 +12,8 @@ export AWS_SECRET_ACCESS_KEY=xxxx...
 export AWS_SESSION_TOKEN=token   # if needed
 
 
-g=(df.groupby(["category_1","category_2"],as_index=False)
-     .agg(wage_mean=("wage","mean"),hours_mean=("hours","mean"),n=("wage","size")))
+stats=(df.groupby(["category_1","category_2"],dropna=False)
+         .agg(id_count=("id","nunique"),wage_mean=("wage","mean"),hours_mean=("hours","mean"))
+         .reset_index())
+
+df2=df.merge(stats,on=["category_1","category_2"],how="left")
