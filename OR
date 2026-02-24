@@ -1,19 +1,36 @@
-aws sts get-caller-identity
-aws configure list
+aws sts get-caller-identity # verify credentials are valid and see active identity
+
+aws configure list # show where credentials and region are coming from
+
+aws configure list-profiles # list all configured AWS profiles
+
+aws sts get-caller-identity --profile myprofile # test a specific profile
+
+aws --version # check AWS CLI version
+
+aws s3 ls # test basic S3 connectivity
+
+aws s3 ls s3://my_bucket # test access to a specific bucket
+
+aws s3 ls s3://my_bucket/A.csv # test access to a specific file
+
+aws s3 cp s3://my_bucket/A.csv . # test download permission
+
+aws s3 ls --debug # show full authentication and network debug output
+
+aws configure get region # check configured region
+
+aws configure list --profile default # show full config for default profile
+
+env | grep AWS # check AWS environment variables (Linux/macOS)
+
+Get-ChildItem Env:AWS* # check AWS environment variables (Windows PowerShell)
 
 
-export AWS_SHARED_CREDENTIALS_FILE=/path/to/my_creds.txt
-aws s3 ls --profile work
-export AWS_PROFILE=work
 
-
-export AWS_ACCESS_KEY_ID=AKIA...
-export AWS_SECRET_ACCESS_KEY=xxxx...
-export AWS_SESSION_TOKEN=token   # if needed
-
-
-stats=(df.groupby(["category_1","category_2"],dropna=False)
-         .agg(id_count=("id","nunique"),wage_mean=("wage","mean"),hours_mean=("hours","mean"))
-         .reset_index())
-
-df2=df.merge(stats,on=["category_1","category_2"],how="left")
+ping s3.amazonaws.com # test basic network reachability
+curl https://s3.amazonaws.com # test HTTPS connectivity to S3
+nslookup s3.amazonaws.com # verify DNS resolution
+curl http://169.254.169.254/latest/meta-data/iam/info # check EC2 IAM role (if on EC2)
+aws ec2 describe-vpc-endpoints # check for private VPC endpoints
+aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::ACCOUNT:role/ROLE --action-names s3:GetObject # test IAM permission for S3
