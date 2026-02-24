@@ -10,3 +10,7 @@ export AWS_PROFILE=work
 export AWS_ACCESS_KEY_ID=AKIA...
 export AWS_SECRET_ACCESS_KEY=xxxx...
 export AWS_SESSION_TOKEN=token   # if needed
+
+
+g=(df.groupby(["category_1","category_2"],as_index=False)
+     .agg(wage_mean=("wage","mean"),hours_mean=("hours","mean"),n=("wage","size")))
