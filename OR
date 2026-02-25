@@ -1,169 +1,27 @@
-aws sts get-caller-identity # verify credentials are valid and see active identity
+import oracledb
+import pandas as pd
 
-aws configure list # show where credentials and region are coming from
-
-aws configure list-profiles # list all configured AWS profiles
-
-aws sts get-caller-identity --profile myprofile # test a specific profile
-
-aws --version # check AWS CLI version
-
-aws s3 ls # test basic S3 connectivity
-
-aws s3 ls s3://my_bucket # test access to a specific bucket
-
-aws s3 ls s3://my_bucket/A.csv # test access to a specific file
-
-aws s3 cp s3://my_bucket/A.csv . # test download permission
-
-aws s3 ls --debug # show full authentication and network debug output
-
-aws configure get region # check configured region
-
-aws configure list --profile default # show full config for default profile
-
-env | grep AWS # check AWS environment variables (Linux/macOS)
-
-Get-ChildItem Env:AWS* # check AWS environment variables (Windows PowerShell)
+def find_high_frequency_ids(conn, table_name):
+    query = f"""
+    SELECT
+        ID,
+        YR,
+        QTR,
+        COUNT(*) AS freq,
+        CASE
+            WHEN COUNT(*) >= 1000 THEN '1000+'
+            WHEN COUNT(*) >= 100 THEN '100+'
+            WHEN COUNT(*) >= 50 THEN '50+'
+            WHEN COUNT(*) >= 15 THEN '15+'
+        END AS freq_group
+    FROM {table_name}
+    GROUP BY ID, YR, QTR
+    HAVING COUNT(*) >= 15
+    ORDER BY freq DESC
+    """
+    return pd.read_sql(query, conn)
 
 
-
-ping s3.amazonaws.com # test basic network reachability
-curl https://s3.amazonaws.com # test HTTPS connectivity to S3
-nslookup s3.amazonaws.com # verify DNS resolution
-curl http://169.254.169.254/latest/meta-data/iam/info # check EC2 IAM role (if on EC2)
-aws ec2 describe-vpc-endpoints # check for private VPC endpoints
-aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::ACCOUNT:role/ROLE --action-names s3:GetObject # test IAM permission for S3
-
-
-import os,sys,subprocess,socket,ssl,json,time,urllib.request
-
-def _run(cmd,timeout=8):
- p=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=timeout)
- return {"cmd":" ".join(cmd),"rc":p.returncode,"out":p.stdout.strip(),"err":p.stderr.strip()}
-
-def _dns(host):
- r={"host":host,"addrs":[],"error":None}
- try:
-  infos=socket.getaddrinfo(host,443,proto=socket.IPPROTO_TCP)
-  r["addrs"]=sorted({i[4][0] for i in infos})
- except Exception as e:
-  r["error"]=str(e)
- return r
-
-def _tcp_tls(host,port=443,timeout=6,sni=None):
- r={"host":host,"port":port,"tcp":False,"tls":False,"cert_subject":None,"cert_issuer":None,"alpn":None,"error":None}
- try:
-  s=socket.create_connection((host,port),timeout=timeout)
-  r["tcp"]=True
-  ctx=ssl.create_default_context()
-  ss=ctx.wrap_socket(s,server_hostname=(sni or host))
-  r["tls"]=True
-  cert=ss.getpeercert()
-  r["cert_subject"]=cert.get("subject")
-  r["cert_issuer"]=cert.get("issuer")
-  r["alpn"]=ss.selected_alpn_protocol()
-  ss.close()
- except Exception as e:
-  r["error"]=str(e)
- return r
-
-def _http_head(url,timeout=8):
- r={"url":url,"ok":False,"status":None,"headers":None,"error":None}
- try:
-  req=urllib.request.Request(url,method="HEAD")
-  with urllib.request.urlopen(req,timeout=timeout) as resp:
-   r["ok"]=True
-   r["status"]=getattr(resp,"status",None)
-   r["headers"]=dict(resp.headers.items())
- except Exception as e:
-  r["error"]=str(e)
- return r
-
-def diagnose_s3(bucket=None,region=None,profile=None,access_key=None,secret_key=None,session_token=None,endpoint_mode="auto",timeout=6):
- t0=time.time()
- out={"started_utc":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),"env":{},"checks":{},"aws":{},"hints":[]}
- out["env"]={"hostname":socket.gethostname(),"user":os.getenv("USER"),"http_proxy":os.getenv("http_proxy") or os.getenv("HTTP_PROXY"),"https_proxy":os.getenv("https_proxy") or os.getenv("HTTPS_PROXY"),"no_proxy":os.getenv("no_proxy") or os.getenv("NO_PROXY")}
- out["checks"]["ip_route"]=None
- for c in (["ip","route"],["ip","r"]):
-  try:
-   out["checks"]["ip_route"]=_run(c,timeout=4);break
-  except Exception:
-   pass
- out["checks"]["resolv_conf"]=_run(["bash","-lc","sed -n '1,120p' /etc/resolv.conf"],timeout=4)
- out["checks"]["nsswitch_conf"]=_run(["bash","-lc","sed -n '1,120p' /etc/nsswitch.conf"],timeout=4)
- targets=[]
- if endpoint_mode=="auto":
-  targets=["sts.amazonaws.com","s3.amazonaws.com"]
-  if region:targets.append(f"s3.{region}.amazonaws.com")
- else:
-  targets=[endpoint_mode]
- out["checks"]["dns"]=[_dns(h) for h in targets]
- out["checks"]["tcp_tls"]=[_tcp_tls(h,443,timeout=timeout) for h in targets]
- out["checks"]["http_head"]=[_http_head("https://"+h+"/",timeout=timeout) for h in targets]
- out["aws"]["boto3_available"]=False
- try:
-  import boto3
-  import botocore
-  out["aws"]["boto3_available"]=True
-  sess_kwargs={}
-  if profile:sess_kwargs["profile_name"]=profile
-  if any([access_key,secret_key,session_token]):
-   os.environ["AWS_ACCESS_KEY_ID"]=access_key or ""
-   os.environ["AWS_SECRET_ACCESS_KEY"]=secret_key or ""
-   if session_token:os.environ["AWS_SESSION_TOKEN"]=session_token
-  s=boto3.session.Session(**sess_kwargs)
-  cfg=botocore.config.Config(connect_timeout=timeout,read_timeout=timeout,retries={"max_attempts":2})
-  sts=s.client("sts",region_name=region,config=cfg)
-  try:
-   out["aws"]["caller_identity"]=sts.get_caller_identity()
-  except Exception as e:
-   out["aws"]["caller_identity_error"]=str(e)
-  s3=s.client("s3",region_name=region,config=cfg)
-  if bucket:
-   try:
-    out["aws"]["head_bucket"]=s3.head_bucket(Bucket=bucket)
-   except Exception as e:
-    out["aws"]["head_bucket_error"]=str(e)
-   if region:
-    try:
-     out["aws"]["get_bucket_location"]=s3.get_bucket_location(Bucket=bucket)
-    except Exception as e:
-     out["aws"]["get_bucket_location_error"]=str(e)
-  else:
-   try:
-    out["aws"]["list_buckets"]=s3.list_buckets()
-    out["aws"]["list_buckets_count"]=len(out["aws"]["list_buckets"].get("Buckets",[]))
-   except Exception as e:
-    out["aws"]["list_buckets_error"]=str(e)
- except Exception as e:
-  out["aws"]["boto3_error"]=str(e)
- out["elapsed_s"]=round(time.time()-t0,3)
- errs=[]
- for x in out["checks"]["dns"]:
-  if x.get("error"):errs.append(("dns",x["host"],x["error"]))
- for x in out["checks"]["tcp_tls"]:
-  if x.get("error"):errs.append(("tcp_tls",x["host"],x["error"]))
- if out["aws"].get("caller_identity_error"):errs.append(("sts","caller_identity",out["aws"]["caller_identity_error"]))
- if out["aws"].get("list_buckets_error"):errs.append(("s3","list_buckets",out["aws"]["list_buckets_error"]))
- if out["aws"].get("head_bucket_error"):errs.append(("s3","head_bucket",out["aws"]["head_bucket_error"]))
- if any("Name or service not known" in e[2] or "Temporary failure in name resolution" in e[2] for e in errs):
-  out["hints"].append("DNS resolution is failing. Check /etc/resolv.conf, corporate DNS, or outbound UDP/TCP 53 to resolvers.")
- if any("timed out" in e[2].lower() for e in errs):
-  out["hints"].append("Network timeout: likely outbound 443 blocked or SSL inspection/proxy required. Check if you must use an HTTPS proxy, or allowlist AWS endpoints.")
- if any("CERTIFICATE_VERIFY_FAILED" in e[2] for e in errs):
-  out["hints"].append("TLS MITM/inspection likely. Install corporate root CA into system trust store, or configure AWS SDK to use that trust store.")
- if any("Proxy" in e[2] or "proxy" in e[2] for e in errs):
-  out["hints"].append("Proxy error: ensure https_proxy is set correctly and NO_PROXY includes instance metadata (169.254.169.254) if you use IAM roles.")
- if any("Could not connect to the endpoint URL" in e[2] for e in errs):
-  out["hints"].append("AWS SDK can't reach AWS endpoints. Corporate firewall may require allowlisting or VPC endpoints (if in AWS) or a proxy.")
- if any("InvalidAccessKeyId" in e[2] or "SignatureDoesNotMatch" in e[2] or "ExpiredToken" in e[2] for e in errs):
-  out["hints"].append("Credentials issue: verify AWS keys/session token, clock skew (NTP), and correct region for signing.")
- return out
-
-if __name__=="__main__":
- bucket=os.getenv("S3_BUCKET")
- region=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
- profile=os.getenv("AWS_PROFILE")
- r=diagnose_s3(bucket=bucket,region=region,profile=profile)
- print(json.dumps(r,indent=2,sort_keys=True))
+conn = oracledb.connect(user="user",password="pw",dsn="dsn")
+df = find_high_frequency_ids(conn,"WAGE_TABLE")
+print(df.head())
