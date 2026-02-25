@@ -1,23 +1,29 @@
+import oracledb
+import pandas as pd
 
+def fetch_ids_by_yr_qtr(conn, table_name, id_list, yr, qtr, batch_size=1000):
+    if not id_list:
+        return pd.DataFrame()
 
-def find_high_frequency_ids(conn, table_name, yr, qtr):
-    query = f"""
-    SELECT
-        ID,
-        YR,
-        QTR,
-        COUNT(*) AS freq,
-        CASE
-            WHEN COUNT(*) >= 1000 THEN '1000+'
-            WHEN COUNT(*) >= 100 THEN '100+'
-            WHEN COUNT(*) >= 50 THEN '50+'
-            WHEN COUNT(*) >= 15 THEN '15+'
-        END AS freq_group
-    FROM {table_name}
-    WHERE YR = :yr
-      AND QTR = :qtr
-    GROUP BY ID, YR, QTR
-    HAVING COUNT(*) >= 15
-    ORDER BY freq DESC
-    """
-    return pd.read_sql(query, conn, params={"yr": yr, "qtr": qtr})
+    results = []
+
+    for i in range(0, len(id_list), batch_size):
+        batch = id_list[i:i + batch_size]
+
+        bind_names = ",".join(f":id{i}" for i in range(len(batch)))
+
+        query = f"""
+        SELECT *
+        FROM {table_name}
+        WHERE YR = :yr
+          AND QTR = :qtr
+          AND ID IN ({bind_names})
+        """
+
+        params = {"yr": yr, "qtr": qtr}
+        params.update({f"id{i}": str(v) for i, v in enumerate(batch)})
+
+        df = pd.read_sql(query, conn, params=params)
+        results.append(df)
+
+    return pd.concat(results, ignore_index=True)
