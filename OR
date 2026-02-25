@@ -1,29 +1,64 @@
 import oracledb
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 
-def fetch_ids_by_yr_qtr(conn, table_name, id_list, yr, qtr, batch_size=1000):
-    if not id_list:
-        return pd.DataFrame()
-
-    results = []
-
-    for i in range(0, len(id_list), batch_size):
-        batch = id_list[i:i + batch_size]
-
-        bind_names = ",".join(f":id{i}" for i in range(len(batch)))
-
-        query = f"""
-        SELECT *
+def id_frequency_distribution(conn, table_name, yr, qtr):
+    query = f"""
+    WITH freq_counts AS (
+        SELECT ID, COUNT(*) AS freq
         FROM {table_name}
-        WHERE YR = :yr
-          AND QTR = :qtr
-          AND ID IN ({bind_names})
-        """
+        WHERE YR = :yr AND QTR = :qtr
+        GROUP BY ID
+    )
+    SELECT
+        freq,
+        COUNT(*) AS num_ids,
+        COUNT(*) * 1.0 / SUM(COUNT(*)) OVER () AS probability
+    FROM freq_counts
+    GROUP BY freq
+    ORDER BY freq
+    """
+    return pd.read_sql(query, conn, params={"yr": yr, "qtr": qtr})
 
-        params = {"yr": yr, "qtr": qtr}
-        params.update({f"id{i}": str(v) for i, v in enumerate(batch)})
+def shannon_entropy(p):
+    p = np.array(p)
+    p = p[p > 0]
+    return -np.sum(p * np.log2(p))
 
-        df = pd.read_sql(query, conn, params=params)
-        results.append(df)
+def gini_coefficient(x):
+    x = np.array(x)
+    if np.amin(x) < 0:
+        x -= np.amin(x)
+    x += 1e-9
+    x = np.sort(x)
+    n = len(x)
+    index = np.arange(1, n + 1)
+    return (2 * np.sum(index * x)) / (n * np.sum(x)) - (n + 1) / n
 
-    return pd.concat(results, ignore_index=True)
+def analyze_id_distribution(conn, table_name, yr, qtr):
+    df = id_frequency_distribution(conn, table_name, yr, qtr)
+
+    entropy = shannon_entropy(df["probability"])
+    gini = gini_coefficient(df["num_ids"])
+
+    plt.figure()
+    plt.loglog(df["freq"], df["probability"], marker="o")
+    plt.xlabel("ID Frequency (log scale)")
+    plt.ylabel("Probability (log scale)")
+    plt.title(f"ID Frequency Distribution: {yr} Q{qtr}")
+    plt.grid(True, which="both")
+    plt.show()
+
+    return {
+        "entropy": entropy,
+        "gini": gini,
+        "distribution": df
+    }
+
+# Example (requires active Oracle connection)
+# conn = oracledb.connect(user="user", password="pw", dsn="dsn")
+# result = analyze_id_distribution(conn, "WAGE_TABLE", 2024, 4)
+# print("Entropy:", result["entropy"])
+# print("Gini:", result["gini"])
+
