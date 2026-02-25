@@ -1,7 +1,6 @@
-import oracledb
-import pandas as pd
 
-def find_high_frequency_ids(conn, table_name):
+
+def find_high_frequency_ids(conn, table_name, yr, qtr):
     query = f"""
     SELECT
         ID,
@@ -15,13 +14,10 @@ def find_high_frequency_ids(conn, table_name):
             WHEN COUNT(*) >= 15 THEN '15+'
         END AS freq_group
     FROM {table_name}
+    WHERE YR = :yr
+      AND QTR = :qtr
     GROUP BY ID, YR, QTR
     HAVING COUNT(*) >= 15
     ORDER BY freq DESC
     """
-    return pd.read_sql(query, conn)
-
-
-conn = oracledb.connect(user="user",password="pw",dsn="dsn")
-df = find_high_frequency_ids(conn,"WAGE_TABLE")
-print(df.head())
+    return pd.read_sql(query, conn, params={"yr": yr, "qtr": qtr})
