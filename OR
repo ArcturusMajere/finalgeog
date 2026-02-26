@@ -1,1 +1,4 @@
 
+echo 'export HTTPS_PROXY=http://XYZ:8080' >> ~/.bashrc
+echo 'export HTTP_PROXY=http://XYZ:8080' >> ~/.bashrc
+echo 'export NO_PROXY=localhost,127.0.0.1' >> ~/.bashrc
