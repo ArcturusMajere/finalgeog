@@ -16,3 +16,17 @@ def add_group_column(df, lookup_df):
     lookup_df['ID'] = lookup_df['ID'].astype(str)
     lookup_df = lookup_df[['ID','group']].drop_duplicates()
     return df.merge(lookup_df, on='ID', how='left')
+
+
+def add_group_column(df, lookup_df):
+    if 'ID' not in df.columns:
+        raise ValueError("df must contain 'ID'")
+    if 'temp' not in lookup_df.columns or 'group' not in lookup_df.columns:
+        raise ValueError("lookup_df must contain 'temp' and 'group'")
+    df = df.copy()
+    lookup_df = lookup_df.copy()
+    df['ID'] = df['ID'].astype(str)
+    lookup_df['temp'] = lookup_df['temp'].astype(str)
+    mapper = lookup_df.drop_duplicates('temp').set_index('temp')['group']
+    df['group'] = df['ID'].map(mapper)
+    return df
