@@ -1,4 +1,23 @@
+def add_group_column(df, lookup_df):
+    if 'ID' not in df.columns:
+        raise ValueError("df must contain 'ID'")
+    if not {'ID','group'}.issubset(lookup_df.columns):
+        raise ValueError("lookup_df must contain 'ID' and 'group'")
+    df = df.copy()
+    lookup_df = lookup_df.copy()
+    df['ID'] = df['ID'].astype(str)
+    lookup_df['ID'] = lookup_df['ID'].astype(str)
+    mapper = lookup_df.drop_duplicates('ID').set_index('ID')['group']
+    df['group'] = df['ID'].map(mapper)
+    return df
 
-echo 'export HTTPS_PROXY=http://XYZ:8080' >> ~/.bashrc
-echo 'export HTTP_PROXY=http://XYZ:8080' >> ~/.bashrc
-echo 'export NO_PROXY=localhost,127.0.0.1' >> ~/.bashrc
+
+def add_group_column(df, lookup_df):
+    if 'ID' not in df.columns:
+        raise ValueError("df must contain 'ID'")
+    if not {'ID','group'}.issubset(lookup_df.columns):
+        raise ValueError("lookup_df must contain 'ID' and 'group'")
+    mapper = lookup_df.drop_duplicates('ID').set_index('ID')['group']
+    df = df.copy()
+    df['group'] = df['ID'].map(mapper)
+    return df
