@@ -11,14 +11,8 @@ def split_by_group(df, group_value):
 df_a, df_not_a = split_by_group(df, 'A')
 
 
-def split_into_two_groups(df):
-    if 'group' not in df.columns:
-        raise ValueError("df must contain 'group'")
-    df = df.copy()
-    df['group'] = df['group'].astype(str)
-    groups = df['group'].dropna().unique()
-    if len(groups) != 2:
-        raise ValueError("There must be exactly two unique group values")
-    df1 = df[df['group'] == groups[0]].copy()
-    df2 = df[df['group'] == groups[1]].copy()
-    return df1, df2
+def add_group_column(df, lookup_df):
+    df['ID'] = df['ID'].astype(str)
+    lookup_df['ID'] = lookup_df['ID'].astype(str)
+    lookup_df = lookup_df[['ID','group']].drop_duplicates()
+    return df.merge(lookup_df, on='ID', how='left')
