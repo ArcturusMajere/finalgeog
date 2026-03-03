@@ -1,32 +1,17 @@
-def split_by_group(df, group_value):
-    if 'group' not in df.columns:
-        raise ValueError("df must contain 'group'")
-    df = df.copy()
-    group_value = str(group_value)
-    df['group'] = df['group'].astype(str)
-    df_group = df[df['group'] == group_value].copy()
-    df_other = df[df['group'] != group_value].copy()
-    return df_group, df_other
+import pandas as pd
 
-df_a, df_not_a = split_by_group(df, 'A')
-
-
-def add_group_column(df, lookup_df):
-    df['ID'] = df['ID'].astype(str)
-    lookup_df['ID'] = lookup_df['ID'].astype(str)
-    lookup_df = lookup_df[['ID','group']].drop_duplicates()
-    return df.merge(lookup_df, on='ID', how='left')
-
-
-def add_group_column(df, lookup_df):
-    if 'ID' not in df.columns:
-        raise ValueError("df must contain 'ID'")
-    if 'temp' not in lookup_df.columns or 'group' not in lookup_df.columns:
-        raise ValueError("lookup_df must contain 'temp' and 'group'")
-    df = df.copy()
-    lookup_df = lookup_df.copy()
-    df['ID'] = df['ID'].astype(str)
-    lookup_df['temp'] = lookup_df['temp'].astype(str)
-    mapper = lookup_df.drop_duplicates('temp').set_index('temp')['group']
-    df['group'] = df['ID'].map(mapper)
-    return df
+def summary_report(df):
+    req={'yr_qtr','WAGE','naics2','ID'}
+    if not req.issubset(df.columns):
+        raise ValueError(f"Missing columns: {req-set(df.columns)}")
+    return (
+        df.groupby('yr_qtr')
+          .apply(lambda x: pd.Series({
+              'total_records':len(x),
+              'zero_wage_count':(x['WAGE']==0).sum(),
+              'na_naics2_count':x['naics2'].isna().sum(),
+              'duplicate_id_count':x['ID'].duplicated().sum()
+          }))
+          .reset_index()
+          .sort_values('yr_qtr')
+    )
