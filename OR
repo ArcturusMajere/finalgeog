@@ -12,3 +12,31 @@ pip install notebook ipykernel
 python -m ipykernel install --user --name johnny --display-name "Python (johnny)"
 
 jupyter notebook --no-browser --ip=127.0.0.1 --port=8888
+
+
+
+
+# switch to bash if you logged in under ksh
+bash
+
+# set proxy so pip can access the internet
+export HTTPS_PROXY=http://proxy.host:port
+export HTTP_PROXY=http://proxy.host:port
+export NO_PROXY=localhost,127.0.0.1
+
+# ensure user-local python binaries are in PATH
+export PATH=$HOME/.local/bin:$PATH
+
+# install jupyter notebook and kernel in your home directory (no sudo required)
+pip3 install --user notebook ipykernel
+
+# start the notebook server on the EC2 machine (no browser since it's remote)
+jupyter notebook --no-browser --ip=127.0.0.1 --port=8888
+
+# open another terminal on your local machine and create an SSH tunnel
+# this forwards your laptop port 8888 to the EC2 notebook server
+ssh -L 8888:localhost:8888 user@ec2-host
+
+# then open your browser locally and go to
+# http://localhost:8888
+# use the token printed when the notebook server started
