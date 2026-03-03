@@ -1,17 +1,1 @@
-import pandas as pd
 
-def summary_report(df):
-    req={'yr_qtr','WAGE','naics2','ID'}
-    if not req.issubset(df.columns):
-        raise ValueError(f"Missing columns: {req-set(df.columns)}")
-    return (
-        df.groupby('yr_qtr')
-          .apply(lambda x: pd.Series({
-              'total_records':len(x),
-              'zero_wage_count':(x['WAGE']==0).sum(),
-              'na_naics2_count':x['naics2'].isna().sum(),
-              'duplicate_id_count':x['ID'].duplicated().sum()
-          }))
-          .reset_index()
-          .sort_values('yr_qtr')
-    )
