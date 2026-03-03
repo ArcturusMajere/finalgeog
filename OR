@@ -1,11 +1,6 @@
-
 import pandas as pd
 
-def read_xlsx_with_sheet_column(path):
-    sheets=pd.read_excel(path,sheet_name=None)
-    frames=[]
-    for name,df in sheets.items():
-        df=df.copy()
-        df['sheet_name']=name
-        frames.append(df)
-    return pd.concat(frames,ignore_index=True)
+def combine_categories(df):
+    cat=df[['CATEGORY_1','CATEGORY_2','CATEGORY_3']].stack().reset_index(level=1,drop=True)
+    df_long=df.drop(columns=['CATEGORY_1','CATEGORY_2','CATEGORY_3']).join(cat.rename('CAT'))
+    return df_long.reset_index(drop=True)
