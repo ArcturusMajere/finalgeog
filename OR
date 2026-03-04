@@ -1,42 +1,103 @@
-bash
-export HTTPS_PROXY=http://proxy.host:port
-export HTTP_PROXY=http://proxy.host:port
-export NO_PROXY=localhost,127.0.0.1
+def longest_ui_run(df,id_col='ID',time_col='yr_qtr',ui_col='UI',ids=None,sort_time=True):
+ import pandas as pd, numpy as np
+ d=df[[id_col,time_col,ui_col]].copy()
+ d[time_col]=d[time_col].astype(str)
+ if ids is not None: d=d[d[id_col].isin(ids)]
+ if sort_time:
+  try:
+   d['_t']=pd.PeriodIndex(d[time_col].str.replace('Q','Q',regex=False),freq='Q')
+  except Exception:
+   d['_t']=d[time_col]
+  d=d.sort_values([id_col,'_t'])
+ else:
+  d=d.sort_values([id_col,time_col])
+ same=(d[ui_col].eq(d.groupby(id_col)[ui_col].shift())).astype(int)
+ grp=d.groupby(id_col).cumcount()
+ run_id=(same==0).groupby(d[id_col]).cumsum()
+ run_len=d.groupby([id_col,run_id]).size().rename('run_len')
+ idx=run_len.groupby(level=0).idxmax()
+ best=run_len.loc[idx].reset_index(level=1,drop=True).reset_index()
+ best=best.rename(columns={0:'longest_run'})
+ starts=d.groupby([id_col,run_id]).head(1)[[id_col,time_col,ui_col]]
+ ends=d.groupby([id_col,run_id]).tail(1)[[id_col,time_col,ui_col]]
+ se=starts.merge(ends,on=[id_col,ui_col],suffixes=('_start','_end'))
+ se['run_id']=run_id.groupby([id_col,run_id]).ngroup().values if len(se)==len(run_len) else se.get('run_id',np.nan)
+ out=best.merge(se,how='left',on=id_col)
+ out=out[[id_col,ui_col,time_col+'_start',time_col+'_end','longest_run']]
+ return out.sort_values('longest_run',ascending=False).reset_index(drop=True)
 
-python3 -m venv ~/johnny
-. ~/johnny/bin/activate
 
-pip install --upgrade pip
-pip install notebook ipykernel
+def longest_ui_run(df,id_col='ID',time_col='yr_qtr',ui_col='UI',ids=None,top_n=None):
+ import pandas as pd
+ d=df[[id_col,time_col,ui_col]].copy()
+ if ids is not None: d=d[d[id_col].isin(ids)]
+ d[time_col]=d[time_col].astype(str)
+ try: d['_t']=pd.PeriodIndex(d[time_col],freq='Q')
+ except Exception:
+  try:
+   s=d[time_col].str.replace('-Q','Q',regex=False).str.replace(' ','',regex=False)
+   d['_t']=pd.PeriodIndex(s,freq='Q')
+  except Exception: d['_t']=d[time_col]
+ d=d.sort_values([id_col,'_t'])
+ prev=d.groupby(id_col)[ui_col].shift()
+ newrun=(d[ui_col]!=prev).groupby(d[id_col]).cumsum()
+ g=d.groupby([id_col,newrun],sort=False)
+ runs=g.agg(ui=(ui_col,'first'),start=(time_col,'first'),end=(time_col,'last'),run_len=(ui_col,'size')).reset_index(drop=True)
+ idx=runs.groupby(id_col)['run_len'].idxmax()
+ best=runs.loc[idx].reset_index(drop=True).rename(columns={'ui':ui_col})
+ best=best[[id_col,ui_col,'start','end','run_len']].sort_values('run_len',ascending=False).reset_index(drop=True)
+ if top_n is not None: best=best.head(int(top_n)).reset_index(drop=True)
+ return best,runs,d
 
-python -m ipykernel install --user --name johnny --display-name "Python (johnny)"
+def viz_longest_ui_bar(best,id_col='ID',ui_col='UI',n=30,figsize=None):
+ import matplotlib.pyplot as plt
+ b=best.head(int(n)).copy()
+ if figsize is None: figsize=(max(8,len(b)*0.35),4.5)
+ labels=b[id_col].astype(str)+' | '+b[ui_col].astype(str)
+ plt.figure(figsize=figsize)
+ plt.bar(range(len(b)),b['run_len'].values)
+ plt.xticks(range(len(b)),labels,rotation=90)
+ plt.ylabel('Longest run length')
+ plt.title('Longest same-UI run per ID (top)')
+ plt.tight_layout()
+ plt.show()
 
-jupyter notebook --no-browser --ip=127.0.0.1 --port=8888
+def viz_ui_timeline(df,id_col='ID',time_col='yr_qtr',ui_col='UI',ids,n=None,figsize=None):
+ import pandas as pd, numpy as np, matplotlib.pyplot as plt
+ d=df[[id_col,time_col,ui_col]].copy()
+ d=d[d[id_col].isin(ids)]
+ d[time_col]=d[time_col].astype(str)
+ try: d['_t']=pd.PeriodIndex(d[time_col],freq='Q')
+ except Exception:
+  try:
+   s=d[time_col].str.replace('-Q','Q',regex=False).str.replace(' ','',regex=False)
+   d['_t']=pd.PeriodIndex(s,freq='Q')
+  except Exception: d['_t']=d[time_col]
+ d=d.sort_values([id_col,'_t'])
+ order=list(pd.Index(ids))
+ if n is not None: order=order[:int(n)]
+ uis=pd.Index(d[ui_col].astype(str).unique())
+ m={u:i for i,u in enumerate(uis)}
+ if figsize is None: figsize=(10,max(3,0.45*len(order)+1.2))
+ fig,ax=plt.subplots(figsize=figsize)
+ for yi,idv in enumerate(order):
+  s=d[d[id_col]==idv][['_t',ui_col]].copy()
+  if s.empty: continue
+  s['_x']=np.arange(len(s))
+  s['_c']=s[ui_col].astype(str).map(m).fillna(-1).astype(int)
+  start=0
+  for i in range(1,len(s)+1):
+   if i==len(s) or s['_c'].iat[i]!=s['_c'].iat[start]:
+    ax.broken_barh([(start,i-start)],(yi-0.35,0.7),facecolors=plt.cm.tab20(s['_c'].iat[start]%20))
+    start=i
+ ax.set_yticks(range(len(order)))
+ ax.set_yticklabels([str(x) for x in order])
+ ax.set_xlabel('Quarter index (ordered)')
+ ax.set_title('UI timeline by ID (segment = constant UI)')
+ plt.tight_layout()
+ plt.show()
 
 
-
-
-# switch to bash if you logged in under ksh
-bash
-
-# set proxy so pip can access the internet
-export HTTPS_PROXY=http://proxy.host:port
-export HTTP_PROXY=http://proxy.host:port
-export NO_PROXY=localhost,127.0.0.1
-
-# ensure user-local python binaries are in PATH
-export PATH=$HOME/.local/bin:$PATH
-
-# install jupyter notebook and kernel in your home directory (no sudo required)
-pip3 install --user notebook ipykernel
-
-# start the notebook server on the EC2 machine (no browser since it's remote)
-jupyter notebook --no-browser --ip=127.0.0.1 --port=8888
-
-# open another terminal on your local machine and create an SSH tunnel
-# this forwards your laptop port 8888 to the EC2 notebook server
-ssh -L 8888:localhost:8888 user@ec2-host
-
-# then open your browser locally and go to
-# http://localhost:8888
-# use the token printed when the notebook server started
+best,runs,d=longest_ui_run(df,id_col='ID',time_col='yr_qtr',ui_col='UI')
+viz_longest_ui_bar(best,id_col='ID',ui_col='UI',n=40)
+viz_ui_timeline(df,id_col='ID',time_col='yr_qtr',ui_col='UI',ids=best['ID'].head(25).tolist())
