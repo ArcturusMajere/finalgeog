@@ -1,4 +1,19 @@
+How to run (examples)
+Local Parquet input (recommended):
+python bed_sa.py --path /cpslaus/D6/BED --input-file /cpslaus/D6/BED/data/sizecalss_nsa.parquet --input-format parquet --eyr 2025 --eqtr 4
 
+Local CSV input:
+python bed_sa.py --path /cpslaus/D6/BED --input-file /cpslaus/D6/BED/data/sizecalss_nsa.csv --input-format csv --eyr 2025 --eqtr 1
+
+Oracle mode (requires SQLAlchemy + oracledb / cx_Oracle driver):
+python bed_sa.py --path /cpslaus/D6/BED --database oracle --input-file dummy --eyr 2025 --eqtr 4 --oracle-user USER --oracle-password PASS --oracle-dsn HOST:PORT/SERVICE --oracle-table SCHEMA.TABLE
+
+Notes on matching SAS behavior
+The SAS code only merges in unadjusted “n” for the last observation window (either just eyr/eqtr when eqtr>=2, or the 5-year window when eqtr==1). The script does the same by merging u_last only.
+The filter logic on s10/s11 is copied exactly, including the “drop first quarter of eyr-5 when eqtr==1” rule.
+Rounding is to 6 decimals (Python round(...,6)), matching round(x,0.000001).
+
+If you paste a couple lines of your actual sid.txt and the header + one row of parms.txt, I can adjust read_sids() and read_parms() to match your exact file formats without changing the rest of the pipeline.
 import argparse,datetime,os,subprocess,sys
 from pathlib import Path
 import pandas as pd
