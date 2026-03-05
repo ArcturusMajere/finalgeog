@@ -114,3 +114,19 @@ If you want, I can also show you the **closest Python equivalent of a PROC SSM m
 [3]: https://github.com/rlabbe/filterpy?utm_source=chatgpt.com "rlabbe/filterpy: Python Kalman filtering and optimal ..."
 [4]: https://pypi.org/project/state-space/?utm_source=chatgpt.com "state-space"
 [5]: https://en.wikipedia.org/wiki/Gekko_%28optimization_software%29?utm_source=chatgpt.com "Gekko (optimization software)"
+
+
+
+R packages, ordered by similarity to PROC SSM
+
+KFAS
+Closest overall match to PROC SSM’s “structural components + Kalman filter/smoother + diffuse initialization + likelihood-based fitting,” and it also supports non-Gaussian observation families.
+
+dlm
+Very SAS-like for linear Gaussian state space models: maximum likelihood, Kalman filtering/smoothing, and Bayesian analysis for dynamic linear models.
+
+MARSS
+Best if your PROC SSM use is multivariate / constrained multivariate models. It’s explicitly maximum-likelihood estimation for multivariate autoregressive state-space models, with multiple fitting approaches (EM, BFGS, TMB companion).
+
+bsts
+If you want a Bayesian structural time series workflow (components like local level/trend/seasonal/regression) rather than classical MLE. Conceptually close, but inference style differs from PROC SSM.
