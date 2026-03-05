@@ -1,7 +1,6 @@
-install.packages(c("seasonal","x13binary","data.table"))
-library(seasonal)
-library(x13binary)
-library(data.table)
+pkgs=c("seasonal","x13binary","data.table")
+install.packages(setdiff(pkgs,rownames(installed.packages())))
+invisible(lapply(pkgs,library,character.only=TRUE))
 
 x13_check <- function(){
 # Use: call once at the top of a session to confirm X-13 is available.
