@@ -1,1 +1,8 @@
 
+--path /cpslaus/D6/BED
+--input-file /cpslaus/D6/BED/data/sizeclass_nsa.parquet
+--eyr 2025
+--eqtr 1
+--sid-file /cpslaus/D6/BED/sid.txt
+--parms-file /cpslaus/D6/BED/parms.txt
+--outdir /cpslaus/D6/BED/output
