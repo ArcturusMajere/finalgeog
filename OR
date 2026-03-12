@@ -1,27 +1,28 @@
+import pandas as pd
 import oracledb
 
-def get_hojo_records(conn, yr, qtr, cohort):
+def get_hojo_records(conn,yr,qtr,cohort):
     if not cohort:
-        return []
+        return pd.DataFrame()
 
-    bind_vars = ",".join([f":id{i}" for i in range(len(cohort))])
+    bind_vars=",".join([f":id{i}" for i in range(len(cohort))])
 
-    sql = f"""
+    sql=f"""
     SELECT *
     FROM HOJO
-    WHERE yr = :yr
-    AND qtr = :qtr
-    AND WAGE > 0
+    WHERE yr=:yr
+    AND qtr=:qtr
+    AND WAGE>0
     AND FUND_ID IN ({bind_vars})
     """
 
-    binds = {"yr": yr, "qtr": qtr}
-    binds.update({f"id{i}": v for i, v in enumerate(cohort)})
+    binds={"yr":yr,"qtr":qtr}
+    binds.update({f"id{i}":v for i,v in enumerate(cohort)})
 
     with conn.cursor() as cur:
-        cur.execute(sql, binds)
+        cur.execute(sql,binds)
         cols=[c[0].lower() for c in cur.description]
         rows=cur.fetchall()
 
-    result=[dict(zip(cols,r)) for r in rows]
-    return result
+    df=pd.DataFrame(rows,columns=cols)
+    return df
