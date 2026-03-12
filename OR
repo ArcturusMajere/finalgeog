@@ -1,1 +1,13 @@
 
+
+def track_four_cohorts(years,qtrs,l,m,h,t,max_threads):
+    cohorts={"l":l,"m":m,"h":h,"t":t}
+    out={}
+    for name,ids in cohorts.items():
+        df=track_cohort_threaded(years,qtrs,ids,max_threads)
+        if not isinstance(df,pd.DataFrame):
+            df=pd.DataFrame(df)
+        out[name]=df
+    return out["l"],out["m"],out["h"],out["t"]
+
+LOW,MID,HIGH,TOP = track4(years,qtrs,l,m,h,t,max_threads)
