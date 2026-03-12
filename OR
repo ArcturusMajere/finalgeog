@@ -1,150 +1,27 @@
-pkgs=c("seasonal","x13binary","data.table")
-install.packages(setdiff(pkgs,rownames(installed.packages())))
-invisible(lapply(pkgs,library,character.only=TRUE))
+import oracledb
 
-#  x13binary compat Census X-13 executable
-x13_check=function(){
-ok=x13binary::checkX13binary()
-invisible(ok)}
+def get_hojo_records(conn, yr, qtr, cohort):
+    if not cohort:
+        return []
 
-#  reads your parms.txt w/Exp ordered columns : sid, log, model, outs, outs2 
-read_parms_csv <- function(path){
-p <- fread(path, header=FALSE, sep=",", col.names=c("sid","log","model","outs","outs2"))
-p[, sid := trimws(sid)]
-p[, log := toupper(trimws(log))]
-setkey(p, sid)
-p
-}
+    bind_vars = ",".join([f":id{i}" for i in range(len(cohort))])
 
+    sql = f"""
+    SELECT *
+    FROM HOJO
+    WHERE yr = :yr
+    AND qtr = :qtr
+    AND WAGE > 0
+    AND FUND_ID IN ({bind_vars})
+    """
 
+    binds = {"yr": yr, "qtr": qtr}
+    binds.update({f"id{i}": v for i, v in enumerate(cohort)})
 
-# Keeps year >= byr; drops observations after (eyr, eqtr).
-filter_run_window <- function(d, byr, eyr, eqtr){
-d <- copy(as.data.table(d))
-d[, `:=`(year=as.integer(year), q=as.integer(q))]
-d <- d[year >= byr]
-d <- d[!(year == eyr & q > eqtr)]
-setorder(d, year, q)
-d
-}
+    with conn.cursor() as cur:
+        cur.execute(sql, binds)
+        cols=[c[0].lower() for c in cur.description]
+        rows=cur.fetchall()
 
-# returns only the rows for a single SID.
-extract_one_sid <- function(dat, sid){
-dt <- as.data.table(dat)
-dt[sid == ..sid]
-}
-
-# sanity check to reduce silent misalignment.
-# Req: one observation per quarter, no gaps, ordered
-#  gaps?-should fill missing qtrs b4 build ts()
-
-validate_quarterly_contiguous <- function(d){
-d <- copy(as.data.table(d))
-setorder(d, year, q)
-if(anyDuplicated(d[, .(year,q)])>0) stop("Duplicate year/q rows found for this SID.")
-t0 <- d$year[1]*4 + d$q[1]
-t1 <- d$year[nrow(d)]*4 + d$q[nrow(d)]
-expected <- (t1 - t0 + 1)
-if(expected != nrow(d)) stop("Missing quarter(s) detected. Fill gaps before seasonal adjustment.")
-invisible(TRUE)
-}
-
-
-# converts BED-style (year,q,n) into an R ts object with frequency=4.
-# Req: data must be ordered & contiguous byqtr
-
-to_ts_quarterly <- function(d){
-d <- as.data.table(d)
-validate_quarterly_contiguous(d)
-ts(d$n, start=c(d$year[1], d$q[1]), frequency=4)
-}
-
-#  SAS “factor form” output.
-# sf = n/sa is consistent with multiplicative seasonal factors & matches  SAS override for non-log
-compute_sf_sa <- function(x, sa){
-sf <- as.numeric(x) / as.numeric(sa)
-list(sf=sf, sa=as.numeric(sa))
-}
-
-
-
-# runs X-13ARIMA-SEATS via seasonal::seas() on ts 
-# log_mode=TRUE mirrors transform{function=log} like SAS spec
-# seats_save_s10s11=TRUE requests SEATS tables s10/s11 from X-13
-
-run_x13_seasonal <- function(x, log_mode=FALSE, seats_save_s10s11=FALSE){
-tf <- if(log_mode) "log" else "none"
-m <- if(seats_save_s10s11){
-seas(x, transform.function=tf, seats=c("", "save=(s10 s11)"), regression.aictest="td")
-} else {
-seas(x, transform.function=tf, seats="", regression.aictest="td")
-}
-sa <- final(m)
-list(model=m, sa=sa)
-}
-
-
-#binds sf/sa back to the original year/q index for this SID.
-assemble_result <- function(d, sf, sa){
-data.table(sid=d$sid[1], year=d$year, q=d$q, sf=round(sf,6), sa=round(sa,6))
-}
-
-
-# replicates SAS output trim
-# If eqtr>=2: keep end quarter
-# If eqtr==1: keep last 5 years, exclud 1qtr of eyr-5.
-apply_output_window <- function(res, eyr, eqtr){
-r <- copy(as.data.table(res))
-if(eqtr >= 2){
-r <- r[(year > eyr) | (year == eyr & q >= eqtr)]
-} else {
-r <- r[year >= (eyr - 5)]
-r <- r[!(year == (eyr - 5) & q == 1)]
-}
-r
-}
-
-# one SID like SAS %data(sid) macro
-
-# 1) subset SID
-# 2) apply run window filters
-# 3) build ts
-# 4) decide log vs none from parms
-# 5) run X-13
-# 6) compute sf/sa & out trimmed
-
-fit_one_sid <- function(dat, parms, sid, byr, eyr, eqtr, seats_save_s10s11=FALSE){
-d0 <- extract_one_sid(dat, sid)
-if(nrow(d0)==0) return(NULL)
-d <- filter_run_window(d0, byr, eyr, eqtr)
-if(nrow(d) < 8) return(NULL)
-log_mode <- parms[J(sid), log][1] == "LOG"
-x <- to_ts_quarterly(d)
-fit <- run_x13_seasonal(x, log_mode=log_mode, seats_save_s10s11=seats_save_s10s11)
-pair <- compute_sf_sa(x, fit$sa)
-res <- assemble_result(d, pair$sf, pair$sa)
-apply_output_window(res, eyr, eqtr)
-}
-
-
-# batch runner like SAS driver %sid + proc append base=all
-# Returns one big data.table: sid, year, q, sf, sa.
-fit_all_sids <- function(dat, parms_path, byr, eyr, eqtr, seats_save_s10s11=FALSE){
-x13_check()
-parms <- read_parms_csv(parms_path)
-dt <- as.data.table(dat)
-stopifnot(all(c("sid","year","q","n") %in% names(dt)))
-sids <- unique(dt$sid)
-out <- vector("list", length(sids))
-for(i in seq_along(sids)){
-sid <- sids[i]
-out[[i]] <- fit_one_sid(dt, parms, sid, byr, eyr, eqtr, seats_save_s10s11=seats_save_s10s11)
-}
-rbindlist(out, use.names=TRUE, fill=TRUE)
-}
-
-
-
-# dat <- fread("sizecalss_nsa.csv")  # must include sid, year, q, n
-# all <- fit_all_sids(dat, parms_path="/cpslaus/D6/BED/parms.txt", byr=2003, eyr=2025, eqtr=4, seats_save_s10s11=TRUE)
-# fwrite(all, "seas_concurrent_2025_4.csv")
+    result=[dict(zip(cols,r)) for r in rows]
+    return result
