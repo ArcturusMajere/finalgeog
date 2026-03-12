@@ -1,28 +1,26 @@
-import pandas as pd
-import oracledb
 
-def get_hojo_records(conn,yr,qtr,cohort):
-    if not cohort:
-        return pd.DataFrame()
+def threaded_hojo(pool,years,quarters,cohort,max_workers=8):
+    tasks=[(y,q) for y in years for q in quarters]
 
-    bind_vars=",".join([f":id{i}" for i in range(len(cohort))])
+    def run_task(t):
+        y,q=t
+        return get_hojo_records(pool,y,q,cohort)
 
-    sql=f"""
-    SELECT *
-    FROM HOJO
-    WHERE yr=:yr
-    AND qtr=:qtr
-    AND WAGE>0
-    AND FUND_ID IN ({bind_vars})
-    """
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        dfs=list(ex.map(run_task,tasks))
 
-    binds={"yr":yr,"qtr":qtr}
-    binds.update({f"id{i}":v for i,v in enumerate(cohort)})
+    return pd.concat(dfs,ignore_index=True)
 
-    with conn.cursor() as cur:
-        cur.execute(sql,binds)
-        cols=[c[0].lower() for c in cur.description]
-        rows=cur.fetchall()
+pool=oracledb.create_pool(
+    user="user",
+    password="password",
+    dsn="dsn",
+    min=2,
+    max=10,
+    increment=1
+)
 
-    df=pd.DataFrame(rows,columns=cols)
-    return df
+years=[2022,2023,2024]
+quarters=[1,2,3,4]
+
+df=threaded_hojo(pool,years,quarters,cohort_ids)
