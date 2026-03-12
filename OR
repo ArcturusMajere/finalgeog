@@ -1,1 +1,31 @@
 
+def fetch_cohort(conn, yr, qtr, cohort):
+    chunk=1000
+    dfs=[]
+
+    for i in range(0,len(cohort),chunk):
+        ids=cohort[i:i+chunk]
+
+        bind_vars=",".join(f":id{j}" for j in range(len(ids)))
+
+        sql=f"""
+        SELECT *
+        FROM your_table
+        WHERE yr=:yr
+        AND qtr=:qtr
+        AND wage>0
+        AND bls_id IN ({bind_vars})
+        """
+
+        binds={"yr":yr,"qtr":qtr}
+        binds.update({f"id{j}":v for j,v in enumerate(ids)})
+
+        with conn.cursor() as cur:
+            cur.execute(sql,binds)
+            cols=[c[0].upper() for c in cur.description]
+            rows=cur.fetchall()
+
+        dfs.append(pd.DataFrame(rows,columns=cols))
+
+    df=pd.concat(dfs,ignore_index=True)
+    return df
