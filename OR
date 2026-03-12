@@ -1,6 +1,6 @@
 
 
-def track_four_cohorts(years,qtrs,l,m,h,t,max_threads):
+def track4(years,qtrs,l,m,h,t,max_threads):
     cohorts={"l":l,"m":m,"h":h,"t":t}
     out={}
     for name,ids in cohorts.items():
