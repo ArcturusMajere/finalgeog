@@ -1,3 +1,33 @@
+import pandas as pd
+import oracledb
+from concurrent.futures import ThreadPoolExecutor
+
+def get_hojo_records(pool,yr,qtr,cohort):
+    if not cohort:
+        return pd.DataFrame()
+
+    bind_vars=",".join([f":id{i}" for i in range(len(cohort))])
+
+    sql=f"""
+    SELECT *
+    FROM HOJO
+    WHERE yr=:yr
+    AND qtr=:qtr
+    AND WAGE>0
+    AND FUND_ID IN ({bind_vars})
+    """
+
+    binds={"yr":yr,"qtr":qtr}
+    binds.update({f"id{i}":v for i,v in enumerate(cohort)})
+
+    with pool.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql,binds)
+            cols=[c[0].upper() for c in cur.description]
+            rows=cur.fetchall()
+
+    return pd.DataFrame(rows,columns=cols)
+
 
 def threaded_hojo(pool,years,quarters,cohort,max_workers=8):
     tasks=[(y,q) for y in years for q in quarters]
@@ -10,17 +40,3 @@ def threaded_hojo(pool,years,quarters,cohort,max_workers=8):
         dfs=list(ex.map(run_task,tasks))
 
     return pd.concat(dfs,ignore_index=True)
-
-pool=oracledb.create_pool(
-    user="user",
-    password="password",
-    dsn="dsn",
-    min=2,
-    max=10,
-    increment=1
-)
-
-years=[2022,2023,2024]
-quarters=[1,2,3,4]
-
-df=threaded_hojo(pool,years,quarters,cohort_ids)
