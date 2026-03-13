@@ -1,1 +1,11 @@
 
+import inspect
+
+def f(x, y):
+    params = inspect.signature(f).parameters
+    first_param = list(params.values())[0]
+    second_param = list(params.values())[1]
+    print(first_param.name)
+    print(second_param.name)
+
+f(1, 2)
