@@ -1,1 +1,14 @@
 df["naics4"]=[DOM4(f,y,q,ui) for f,y,q,ui in zip(df["STATE_CODE"],df["YR"],df["QTR"],df["UI"])]
+
+df["naics4"] = [DOM4(f, y, q, ui) for f, y, q, ui in zip(df["STATE_CODE"].to_numpy(), df["YR"].to_numpy(), df["QTR"].to_numpy(), df["UI"].to_numpy())]
+
+
+def dom4_threaded(df, max_workers=None):
+    if max_workers is None:
+        max_workers = min(32, (os.cpu_count() or 1) * 2)
+    args = zip(df["STATE_CODE"].to_numpy(), df["YR"].to_numpy(), df["QTR"].to_numpy(), df["UI"].to_numpy())
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        df["naics4"] = list(ex.map(lambda x: DOM4(*x), args))
+    return df
+
+df = dom4_threaded(df, max_workers=16)
