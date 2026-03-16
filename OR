@@ -1,13 +1,56 @@
-
 def DOM4(f,y,q,ui):
-    df=SCAN.filter((pl.col("fips")==f)&(pl.col("year")==y)& (pl.col("qtr")==q)&(pl.col("ui_acct")==ui)).select("naics4").collect().to_pandas()
-    if df.empty:return "00"
-    return str(df.iloc[0,0])
+    out=(
+        SCAN
+        .filter(
+            (pl.col("fips").cast(pl.Utf8)==str(f))&
+            (pl.col("year").cast(pl.Int64)==int(y))&
+            (pl.col("qtr").cast(pl.Int64)==int(q))&
+            (pl.col("ui_acct").cast(pl.Utf8)==str(ui))
+        )
+        .select("naics4")
+        .collect()
+        .to_pandas()
+    )
+    if out.empty:
+        return "00"
+    return str(out.iloc[0,0])
 
 @timer
-def dom4_threader(df, max_workers=4):
-    args = zip(df["STATE_CODE"], df["YR"], df["QTR"], df["UI"])
-    with ThreadPoolExecutor(max_workers=max_workers) as ex: df["naics4"] = list(ex.map(lambda x: DOM4(*x), args))
+def dom4_threader(df,max_workers=4):
+    args=zip(df["STATE_CODE"],df["YR"],df["QTR"],df["UI"])
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        df["naics4"]=list(ex.map(lambda x: DOM4(*x),args))
     return df
 
-ComputeError: ArrowNotImplementedError: Function 'equal' has no kernel matching input types (int64, string)
+def dom4_join(df):
+    lookup=(
+        SCAN
+        .select(["fips","year","qtr","ui_acct","naics4"])
+        .collect()
+        .with_columns([
+            pl.col("fips").cast(pl.Utf8),
+            pl.col("year").cast(pl.Int64),
+            pl.col("qtr").cast(pl.Int64),
+            pl.col("ui_acct").cast(pl.Utf8),
+            pl.col("naics4").cast(pl.Utf8)
+        ])
+    )
+
+    left=pl.from_pandas(df).with_columns([
+        pl.col("STATE_CODE").cast(pl.Utf8),
+        pl.col("YR").cast(pl.Int64),
+        pl.col("QTR").cast(pl.Int64),
+        pl.col("UI").cast(pl.Utf8)
+    ])
+
+    out=(
+        left.join(
+            lookup,
+            left_on=["STATE_CODE","YR","QTR","UI"],
+            right_on=["fips","year","qtr","ui_acct"],
+            how="left"
+        )
+        .with_columns(pl.col("naics4").fill_null("00"))
+        .to_pandas()
+    )
+    return out
