@@ -1,1 +1,13 @@
 
+def DOM4(f,y,q,ui):
+    df=SCAN.filter((pl.col("fips")==f)&(pl.col("year")==y)& (pl.col("qtr")==q)&(pl.col("ui_acct")==ui)).select("naics4").collect().to_pandas()
+    if df.empty:return "00"
+    return str(df.iloc[0,0])
+
+@timer
+def dom4_threader(df, max_workers=4):
+    args = zip(df["STATE_CODE"], df["YR"], df["QTR"], df["UI"])
+    with ThreadPoolExecutor(max_workers=max_workers) as ex: df["naics4"] = list(ex.map(lambda x: DOM4(*x), args))
+    return df
+
+ComputeError: ArrowNotImplementedError: Function 'equal' has no kernel matching input types (int64, string)
