@@ -1,39 +1,22 @@
-import polars as pl
+def count_ids_by_cat_geo_yrqtr(df):
+    out=df.copy()
+    out["CAT"]=out["naics4"].astype(str).eq("6244").map({True:"6244",False:"not6244"})
+    out["GEO"]=out["state"].astype(str).eq("California").map({True:"California",False:"noCalifornia"})
+    result=out.groupby(["yr_qtr","CAT","GEO"],as_index=False)["ID"].nunique().rename(columns={"ID":"id_count"})
+    return out,result
 
-def dom4_join_fast(df):
-    left=pl.from_pandas(df).select(["YR","QTR","STATE_CODE","UI"]).with_columns(
-        pl.col("YR").cast(pl.Int64),
-        pl.col("QTR").cast(pl.Int64),
-        pl.col("STATE_CODE").cast(pl.Utf8),
-        pl.col("UI").cast(pl.Utf8)
+
+
+def count_ids_by_cat_geo_yrqtr(df):
+    out=df.copy()
+    out["CAT"]=out["naics4"].astype(str).eq("6244").map({True:"6244",False:"not6244"})
+    out["GEO"]=out["state"].astype(str).eq("California").map({True:"California",False:"noCalifornia"})
+    result=out.groupby(["yr_qtr","CAT","GEO"],as_index=False)["ID"].nunique().rename(columns={"ID":"id_count"})
+
+    idx=pd.MultiIndex.from_product(
+        [sorted(out["yr_qtr"].dropna().unique()),["6244","not6244"],["California","noCalifornia"]],
+        names=["yr_qtr","CAT","GEO"]
     )
 
-    right=(
-        SCAN
-        .select(["year","qtr","fips","ui_acct","naics4"])
-        .with_columns(
-            pl.col("year").cast(pl.Int64),
-            pl.col("qtr").cast(pl.Int64),
-            pl.col("fips").cast(pl.Utf8),
-            pl.col("ui_acct").cast(pl.Utf8),
-            pl.col("naics4").cast(pl.Utf8)
-        )
-        .rename({
-            "year":"YR",
-            "qtr":"QTR",
-            "fips":"STATE_CODE",
-            "ui_acct":"UI"
-        })
-        .unique(subset=["YR","QTR","STATE_CODE","UI"],keep="first")
-    )
-
-    out=(
-        left
-        .join(right,on=["YR","QTR","STATE_CODE","UI"],how="left")
-        .with_columns(pl.col("naics4").fill_null("00"))
-        .to_pandas()
-    )
-
-    df=df.copy()
-    df["naics4"]=out["naics4"].values
-    return df
+    result=result.set_index(["yr_qtr","CAT","GEO"]).reindex(idx,fill_value=0).reset_index()
+    return out,result
