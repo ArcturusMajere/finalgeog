@@ -1,35 +1,46 @@
-
+import pyarrow.dataset as ds
 import polars as pl
 
-def ui_birth_counts(df, start_yr=2006, start_qtr=1, end_yr=2025, end_qtr=3,
-                    ui_col="UI", year_col="YR", qtr_col="QTR", fips_col="STATE_CODE"):
-    x = df.filter(
-        (
-            (pl.col(year_col) > start_yr) |
-            ((pl.col(year_col) == start_yr) & (pl.col(qtr_col) >= start_qtr))
-        ) &
-        (
-            (pl.col(year_col) < end_yr) |
-            ((pl.col(year_col) == end_yr) & (pl.col(qtr_col) <= end_qtr))
-        )
+def Fetch_UI_Birth_Counts(start_year, start_qtr, end_year, end_qtr, fips=None):
+    dnaicsloc = "/wagerec/current_dominantnaics/parquet/"
+    table = ds.dataset(dnaicsloc, format="parquet")
+    DOM1 = pl.scan_pyarrow_dataset(table)
+
+    start_idx = start_year * 10 + start_qtr
+    end_idx = end_year * 10 + end_qtr
+
+    DOM2 = (
+        DOM1
+        .with_columns((pl.col("year") * 10 + pl.col("qtr")).alias("yrqtr_idx"))
+        .filter(pl.col("yrqtr_idx") >= start_idx)
+        .filter(pl.col("yrqtr_idx") <= end_idx)
     )
 
+    if fips is not None:
+        f = str(fips).lstrip("0")
+        DOM2 = DOM2.filter(pl.col("fips") == f)
+
     births = (
-        x.sort([ui_col, year_col, qtr_col, fips_col])
-        .group_by(ui_col)
+        DOM2
+        .sort(["ui_acct", "year", "qtr", "fips"])
+        .group_by("ui_acct")
         .agg([
-            pl.col(year_col).first().alias("YR"),
-            pl.col(qtr_col).first().alias("QTR"),
-            pl.col(fips_col).first().alias("FIPS")
+            pl.col("year").first().alias("YR"),
+            pl.col("qtr").first().alias("QTR"),
+            pl.col("fips").first().alias("FIPS")
         ])
     )
 
-    return (
+    Final = (
         births
         .group_by(["YR", "QTR", "FIPS"])
         .agg(pl.len().alias("COUNT"))
         .sort(["YR", "QTR", "FIPS"])
+        .collect()
+        .to_pandas()
     )
 
+    return Final
 
-birth_counts = ui_birth_counts(df, start_yr=2006, start_qtr=1, end_yr=2025, end_qtr=3)
+
+births = Fetch_UI_Birth_Counts(2006, 1, 2025, 3)
