@@ -1,50 +1,27 @@
-RNGkind("Mersenne-Twister")
-set.seed(12345)
+SAS documents MT32 and MT2002 as the 2002 32-bit Mersenne Twister algorithm. SAS also distinguishes that from older MT variants and from its later defaults such as MTHYBRID. In other words, when SAS says MT32 or MT2002, it is pointing at the 2002-improved initialization version of the 32-bit Mersenne Twister.
 
-n <- 20
-u <- runif(n)
+Base R’s documentation for "Mersenne-Twister" cites the original Matsumoto and Nishimura 1998 MT paper as the RNG behind that option. The R source references that same 1998 MT paper as well. That is the key reason not to assume that SAS MT32/MT2002 and base R "Mersenne-Twister" will emit the same stream from the same scalar seed.
 
-out <- data.frame(
-  draw = seq_len(n),
-  u = sprintf("%.17f", u)
-)
+The practical implication is this: even if both systems say “Mersenne Twister,” the initialization details can differ, and that alone is enough to break byte-for-byte agreement in the generated sequence. The 2002 update is specifically known for improved initialization behavior relative to earlier MT implementations.
 
-print(out, row.names = FALSE)
-write.csv(out, "r_mt_test.csv", row.names = FALSE, quote = FALSE)
+The literature and docs worth citing are these.
 
-data sas_mt_test;
-call streaminit(12345);
-do draw = 1 to 20;
-  u = rand("uniform");
-  output;
-end;
-format u 24.17;
-run;
+For SAS, use the SAS Functions and CALL Routines documentation for random-number generation, plus Rick Wicklin’s SAS article summarizing the generators and naming MT2002 as the 2002 32-bit MT.
 
-proc print data=sas_mt_test noobs;
-var draw u;
-run;
+For R, use ?Random / the R manual page for RNGkind, which identifies "Mersenne-Twister" and cites Matsumoto and Nishimura 1998.
 
-proc export data=sas_mt_test
-  outfile="sas_mt_test.csv"
-  dbms=csv
-  replace;
-run;
+For the algorithm papers themselves, the two anchor references are Matsumoto and Nishimura (1998), the original MT paper, and the later MT code/version with improved initialization used in 2002-era implementations. SAS’s own material explicitly ties MT2002 to that later variant.
 
-r <- read.csv("r_mt_test.csv")
-s <- read.csv("sas_mt_test.csv")
+So the clean conclusion is: SAS MT32/MT2002 is not something I would treat as automatically identical to base R "Mersenne-Twister". It may be similar enough in family and output distribution, but exact stream equivalence is a separate claim and needs empirical verification.
 
-r$u_num <- as.numeric(r$u)
-s$u_num <- as.numeric(s$u)
+For exact cross-platform reproducibility, the safest workflow is still to test the first 20–100 U(0,1) draws under fixed seeds. If they differ even once, stop trying to force native parity and instead generate one shared uniform stream externally and feed it into both programs.
 
-cmp <- data.frame(
-  draw = r$draw,
-  r = r$u_num,
-  sas = s$u_num,
-  equal = r$u_num == s$u_num,
-  abs_diff = abs(r$u_num - s$u_num)
-)
+https://documentation.sas.com/doc/en/lefunctionsref/9.4/p026ygl6toz3tgn14lt4iu6cl5bb.htm
 
-print(cmp, row.names = FALSE)
-all(cmp$equal)
-max(cmp$abs_diff)
+https://support.sas.com/resources/papers/proceedings18/1810-2018.pdf
+
+https://stat.ethz.ch/R-manual/R-devel/library/base/help/Random.html
+
+The core MT paper usually cited by R is here:
+
+https://doi.org/10.1145/272991.272995
