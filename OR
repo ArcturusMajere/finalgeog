@@ -1,11 +1,35 @@
 
-def Fetch_DOM_QTR(year,qtr,fips):
-    dnaicsloc = "/wagerec/current_dominantnaics/parquet/"
-    table = ds.dataset(dnaicsloc, format="parquet")
-    DOM1 = pl.scan_pyarrow_dataset(table)
-    f = fips.lstrip('0')
-    DOM2 = (DOM1.filter(pl.col('fips') == f).filter(pl.col('year') == year).filter(pl.col('qtr') == qtr))
-    Final = DOM2.select(['ui_acct','fips','naics2','naics3','naics4','naics6','run']).collect().to_pandas()
-    Final.rename(columns={'ui_acct': 'UI'},inplace=True)
-    Final.rename(columns={'run': 'RUN'},inplace=True)
-    return(Final)
+import polars as pl
+
+def ui_birth_counts(df, start_yr=2006, start_qtr=1, end_yr=2025, end_qtr=3,
+                    ui_col="UI", year_col="YR", qtr_col="QTR", fips_col="STATE_CODE"):
+    x = df.filter(
+        (
+            (pl.col(year_col) > start_yr) |
+            ((pl.col(year_col) == start_yr) & (pl.col(qtr_col) >= start_qtr))
+        ) &
+        (
+            (pl.col(year_col) < end_yr) |
+            ((pl.col(year_col) == end_yr) & (pl.col(qtr_col) <= end_qtr))
+        )
+    )
+
+    births = (
+        x.sort([ui_col, year_col, qtr_col, fips_col])
+        .group_by(ui_col)
+        .agg([
+            pl.col(year_col).first().alias("YR"),
+            pl.col(qtr_col).first().alias("QTR"),
+            pl.col(fips_col).first().alias("FIPS")
+        ])
+    )
+
+    return (
+        births
+        .group_by(["YR", "QTR", "FIPS"])
+        .agg(pl.len().alias("COUNT"))
+        .sort(["YR", "QTR", "FIPS"])
+    )
+
+
+birth_counts = ui_birth_counts(df, start_yr=2006, start_qtr=1, end_yr=2025, end_qtr=3)
