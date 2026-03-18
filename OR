@@ -1,46 +1,19 @@
-import pyarrow.dataset as ds
-import polars as pl
+import pandas as pd
+import matplotlib.pyplot as plt
 
-def Fetch_UI_Birth_Counts(start_year, start_qtr, end_year, end_qtr, fips=None):
-    dnaicsloc = "/wagerec/current_dominantnaics/parquet/"
-    table = ds.dataset(dnaicsloc, format="parquet")
-    DOM1 = pl.scan_pyarrow_dataset(table)
+def plot_ui_births_yearqtr(birth_counts, year_col="YR", qtr_col="QTR", count_col="COUNT"):
+    x = birth_counts.groupby([year_col, qtr_col], as_index=False)[count_col].sum().copy()
+    x["month"] = x[qtr_col].map({1: 1, 2: 4, 3: 7, 4: 10})
+    x["date"] = pd.to_datetime(dict(year=x[year_col], month=x["month"], day=1))
+    x = x.sort_values("date")
 
-    start_idx = start_year * 10 + start_qtr
-    end_idx = end_year * 10 + end_qtr
+    fig, ax = plt.subplots(figsize=(14, 6))
+    ax.plot(x["date"], x[count_col], linewidth=2)
+    ax.set_title("UI Births per Year-Quarter")
+    ax.set_xlabel("Year-Quarter")
+    ax.set_ylabel("Births")
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
 
-    DOM2 = (
-        DOM1
-        .with_columns((pl.col("year") * 10 + pl.col("qtr")).alias("yrqtr_idx"))
-        .filter(pl.col("yrqtr_idx") >= start_idx)
-        .filter(pl.col("yrqtr_idx") <= end_idx)
-    )
-
-    if fips is not None:
-        f = str(fips).lstrip("0")
-        DOM2 = DOM2.filter(pl.col("fips") == f)
-
-    births = (
-        DOM2
-        .sort(["ui_acct", "year", "qtr", "fips"])
-        .group_by("ui_acct")
-        .agg([
-            pl.col("year").first().alias("YR"),
-            pl.col("qtr").first().alias("QTR"),
-            pl.col("fips").first().alias("FIPS")
-        ])
-    )
-
-    Final = (
-        births
-        .group_by(["YR", "QTR", "FIPS"])
-        .agg(pl.len().alias("COUNT"))
-        .sort(["YR", "QTR", "FIPS"])
-        .collect()
-        .to_pandas()
-    )
-
-    return Final
-
-
-births = Fetch_UI_Birth_Counts(2006, 1, 2025, 3)
+    return x[[year_col, qtr_col, "date", count_col]]
