@@ -1,4 +1,7 @@
-def drop_2020_1_nonca_non6244(df):
-    out=df.copy()
-    mask=(out["yr_qtr"].astype(str).eq("2020-1"))&(~out["state"].astype(str).eq("California"))&(~out["naics4"].astype(str).eq("6244"))
-    return out.loc[~mask].copy()
+def add_original_class(df):
+    base = (
+        df.loc[df["yr_qtr"].eq("2020-1"), ["ID", "class"]]
+        .drop_duplicates("ID")
+        .rename(columns={"class": "original_class"})
+    )
+    return df.merge(base, on="ID", how="left")
