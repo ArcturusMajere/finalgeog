@@ -1,1 +1,50 @@
+RNGkind("Mersenne-Twister")
+set.seed(12345)
 
+n <- 20
+u <- runif(n)
+
+out <- data.frame(
+  draw = seq_len(n),
+  u = sprintf("%.17f", u)
+)
+
+print(out, row.names = FALSE)
+write.csv(out, "r_mt_test.csv", row.names = FALSE, quote = FALSE)
+
+data sas_mt_test;
+call streaminit(12345);
+do draw = 1 to 20;
+  u = rand("uniform");
+  output;
+end;
+format u 24.17;
+run;
+
+proc print data=sas_mt_test noobs;
+var draw u;
+run;
+
+proc export data=sas_mt_test
+  outfile="sas_mt_test.csv"
+  dbms=csv
+  replace;
+run;
+
+r <- read.csv("r_mt_test.csv")
+s <- read.csv("sas_mt_test.csv")
+
+r$u_num <- as.numeric(r$u)
+s$u_num <- as.numeric(s$u)
+
+cmp <- data.frame(
+  draw = r$draw,
+  r = r$u_num,
+  sas = s$u_num,
+  equal = r$u_num == s$u_num,
+  abs_diff = abs(r$u_num - s$u_num)
+)
+
+print(cmp, row.names = FALSE)
+all(cmp$equal)
+max(cmp$abs_diff)
