@@ -5,3 +5,12 @@ def add_original_class(df):
         .rename(columns={"class": "original_class"})
     )
     return df.merge(base, on="ID", how="left")
+
+
+There are three workable approaches.
+
+The most reliable approach is to generate the random numbers once in one place, save them, and feed those exact values into both programs. For example, create a column of uniforms like u ~ U(0,1) and write it to CSV. Then both SAS and R read that file and use those values for downstream simulation, sampling, or assignment logic. This is the safest way if exact reproducibility across platforms matters.
+
+The second approach is to force both systems to use the same algorithm and seed, if that algorithm exists in both. In R, you can set the RNG kind explicitly. In SAS, the options are more limited and depend on which procedure or function you are using. Even then, you still need the same draw order. If SAS consumes 10 random values before a branch and R consumes 9, the streams will diverge immediately.
+
+The third approach is to avoid platform RNG differences entirely by using a deterministic transformation based on IDs. For example, hash each record ID plus a fixed salt, convert the hash to a number in [0,1), and use that as your “random” number. Then SAS and R can both compute the same pseudo-random value per record without depending on their internal RNG engines. This is often the best method for record-level assignment, splits, or reproducible sampling.
