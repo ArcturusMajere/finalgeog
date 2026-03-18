@@ -1,1 +1,11 @@
 
+def Fetch_DOM_QTR(year,qtr,fips):
+    dnaicsloc = "/wagerec/current_dominantnaics/parquet/"
+    table = ds.dataset(dnaicsloc, format="parquet")
+    DOM1 = pl.scan_pyarrow_dataset(table)
+    f = fips.lstrip('0')
+    DOM2 = (DOM1.filter(pl.col('fips') == f).filter(pl.col('year') == year).filter(pl.col('qtr') == qtr))
+    Final = DOM2.select(['ui_acct','fips','naics2','naics3','naics4','naics6','run']).collect().to_pandas()
+    Final.rename(columns={'ui_acct': 'UI'},inplace=True)
+    Final.rename(columns={'run': 'RUN'},inplace=True)
+    return(Final)
