@@ -32,3 +32,59 @@ def plot_ui_births_naics2_interactive(summary_df,naics2_counts_df,title="UI birt
     )
     fig.show()
     return fig
+
+
+
+def plot_ui_births_naics2_interactive(summary_df,naics2_counts_df,title="UI births by quarter with NAICS2 composition",html_file=None):
+    plot_df = naics2_counts_df.merge(
+        summary_df[["birth_yq","yr_qtr","UI_birth_count","relative_UI_birth_rate"]],
+        on=["birth_yq","yr_qtr"],
+        how="left"
+    ).sort_values("birth_yq")
+    plot_df["naics2_label"] = plot_df["naics2"].apply(lambda x: f"{x} - {lookupnaics(x)}")
+    fig = px.bar(
+        plot_df,
+        x="yr_qtr",
+        y="births",
+        color="naics2_label",
+        title=title,
+        custom_data=["UI_birth_count","relative_UI_birth_rate","naics2","naics2_label"]
+    )
+    fig.update_layout(
+        barmode="stack",
+        xaxis_title="yr_qtr",
+        yaxis_title="UI birth count",
+        legend_title_text="NAICS2",
+        hovermode="x unified"
+    )
+    fig.update_traces(
+        hovertemplate=(
+            "Quarter=%{x}<br>"
+            "NAICS2 code=%{customdata[2]}<br>"
+            "NAICS2=%{customdata[3]}<br>"
+            "Births in segment=%{y}<br>"
+            "Total UI births=%{customdata[0]}<br>"
+            "Relative UI birth rate=%{customdata[1]:.2%}<extra></extra>"
+        )
+    )
+    if html_file is not None:
+        fig.write_html(html_file)
+    fig.show()
+    return fig
+
+
+
+summary,birth_detail,naics2_counts = ui_births_by_fips_range(
+    fips="16",
+    start_year=2021,
+    start_qtr=1,
+    end_year=2023,
+    end_qtr=4
+)
+
+fig = plot_ui_births_naics2_interactive(
+    summary,
+    naics2_counts,
+    title="FIPS 16 UI births by quarter",
+    html_file="fips16_ui_births.html"
+)
