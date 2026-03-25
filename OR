@@ -1,1 +1,67 @@
+import pandas as pd
+import plotly.express as px
 
+def animate_bubbleplot_m(df,m_code,start_yq=None,end_yq=None):
+    valid={1,2,3,5,6}
+    if m_code not in valid:
+        raise ValueError("m_code must be one of: 1,2,3,5,6")
+    col=f"m{m_code}"
+    needed={"yr_qtr","state",col}
+    missing=needed-set(df.columns)
+    if missing:
+        raise ValueError(f"Missing columns: {sorted(missing)}")
+    plot_df=df[["yr_qtr","state",col]].copy().dropna()
+    plot_df["yr_qtr_num"]=pd.to_numeric(plot_df["yr_qtr"],errors="coerce")
+    plot_df=plot_df.dropna(subset=["yr_qtr_num"])
+    plot_df["yr_qtr_num"]=plot_df["yr_qtr_num"].astype(int)
+    if start_yq is not None:
+        plot_df=plot_df[plot_df["yr_qtr_num"]>=start_yq]
+    if end_yq is not None:
+        plot_df=plot_df[plot_df["yr_qtr_num"]<=end_yq]
+    if plot_df.empty:
+        raise ValueError("No data left after filtering start_yq/end_yq")
+    plot_df["yr_qtr"]=plot_df["yr_qtr_num"].astype(str)
+    x_order=sorted(plot_df["yr_qtr"].unique(),key=lambda x:int(x))
+    max_pct=plot_df[col].max()
+    fig=px.scatter(
+        plot_df,
+        x="state",
+        y=col,
+        size=col,
+        color="state",
+        animation_frame="yr_qtr",
+        animation_group="state",
+        range_y=[0,max_pct*1.1 if max_pct>0 else 1],
+        size_max=60,
+        category_orders={"yr_qtr":x_order},
+        hover_name="state",
+        hover_data={"yr_qtr":True,col:":.2f"},
+        title=f"Animated Bubble Plot for {col}"
+    )
+    fig.update_traces(opacity=0.75)
+    fig.update_layout(
+        xaxis_title="state",
+        yaxis_title=col,
+        legend_title="state"
+    )
+    if fig.layout.updatemenus:
+        fig.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"]=1000
+        fig.layout.updatemenus[0].buttons[0].args[1]["transition"]["duration"]=1000
+        fig.layout.updatemenus[0].buttons[1].args[1]["frame"]["duration"]=0
+        fig.layout.updatemenus[0].buttons[1].args[1]["transition"]["duration"]=0
+    fig.show()
+    return fig
+
+
+m_code=int(input("Enter m code (1,2,3,5,6): "))
+start_yq=int(input("Enter start yr_qtr: "))
+end_yq=int(input("Enter end yr_qtr: "))
+animate_bubbleplot_m(df,m_code,start_yq,end_yq)
+
+
+m_code=int(input("Enter m code (1,2,3,5,6): "))
+start_raw=input("Enter start yr_qtr or press Enter: ").strip()
+end_raw=input("Enter end yr_qtr or press Enter: ").strip()
+start_yq=int(start_raw) if start_raw else None
+end_yq=int(end_raw) if end_raw else None
+animate_bubbleplot_m(df,m_code,start_yq,end_yq)
