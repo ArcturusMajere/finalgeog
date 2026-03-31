@@ -1,131 +1,121 @@
-def get_state_cohort(fips, yr, qtr, naics4=None):
-    w = fetch_wage(fips, yr, qtr)
-    d = fetch_dom(fips, yr, qtr)
-    w["UI"] = w["UI"].str.zfill(10)
-    d["UI"] = d["UI"].str.zfill(10)
-    df = pd.merge(w, d, how="left", on="UI", indicator=True)
-    df = dupeID(df)
-    df = df[df["WAGE"] > 0].copy()
-    if naics4 is not None:
-        df = df[df["naics4"] == naics4].copy()
-    if df.empty:
-        return pd.DataFrame(columns=["BLS_ID","UI","WAGE","STATE_CODE","state","yr_qtr","original_class"])
-    df["STATE_CODE"] = str(fips).zfill(2)
-    df["state"] = us.states.lookup(fips).name if us.states.lookup(fips) else str(fips)
-    df["yr_qtr"] = f"{yr}-{qtr}"
-    df["original_class"] = pd.qcut(
-        df["WAGE"],
-        q=4,
-        labels=["bottom 25%", "25-50%", "50-75%", "top 25%"],
-        duplicates="drop"
+import pandas as pd
+import matplotlib.pyplot as plt
+
+CLASS_ORDER = ["bottom 25%", "25-50%", "50-75%", "top 25%"]
+
+def summarize_transitions(tracked_df):
+    all_transitions = pd.MultiIndex.from_product(
+        [CLASS_ORDER, CLASS_ORDER],
+        names=["original_class", "current_class"]
+    ).to_frame(index=False)
+    all_transitions["transition"] = (
+        all_transitions["original_class"] + " -> " + all_transitions["current_class"]
     )
-    cols = ["BLS_ID","UI","WAGE","STATE_CODE","state","yr_qtr","original_class"]
-    return df[cols].copy()
 
-def find_cohort(yr, qtr, cohort_ids):
-    conn = oracledb.connect(
-        user=open("USER.txt").read(),
-        password=open("password.txt").read(),
-        dsn="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov"
+    yr_qtrs = pd.DataFrame({"yr_qtr": sorted(tracked_df["yr_qtr"].dropna().unique())})
+    skeleton = yr_qtrs.merge(all_transitions, how="cross")
+
+    counts = (
+        tracked_df.groupby(["yr_qtr", "original_class", "current_class", "transition"], dropna=False)
+        .size()
+        .reset_index(name="count")
     )
-    chunk = 1000
-    dfs = []
-    for i in range(0, len(cohort_ids), chunk):
-        ids = cohort_ids[i:i + chunk]
-        if len(ids) == 0:
-            continue
-        bind_vars = ",".join(f":id{j}" for j in range(len(ids)))
-        sql = f"""
-        SELECT *
-        FROM wagerecusr.wage_data
-        WHERE yr = :yr
-        AND qtr = :qtr
-        AND wage > 0
-        AND bls_id IN ({bind_vars})
-        """
-        binds = {"yr": yr, "qtr": qtr}
-        binds.update({f"id{j}": v for j, v in enumerate(ids)})
-        with conn.cursor() as cur:
-            cur.execute(sql, binds)
-            cols = [c[0].upper() for c in cur.description]
-            rows = cur.fetchall()
-        if rows:
-            dfs.append(pd.DataFrame(rows, columns=cols))
-    conn.close()
-    if not dfs:
-        return pd.DataFrame(columns=["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"])
-    df = pd.concat(dfs, ignore_index=True)
-    df = dupeID(df)
-    if df.empty:
-        return pd.DataFrame(columns=["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"])
-    df["state"] = [fips2name(code) for code in df["STATE_CODE"]]
-    df["yr_qtr"] = f"{yr}-{qtr}"
-    df["YR"] = str(yr)
-    df["QTR"] = str(qtr)
-    cols = ["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"]
-    print(f"{df.shape[0]} cohort found in {yr} Q{qtr}")
-    return df[cols].copy()
 
-def add_current_class(df):
-    if df.empty:
-        df["current_class"] = pd.Series(dtype="object")
-        return df
-    df = df.copy()
-    df["current_class"] = pd.qcut(
-        df["WAGE"],
-        q=4,
-        labels=["bottom 25%", "25-50%", "50-75%", "top 25%"],
-        duplicates="drop"
+    out = skeleton.merge(
+        counts,
+        how="left",
+        on=["yr_qtr", "original_class", "current_class", "transition"]
     )
-    return df
+    out["count"] = out["count"].fillna(0).astype(int)
 
-def find_cohort_with_classes(yr, qtr, cohort_ids, original_map):
-    df = find_cohort(yr, qtr, cohort_ids)
-    if df.empty:
-        cols = ["cohort","yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","original_class","current_class","original_yr_qtr"]
-        return pd.DataFrame(columns=cols)
-    df = add_current_class(df)
-    df = df.merge(original_map, how="left", on="BLS_ID")
-    df["cohort"] = "baseline_state_cohort"
-    cols = ["cohort","yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","original_class","current_class","original_yr_qtr"]
-    return df[cols].copy()
+    totals = (
+        out.groupby(["yr_qtr", "original_class"], dropna=False)["count"]
+        .sum()
+        .reset_index(name="total_origin")
+    )
 
-def find_cohort_threader(years, quarters, cohort_ids, original_map, threads=2):
-    tasks = [(y, q) for y in years for q in quarters]
-    def worker(t):
-        y, q = t
-        return find_cohort_with_classes(y, q, cohort_ids, original_map)
-    with ThreadPoolExecutor(max_workers=threads) as ex:
-        dfs = list(ex.map(worker, tasks))
-    dfs = [df for df in dfs if isinstance(df, pd.DataFrame) and not df.empty]
-    if not dfs:
-        return pd.DataFrame(columns=["cohort","yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","original_class","current_class","original_yr_qtr"])
-    return pd.concat(dfs, ignore_index=True)
+    out = out.merge(totals, how="left", on=["yr_qtr", "original_class"])
+    out["pct_within_origin"] = 0.0
+    mask = out["total_origin"] > 0
+    out.loc[mask, "pct_within_origin"] = out.loc[mask, "count"] / out.loc[mask, "total_origin"]
 
-def build_original_map(base_fips, base_yr, base_qtr, naics4=None):
-    base = get_state_cohort(base_fips, base_yr, base_qtr, naics4=naics4)
-    if base.empty:
-        return pd.DataFrame(columns=["BLS_ID","original_class","original_yr_qtr"]), []
-    original_map = base[["BLS_ID","original_class","yr_qtr"]].copy()
-    original_map = original_map.rename(columns={"yr_qtr": "original_yr_qtr"})
-    cohort_ids = base["BLS_ID"].dropna().unique().tolist()
-    return original_map, cohort_ids
+    return out.sort_values(["yr_qtr", "original_class", "current_class"]).reset_index(drop=True)
 
-@timer
-def track_state_cohort(base_fips, base_yr, base_qtr, years, quarters, naics4=None, max_threads=2):
-    original_map, cohort_ids = build_original_map(base_fips, base_yr, base_qtr, naics4=naics4)
-    if len(cohort_ids) == 0:
-        return pd.DataFrame(columns=["cohort","yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","original_class","current_class","original_yr_qtr"])
-    tracked = find_cohort_threader(years, quarters, cohort_ids, original_map, threads=max_threads)
-    return tracked
+def transition_matrix(summary_df, yr_qtr, value="count"):
+    mat = (
+        summary_df[summary_df["yr_qtr"] == yr_qtr]
+        .pivot(index="original_class", columns="current_class", values=value)
+        .reindex(index=CLASS_ORDER, columns=CLASS_ORDER)
+        .fillna(0)
+    )
+    return mat
 
+def plot_transition_counts(summary_df, yr_qtr):
+    mat = transition_matrix(summary_df, yr_qtr, value="count")
+    fig, ax = plt.subplots(figsize=(8, 5))
+    im = ax.imshow(mat.values, aspect="auto")
+    ax.set_xticks(range(len(CLASS_ORDER)))
+    ax.set_xticklabels(CLASS_ORDER, rotation=30, ha="right")
+    ax.set_yticks(range(len(CLASS_ORDER)))
+    ax.set_yticklabels(CLASS_ORDER)
+    ax.set_xlabel("Current class")
+    ax.set_ylabel("Original class")
+    ax.set_title(f"Transition counts for {yr_qtr}")
+    for i in range(mat.shape[0]):
+        for j in range(mat.shape[1]):
+            ax.text(j, i, int(mat.iloc[i, j]), ha="center", va="center")
+    plt.colorbar(im, ax=ax)
+    plt.tight_layout()
+    plt.show()
 
-tracked = track_state_cohort(
-    base_fips="16",
-    base_yr=2021,
-    base_qtr=1,
-    years=[2021, 2022, 2023],
-    quarters=[1, 2, 3, 4],
-    naics4="6244",
-    max_threads=2
-)
+def plot_transition_pct(summary_df, yr_qtr):
+    mat = transition_matrix(summary_df, yr_qtr, value="pct_within_origin")
+    fig, ax = plt.subplots(figsize=(8, 5))
+    im = ax.imshow(mat.values, aspect="auto")
+    ax.set_xticks(range(len(CLASS_ORDER)))
+    ax.set_xticklabels(CLASS_ORDER, rotation=30, ha="right")
+    ax.set_yticks(range(len(CLASS_ORDER)))
+    ax.set_yticklabels(CLASS_ORDER)
+    ax.set_xlabel("Current class")
+    ax.set_ylabel("Original class")
+    ax.set_title(f"Transition share within original class for {yr_qtr}")
+    for i in range(mat.shape[0]):
+        for j in range(mat.shape[1]):
+            ax.text(j, i, f"{mat.iloc[i, j]:.2%}", ha="center", va="center")
+    plt.colorbar(im, ax=ax)
+    plt.tight_layout()
+    plt.show()
+
+def plot_transition_stack(summary_df, original_class):
+    df = summary_df[summary_df["original_class"] == original_class].copy()
+    wide = (
+        df.pivot(index="yr_qtr", columns="current_class", values="count")
+        .reindex(columns=CLASS_ORDER)
+        .fillna(0)
+        .sort_index()
+    )
+    fig, ax = plt.subplots(figsize=(10, 5))
+    wide.plot(kind="bar", stacked=True, ax=ax)
+    ax.set_title(f"Transitions over time from {original_class}")
+    ax.set_xlabel("yr_qtr")
+    ax.set_ylabel("Count")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.show()
+
+def plot_transition_stack_pct(summary_df, original_class):
+    df = summary_df[summary_df["original_class"] == original_class].copy()
+    wide = (
+        df.pivot(index="yr_qtr", columns="current_class", values="pct_within_origin")
+        .reindex(columns=CLASS_ORDER)
+        .fillna(0)
+        .sort_index()
+    )
+    fig, ax = plt.subplots(figsize=(10, 5))
+    wide.plot(kind="bar", stacked=True, ax=ax)
+    ax.set_title(f"Transition shares over time from {original_class}")
+    ax.set_xlabel("yr_qtr")
+    ax.set_ylabel("Share")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.show()
