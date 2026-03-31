@@ -1,121 +1,15 @@
-import pandas as pd
-import matplotlib.pyplot as plt
+transition_summary = summarize_transitions(tracked)
 
-CLASS_ORDER = ["bottom 25%", "25-50%", "50-75%", "top 25%"]
+print(tracked.head())
+print(transition_summary.head(20))
 
-def summarize_transitions(tracked_df):
-    all_transitions = pd.MultiIndex.from_product(
-        [CLASS_ORDER, CLASS_ORDER],
-        names=["original_class", "current_class"]
-    ).to_frame(index=False)
-    all_transitions["transition"] = (
-        all_transitions["original_class"] + " -> " + all_transitions["current_class"]
-    )
+mat_count = transition_matrix(transition_summary, "2021-1", value="count")
+mat_pct = transition_matrix(transition_summary, "2021-1", value="pct_within_origin")
 
-    yr_qtrs = pd.DataFrame({"yr_qtr": sorted(tracked_df["yr_qtr"].dropna().unique())})
-    skeleton = yr_qtrs.merge(all_transitions, how="cross")
+print(mat_count)
+print(mat_pct)
 
-    counts = (
-        tracked_df.groupby(["yr_qtr", "original_class", "current_class", "transition"], dropna=False)
-        .size()
-        .reset_index(name="count")
-    )
-
-    out = skeleton.merge(
-        counts,
-        how="left",
-        on=["yr_qtr", "original_class", "current_class", "transition"]
-    )
-    out["count"] = out["count"].fillna(0).astype(int)
-
-    totals = (
-        out.groupby(["yr_qtr", "original_class"], dropna=False)["count"]
-        .sum()
-        .reset_index(name="total_origin")
-    )
-
-    out = out.merge(totals, how="left", on=["yr_qtr", "original_class"])
-    out["pct_within_origin"] = 0.0
-    mask = out["total_origin"] > 0
-    out.loc[mask, "pct_within_origin"] = out.loc[mask, "count"] / out.loc[mask, "total_origin"]
-
-    return out.sort_values(["yr_qtr", "original_class", "current_class"]).reset_index(drop=True)
-
-def transition_matrix(summary_df, yr_qtr, value="count"):
-    mat = (
-        summary_df[summary_df["yr_qtr"] == yr_qtr]
-        .pivot(index="original_class", columns="current_class", values=value)
-        .reindex(index=CLASS_ORDER, columns=CLASS_ORDER)
-        .fillna(0)
-    )
-    return mat
-
-def plot_transition_counts(summary_df, yr_qtr):
-    mat = transition_matrix(summary_df, yr_qtr, value="count")
-    fig, ax = plt.subplots(figsize=(8, 5))
-    im = ax.imshow(mat.values, aspect="auto")
-    ax.set_xticks(range(len(CLASS_ORDER)))
-    ax.set_xticklabels(CLASS_ORDER, rotation=30, ha="right")
-    ax.set_yticks(range(len(CLASS_ORDER)))
-    ax.set_yticklabels(CLASS_ORDER)
-    ax.set_xlabel("Current class")
-    ax.set_ylabel("Original class")
-    ax.set_title(f"Transition counts for {yr_qtr}")
-    for i in range(mat.shape[0]):
-        for j in range(mat.shape[1]):
-            ax.text(j, i, int(mat.iloc[i, j]), ha="center", va="center")
-    plt.colorbar(im, ax=ax)
-    plt.tight_layout()
-    plt.show()
-
-def plot_transition_pct(summary_df, yr_qtr):
-    mat = transition_matrix(summary_df, yr_qtr, value="pct_within_origin")
-    fig, ax = plt.subplots(figsize=(8, 5))
-    im = ax.imshow(mat.values, aspect="auto")
-    ax.set_xticks(range(len(CLASS_ORDER)))
-    ax.set_xticklabels(CLASS_ORDER, rotation=30, ha="right")
-    ax.set_yticks(range(len(CLASS_ORDER)))
-    ax.set_yticklabels(CLASS_ORDER)
-    ax.set_xlabel("Current class")
-    ax.set_ylabel("Original class")
-    ax.set_title(f"Transition share within original class for {yr_qtr}")
-    for i in range(mat.shape[0]):
-        for j in range(mat.shape[1]):
-            ax.text(j, i, f"{mat.iloc[i, j]:.2%}", ha="center", va="center")
-    plt.colorbar(im, ax=ax)
-    plt.tight_layout()
-    plt.show()
-
-def plot_transition_stack(summary_df, original_class):
-    df = summary_df[summary_df["original_class"] == original_class].copy()
-    wide = (
-        df.pivot(index="yr_qtr", columns="current_class", values="count")
-        .reindex(columns=CLASS_ORDER)
-        .fillna(0)
-        .sort_index()
-    )
-    fig, ax = plt.subplots(figsize=(10, 5))
-    wide.plot(kind="bar", stacked=True, ax=ax)
-    ax.set_title(f"Transitions over time from {original_class}")
-    ax.set_xlabel("yr_qtr")
-    ax.set_ylabel("Count")
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
-    plt.show()
-
-def plot_transition_stack_pct(summary_df, original_class):
-    df = summary_df[summary_df["original_class"] == original_class].copy()
-    wide = (
-        df.pivot(index="yr_qtr", columns="current_class", values="pct_within_origin")
-        .reindex(columns=CLASS_ORDER)
-        .fillna(0)
-        .sort_index()
-    )
-    fig, ax = plt.subplots(figsize=(10, 5))
-    wide.plot(kind="bar", stacked=True, ax=ax)
-    ax.set_title(f"Transition shares over time from {original_class}")
-    ax.set_xlabel("yr_qtr")
-    ax.set_ylabel("Share")
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
-    plt.show()
+plot_transition_counts(transition_summary, "2021-1")
+plot_transition_pct(transition_summary, "2021-1")
+plot_transition_stack(transition_summary, "bottom 25%")
+plot_transition_stack_pct(transition_summary, "bottom 25%")
