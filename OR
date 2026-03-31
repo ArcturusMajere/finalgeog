@@ -1,177 +1,12 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import oracledb
-from concurrent.futures import ThreadPoolExecutor
+def summarize_all_class_transitions(tracked):
+    rank_map = {
+        "bottom 25%": 1,
+        "25-50%": 2,
+        "50-75%": 3,
+        "top 25%": 4
+    }
 
-CLASS_ORDER = ["bottom 25%", "25-50%", "50-75%", "top 25%"]
-
-def get_state_cohort(fips, yr, qtr, naics4=None):
-    w = fetch_wage(fips, yr, qtr)
-    d = fetch_dom(fips, yr, qtr)
-    w["UI"] = w["UI"].str.zfill(10)
-    d["UI"] = d["UI"].str.zfill(10)
-    df = pd.merge(w, d, how="left", on="UI", indicator=True)
-    df = dupeID(df)
-    df = df[df["WAGE"] > 0].copy()
-    if naics4 is not None:
-        df = df[df["naics4"] == naics4].copy()
-    if df.empty:
-        return pd.DataFrame(columns=[
-            "BLS_ID","UI","WAGE","STATE_CODE","state","sector","industry","yr_qtr","original_class"
-        ])
-    df["STATE_CODE"] = str(fips).zfill(2)
-    df["state"] = us.states.lookup(fips).name if us.states.lookup(fips) else str(fips)
-    if "sector" not in df.columns:
-        df["sector"] = df["naics2"] if "naics2" in df.columns else pd.NA
-    if "industry" not in df.columns:
-        df["industry"] = df["naics4"] if "naics4" in df.columns else pd.NA
-    df["yr_qtr"] = f"{yr}-{qtr}"
-    df["original_class"] = pd.qcut(df["WAGE"], q=4, labels=CLASS_ORDER, duplicates="drop")
-    cols = ["BLS_ID","UI","WAGE","STATE_CODE","state","sector","industry","yr_qtr","original_class"]
-    return df[cols].copy()
-
-def find_cohort(yr, qtr, cohort_ids):
-    conn = oracledb.connect(
-        user=open("USER.txt").read(),
-        password=open("password.txt").read(),
-        dsn="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov"
-    )
-    chunk = 1000
-    dfs = []
-    for i in range(0, len(cohort_ids), chunk):
-        ids = cohort_ids[i:i + chunk]
-        if len(ids) == 0:
-            continue
-        bind_vars = ",".join(f":id{j}" for j in range(len(ids)))
-        sql = f"""
-        SELECT *
-        FROM wagerecusr.wage_data
-        WHERE yr = :yr
-        AND qtr = :qtr
-        AND wage > 0
-        AND bls_id IN ({bind_vars})
-        """
-        binds = {"yr": yr, "qtr": qtr}
-        binds.update({f"id{j}": v for j, v in enumerate(ids)})
-        with conn.cursor() as cur:
-            cur.execute(sql, binds)
-            cols = [c[0].upper() for c in cur.description]
-            rows = cur.fetchall()
-        if rows:
-            dfs.append(pd.DataFrame(rows, columns=cols))
-    conn.close()
-    if not dfs:
-        return pd.DataFrame(columns=[
-            "yr_qtr","state","sector","industry","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"
-        ])
-    df = pd.concat(dfs, ignore_index=True)
-    df = dupeID(df)
-    if df.empty:
-        return pd.DataFrame(columns=[
-            "yr_qtr","state","sector","industry","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"
-        ])
-    df["state"] = [fips2name(code) for code in df["STATE_CODE"]]
-    df["sector"] = df["NAICS2"] if "NAICS2" in df.columns else pd.NA
-    df["industry"] = df["NAICS4"] if "NAICS4" in df.columns else pd.NA
-    df["yr_qtr"] = f"{yr}-{qtr}"
-    df["YR"] = str(yr)
-    df["QTR"] = str(qtr)
-    cols = ["yr_qtr","state","sector","industry","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"]
-    print(f"{df.shape[0]} cohort found in {yr} Q{qtr}")
-    return df[cols].copy()
-
-def add_current_class(df):
-    if df.empty:
-        df["current_class"] = pd.Series(dtype="object")
-        return df
-    df = df.copy()
-    df["current_class"] = pd.qcut(df["WAGE"], q=4, labels=CLASS_ORDER, duplicates="drop")
-    return df
-
-def find_cohort_with_classes(yr, qtr, cohort_ids, original_map):
-    df = find_cohort(yr, qtr, cohort_ids)
-    if df.empty:
-        cols = [
-            "cohort","yr_qtr","state","sector","industry","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR",
-            "original_class","current_class","class_transition",
-            "original_state","state_transition",
-            "original_sector","sector_transition",
-            "original_industry","industry_transition",
-            "original_yr_qtr"
-        ]
-        return pd.DataFrame(columns=cols)
-    df = add_current_class(df)
-    df = df.merge(original_map, how="left", on="BLS_ID")
-    df["class_transition"] = df["original_class"].astype(str) + " -> " + df["current_class"].astype(str)
-    df["state_transition"] = df["original_state"].astype(str) + " -> " + df["state"].astype(str)
-    df["sector_transition"] = df["original_sector"].astype(str) + " -> " + df["sector"].astype(str)
-    df["industry_transition"] = df["original_industry"].astype(str) + " -> " + df["industry"].astype(str)
-    df["cohort"] = "baseline_state_cohort"
-    cols = [
-        "cohort","yr_qtr","state","sector","industry","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR",
-        "original_class","current_class","class_transition",
-        "original_state","state_transition",
-        "original_sector","sector_transition",
-        "original_industry","industry_transition",
-        "original_yr_qtr"
-    ]
-    return df[cols].copy()
-
-def find_cohort_threader(years, quarters, cohort_ids, original_map, threads=2):
-    tasks = [(y, q) for y in years for q in quarters]
-    def worker(t):
-        y, q = t
-        return find_cohort_with_classes(y, q, cohort_ids, original_map)
-    with ThreadPoolExecutor(max_workers=threads) as ex:
-        dfs = list(ex.map(worker, tasks))
-    dfs = [df for df in dfs if isinstance(df, pd.DataFrame) and not df.empty]
-    if not dfs:
-        return pd.DataFrame(columns=[
-            "cohort","yr_qtr","state","sector","industry","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR",
-            "original_class","current_class","class_transition",
-            "original_state","state_transition",
-            "original_sector","sector_transition",
-            "original_industry","industry_transition",
-            "original_yr_qtr"
-        ])
-    return pd.concat(dfs, ignore_index=True)
-
-def build_original_map(base_fips, base_yr, base_qtr, naics4=None):
-    base = get_state_cohort(base_fips, base_yr, base_qtr, naics4=naics4)
-    if base.empty:
-        return pd.DataFrame(columns=[
-            "BLS_ID","original_class","original_state","original_sector","original_industry","original_yr_qtr"
-        ]), []
-    original_map = base[["BLS_ID","original_class","state","sector","industry","yr_qtr"]].copy()
-    original_map = original_map.rename(columns={
-        "state": "original_state",
-        "sector": "original_sector",
-        "industry": "original_industry",
-        "yr_qtr": "original_yr_qtr"
-    })
-    cohort_ids = base["BLS_ID"].dropna().unique().tolist()
-    return original_map, cohort_ids
-
-@timer
-def track_state_cohort(base_fips, base_yr, base_qtr, years, quarters, naics4=None, max_threads=2):
-    original_map, cohort_ids = build_original_map(base_fips, base_yr, base_qtr, naics4=naics4)
-    if len(cohort_ids) == 0:
-        return pd.DataFrame(columns=[
-            "cohort","yr_qtr","state","sector","industry","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR",
-            "original_class","current_class","class_transition",
-            "original_state","state_transition",
-            "original_sector","sector_transition",
-            "original_industry","industry_transition",
-            "original_yr_qtr"
-        ])
-    tracked = find_cohort_threader(years, quarters, cohort_ids, original_map, threads=max_threads)
-    return tracked
-
-
-
-
-def summarize_class_transitions(tracked):
-    out = (
+    class_summary = (
         tracked.groupby(
             ["yr_qtr", "original_class", "current_class", "class_transition"],
             dropna=False
@@ -181,10 +16,8 @@ def summarize_class_transitions(tracked):
         .sort_values(["yr_qtr", "original_class", "current_class"])
         .reset_index(drop=True)
     )
-    return out
 
-def summarize_class_transition_by_state(tracked):
-    out = (
+    state_within_class = (
         tracked.groupby(
             ["yr_qtr", "class_transition", "original_state", "state"],
             dropna=False
@@ -194,10 +27,8 @@ def summarize_class_transition_by_state(tracked):
         .sort_values(["yr_qtr", "class_transition", "count"], ascending=[True, True, False])
         .reset_index(drop=True)
     )
-    return out
 
-def summarize_class_transition_by_sector(tracked):
-    out = (
+    sector_within_class = (
         tracked.groupby(
             ["yr_qtr", "class_transition", "original_sector", "sector"],
             dropna=False
@@ -207,10 +38,8 @@ def summarize_class_transition_by_sector(tracked):
         .sort_values(["yr_qtr", "class_transition", "count"], ascending=[True, True, False])
         .reset_index(drop=True)
     )
-    return out
 
-def summarize_class_transition_by_industry(tracked):
-    out = (
+    industry_within_class = (
         tracked.groupby(
             ["yr_qtr", "class_transition", "original_industry", "industry"],
             dropna=False
@@ -220,57 +49,73 @@ def summarize_class_transition_by_industry(tracked):
         .sort_values(["yr_qtr", "class_transition", "count"], ascending=[True, True, False])
         .reset_index(drop=True)
     )
-    return out
 
-def summarize_upward_downward(tracked):
-    rank_map = {
-        "bottom 25%": 1,
-        "25-50%": 2,
-        "50-75%": 3,
-        "top 25%": 4
-    }
     df = tracked.copy()
     df["orig_rank"] = df["original_class"].map(rank_map)
     df["curr_rank"] = df["current_class"].map(rank_map)
     df["movement"] = "same"
     df.loc[df["curr_rank"] > df["orig_rank"], "movement"] = "up"
     df.loc[df["curr_rank"] < df["orig_rank"], "movement"] = "down"
-    out = (
+
+    movement_summary = (
         df.groupby(["yr_qtr", "movement"], dropna=False)
         .size()
         .reset_index(name="count")
         .sort_values(["yr_qtr", "movement"])
         .reset_index(drop=True)
     )
-    return out
 
-def summarize_upward_downward_by_state(tracked):
-    rank_map = {
-        "bottom 25%": 1,
-        "25-50%": 2,
-        "50-75%": 3,
-        "top 25%": 4
-    }
-    df = tracked.copy()
-    df["orig_rank"] = df["original_class"].map(rank_map)
-    df["curr_rank"] = df["current_class"].map(rank_map)
-    df["movement"] = "same"
-    df.loc[df["curr_rank"] > df["orig_rank"], "movement"] = "up"
-    df.loc[df["curr_rank"] < df["orig_rank"], "movement"] = "down"
-    out = (
+    movement_state = (
         df.groupby(["yr_qtr", "movement", "original_state", "state"], dropna=False)
         .size()
         .reset_index(name="count")
         .sort_values(["yr_qtr", "movement", "count"], ascending=[True, True, False])
         .reset_index(drop=True)
     )
-    return out
 
+    movement_sector = (
+        df.groupby(["yr_qtr", "movement", "original_sector", "sector"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values(["yr_qtr", "movement", "count"], ascending=[True, True, False])
+        .reset_index(drop=True)
+    )
 
+    movement_industry = (
+        df.groupby(["yr_qtr", "movement", "original_industry", "industry"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values(["yr_qtr", "movement", "count"], ascending=[True, True, False])
+        .reset_index(drop=True)
+    )
 
-class_summary = summarize_class_transitions(tracked)
-state_within_class = summarize_class_transition_by_state(tracked)
-sector_within_class = summarize_class_transition_by_sector(tracked)
-industry_within_class = summarize_class_transition_by_industry(tracked)
-movement_summary = summarize_upward_downward(tracked)
-movement_state = summarize_upward_downward_by_state(tracked)
+    return {
+        "class_summary": class_summary,
+        "state_within_class": state_within_class,
+        "sector_within_class": sector_within_class,
+        "industry_within_class": industry_within_class,
+        "movement_summary": movement_summary,
+        "movement_state": movement_state,
+        "movement_sector": movement_sector,
+        "movement_industry": movement_industry
+    }
+
+summaries = summarize_all_class_transitions(tracked)
+
+class_summary = summaries["class_summary"]
+state_within_class = summaries["state_within_class"]
+sector_within_class = summaries["sector_within_class"]
+industry_within_class = summaries["industry_within_class"]
+movement_summary = summaries["movement_summary"]
+movement_state = summaries["movement_state"]
+movement_sector = summaries["movement_sector"]
+movement_industry = summaries["movement_industry"]
+
+print(class_summary.head())
+print(state_within_class.head())
+print(sector_within_class.head())
+print(industry_within_class.head())
+print(movement_summary.head())
+print(movement_state.head())
+print(movement_sector.head())
+print(movement_industry.head())
