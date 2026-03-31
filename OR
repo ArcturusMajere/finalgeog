@@ -1,4 +1,3 @@
-
 def fetch_childcare_cohort(fips, yr, qtr):
     w = fetch_wage(fips, yr, qtr)
     d = fetch_dom(fips, yr, qtr)
@@ -13,13 +12,8 @@ def fetch_childcare_cohort(fips, yr, qtr):
     cohort['class'] = pd.qcut(
         cohort['WAGE'],
         q=4,
-        labels=['low', 'middle', 'high', 'top'],
+        labels=['bottom 25%', '25-50%', '50-75%', 'top 25%'],
         duplicates='drop'
     )
 
-    low = cohort.loc[cohort['class'] == 'low', 'BLS_ID'].tolist()
-    mid = cohort.loc[cohort['class'] == 'middle', 'BLS_ID'].tolist()
-    high = cohort.loc[cohort['class'] == 'high', 'BLS_ID'].tolist()
-    top = cohort.loc[cohort['class'] == 'top', 'BLS_ID'].tolist()
-
-    return low, mid, high, top
+    return cohort
