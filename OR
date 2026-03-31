@@ -1,1 +1,25 @@
 
+def fetch_childcare_cohort(fips, yr, qtr):
+    w = fetch_wage(fips, yr, qtr)
+    d = fetch_dom(fips, yr, qtr)
+    w['UI'] = w['UI'].str.zfill(10)
+    d['UI'] = d['UI'].str.zfill(10)
+    df = pd.merge(w, d, how='left', on='UI', indicator=True)
+    dff = dupeID(df)
+    dff = dff[dff['WAGE'] > 0]
+    cohort = dff[dff['naics4'] == '6244'].copy()
+    print(f"{cohort.shape[0]} childcare peeps found in {us.states.lookup(fips)} in {yr}Q{qtr}")
+
+    cohort['class'] = pd.qcut(
+        cohort['WAGE'],
+        q=4,
+        labels=['low', 'middle', 'high', 'top'],
+        duplicates='drop'
+    )
+
+    low = cohort.loc[cohort['class'] == 'low', 'BLS_ID'].tolist()
+    mid = cohort.loc[cohort['class'] == 'middle', 'BLS_ID'].tolist()
+    high = cohort.loc[cohort['class'] == 'high', 'BLS_ID'].tolist()
+    top = cohort.loc[cohort['class'] == 'top', 'BLS_ID'].tolist()
+
+    return low, mid, high, top
