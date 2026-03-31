@@ -1,4 +1,4 @@
-def get_cohort_wages(yr, qtr, cohort, cohort_name="cohort"):
+def find_cohort(yr, qtr, cohort):
     conn = oracledb.connect(
         user=open('USER.txt').read(),
         password=open('password.txt').read(),
@@ -29,106 +29,22 @@ def get_cohort_wages(yr, qtr, cohort, cohort_name="cohort"):
             dfs.append(pd.DataFrame(rows, columns=cols))
     conn.close()
     if not dfs:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","current_class"])
     df = pd.concat(dfs, ignore_index=True)
     df = dupeID(df)
+    if df.empty:
+        return pd.DataFrame(columns=["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","current_class"])
     df["state"] = [fips2name(code) for code in df["STATE_CODE"]]
     df["yr_qtr"] = f"{yr}-{qtr}"
     df["YR"] = str(yr)
     df["QTR"] = str(qtr)
-    df["cohort"] = cohort_name
-    return df
-
-def add_qcut_class(df, wage_col, class_col):
-    labels = ["bottom 25%", "25-50%", "50-75%", "top 25%"]
-    out = df.copy()
-    qs = out[wage_col].quantile([0, 0.25, 0.50, 0.75, 1.0])
-    pct_df = pd.DataFrame([{
-        "yr_qtr": out["yr_qtr"].iloc[0],
-        "p0": qs.loc[0.0],
-        "p25": qs.loc[0.25],
-        "p50": qs.loc[0.50],
-        "p75": qs.loc[0.75],
-        "p100": qs.loc[1.0],
-        "n": len(out)
-    }])
-    out[class_col] = pd.qcut(
-        out[wage_col],
+    df["current_class"] = pd.qcut(
+        df["WAGE"],
         q=4,
-        labels=labels,
+        labels=["bottom 25%", "25-50%", "50-75%", "top 25%"],
         duplicates="drop"
     )
-    return out, pct_df
-
-def build_original_cohort(base_yr, base_qtr, cohort, cohort_name="cohort"):
-    base_df = get_cohort_wages(base_yr, base_qtr, cohort, cohort_name)
-    if base_df.empty:
-        cols1 = ["BLS_ID", "original_wage", "original_class", "original_yr_qtr", "cohort"]
-        cols2 = ["yr_qtr", "p0", "p25", "p50", "p75", "p100", "n"]
-        return pd.DataFrame(columns=cols1), pd.DataFrame(columns=cols2)
-    base_df, base_pct = add_qcut_class(base_df, "WAGE", "original_class")
-    original_df = base_df[["BLS_ID", "WAGE", "original_class", "yr_qtr", "cohort"]].copy()
-    original_df = original_df.rename(columns={
-        "WAGE": "original_wage",
-        "yr_qtr": "original_yr_qtr"
-    })
-    return original_df, base_pct
-
-def find_cohort_with_classes(yr, qtr, cohort, original_df, cohort_name="cohort"):
-    df = get_cohort_wages(yr, qtr, cohort, cohort_name)
-    out_cols = [
-        "cohort", "yr_qtr", "state", "BLS_ID", "UI", "WAGE", "STATE_CODE", "YR", "QTR",
-        "current_class", "original_class", "original_wage", "original_yr_qtr"
-    ]
-    pct_cols = ["yr_qtr", "p0", "p25", "p50", "p75", "p100", "n"]
-    if df.empty:
-        return pd.DataFrame(columns=out_cols), pd.DataFrame(columns=pct_cols)
-    df, pct_df = add_qcut_class(df, "WAGE", "current_class")
-    df = df.merge(
-        original_df[["BLS_ID", "original_wage", "original_class", "original_yr_qtr", "cohort"]],
-        how="left",
-        on=["BLS_ID", "cohort"]
-    )
-    df = df[out_cols]
+    col = ["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","current_class"]
+    df = df[col]
     print(f"{df.shape[0]} cohort found in {yr} Q{qtr}")
-    return df, pct_df
-
-def find_cohort_threader(years, quarters, cohort, original_df, cohort_name="cohort", threads=2):
-    tasks = [(y, q) for y in years for q in quarters]
-    def worker(t):
-        y, q = t
-        return find_cohort_with_classes(y, q, cohort, original_df, cohort_name)
-    with ThreadPoolExecutor(max_workers=threads) as ex:
-        results = list(ex.map(worker, tasks))
-    df_list = []
-    pct_list = []
-    for df, pct in results:
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            df_list.append(df)
-        if isinstance(pct, pd.DataFrame) and not pct.empty:
-            pct_list.append(pct)
-    out_cols = [
-        "cohort", "yr_qtr", "state", "BLS_ID", "UI", "WAGE", "STATE_CODE", "YR", "QTR",
-        "current_class", "original_class", "original_wage", "original_yr_qtr"
-    ]
-    pct_cols = ["yr_qtr", "p0", "p25", "p50", "p75", "p100", "n"]
-    full_df = pd.concat(df_list, ignore_index=True) if df_list else pd.DataFrame(columns=out_cols)
-    pct_df = pd.concat(pct_list, ignore_index=True) if pct_list else pd.DataFrame(columns=pct_cols)
-    return full_df, pct_df
-
-@timer
-def track_bins(years, qtrs, cohort, base_yr, base_qtr, cohort_name="cohort", max_threads=2):
-    original_df, original_pct = build_original_cohort(base_yr, base_qtr, cohort, cohort_name)
-    full_df, current_pct = find_cohort_threader(years, qtrs, cohort, original_df, cohort_name, max_threads)
-    return full_df, current_pct, original_pct
-
-
-full_df, current_pct, original_pct = track_bins(
-    years=[2021, 2022, 2023],
-    qtrs=[1, 2, 3, 4],
-    cohort=cohort,
-    base_yr=2021,
-    base_qtr=1,
-    cohort_name="childcare_2021q1",
-    max_threads=2
-)
+    return df
