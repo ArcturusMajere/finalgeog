@@ -1,13 +1,37 @@
-def find_cohort(yr, qtr, cohort):
+def get_state_cohort(fips, yr, qtr, naics4=None):
+    w = fetch_wage(fips, yr, qtr)
+    d = fetch_dom(fips, yr, qtr)
+    w["UI"] = w["UI"].str.zfill(10)
+    d["UI"] = d["UI"].str.zfill(10)
+    df = pd.merge(w, d, how="left", on="UI", indicator=True)
+    df = dupeID(df)
+    df = df[df["WAGE"] > 0].copy()
+    if naics4 is not None:
+        df = df[df["naics4"] == naics4].copy()
+    if df.empty:
+        return pd.DataFrame(columns=["BLS_ID","UI","WAGE","STATE_CODE","state","yr_qtr","original_class"])
+    df["STATE_CODE"] = str(fips).zfill(2)
+    df["state"] = us.states.lookup(fips).name if us.states.lookup(fips) else str(fips)
+    df["yr_qtr"] = f"{yr}-{qtr}"
+    df["original_class"] = pd.qcut(
+        df["WAGE"],
+        q=4,
+        labels=["bottom 25%", "25-50%", "50-75%", "top 25%"],
+        duplicates="drop"
+    )
+    cols = ["BLS_ID","UI","WAGE","STATE_CODE","state","yr_qtr","original_class"]
+    return df[cols].copy()
+
+def find_cohort(yr, qtr, cohort_ids):
     conn = oracledb.connect(
-        user=open('USER.txt').read(),
-        password=open('password.txt').read(),
+        user=open("USER.txt").read(),
+        password=open("password.txt").read(),
         dsn="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov"
     )
     chunk = 1000
     dfs = []
-    for i in range(0, len(cohort), chunk):
-        ids = cohort[i:i + chunk]
+    for i in range(0, len(cohort_ids), chunk):
+        ids = cohort_ids[i:i + chunk]
         if len(ids) == 0:
             continue
         bind_vars = ",".join(f":id{j}" for j in range(len(ids)))
@@ -29,22 +53,79 @@ def find_cohort(yr, qtr, cohort):
             dfs.append(pd.DataFrame(rows, columns=cols))
     conn.close()
     if not dfs:
-        return pd.DataFrame(columns=["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","current_class"])
+        return pd.DataFrame(columns=["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"])
     df = pd.concat(dfs, ignore_index=True)
     df = dupeID(df)
     if df.empty:
-        return pd.DataFrame(columns=["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","current_class"])
+        return pd.DataFrame(columns=["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"])
     df["state"] = [fips2name(code) for code in df["STATE_CODE"]]
     df["yr_qtr"] = f"{yr}-{qtr}"
     df["YR"] = str(yr)
     df["QTR"] = str(qtr)
+    cols = ["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR"]
+    print(f"{df.shape[0]} cohort found in {yr} Q{qtr}")
+    return df[cols].copy()
+
+def add_current_class(df):
+    if df.empty:
+        df["current_class"] = pd.Series(dtype="object")
+        return df
+    df = df.copy()
     df["current_class"] = pd.qcut(
         df["WAGE"],
         q=4,
         labels=["bottom 25%", "25-50%", "50-75%", "top 25%"],
         duplicates="drop"
     )
-    col = ["yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","current_class"]
-    df = df[col]
-    print(f"{df.shape[0]} cohort found in {yr} Q{qtr}")
     return df
+
+def find_cohort_with_classes(yr, qtr, cohort_ids, original_map):
+    df = find_cohort(yr, qtr, cohort_ids)
+    if df.empty:
+        cols = ["cohort","yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","original_class","current_class","original_yr_qtr"]
+        return pd.DataFrame(columns=cols)
+    df = add_current_class(df)
+    df = df.merge(original_map, how="left", on="BLS_ID")
+    df["cohort"] = "baseline_state_cohort"
+    cols = ["cohort","yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","original_class","current_class","original_yr_qtr"]
+    return df[cols].copy()
+
+def find_cohort_threader(years, quarters, cohort_ids, original_map, threads=2):
+    tasks = [(y, q) for y in years for q in quarters]
+    def worker(t):
+        y, q = t
+        return find_cohort_with_classes(y, q, cohort_ids, original_map)
+    with ThreadPoolExecutor(max_workers=threads) as ex:
+        dfs = list(ex.map(worker, tasks))
+    dfs = [df for df in dfs if isinstance(df, pd.DataFrame) and not df.empty]
+    if not dfs:
+        return pd.DataFrame(columns=["cohort","yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","original_class","current_class","original_yr_qtr"])
+    return pd.concat(dfs, ignore_index=True)
+
+def build_original_map(base_fips, base_yr, base_qtr, naics4=None):
+    base = get_state_cohort(base_fips, base_yr, base_qtr, naics4=naics4)
+    if base.empty:
+        return pd.DataFrame(columns=["BLS_ID","original_class","original_yr_qtr"]), []
+    original_map = base[["BLS_ID","original_class","yr_qtr"]].copy()
+    original_map = original_map.rename(columns={"yr_qtr": "original_yr_qtr"})
+    cohort_ids = base["BLS_ID"].dropna().unique().tolist()
+    return original_map, cohort_ids
+
+@timer
+def track_state_cohort(base_fips, base_yr, base_qtr, years, quarters, naics4=None, max_threads=2):
+    original_map, cohort_ids = build_original_map(base_fips, base_yr, base_qtr, naics4=naics4)
+    if len(cohort_ids) == 0:
+        return pd.DataFrame(columns=["cohort","yr_qtr","state","BLS_ID","UI","WAGE","STATE_CODE","YR","QTR","original_class","current_class","original_yr_qtr"])
+    tracked = find_cohort_threader(years, quarters, cohort_ids, original_map, threads=max_threads)
+    return tracked
+
+
+tracked = track_state_cohort(
+    base_fips="16",
+    base_yr=2021,
+    base_qtr=1,
+    years=[2021, 2022, 2023],
+    quarters=[1, 2, 3, 4],
+    naics4="6244",
+    max_threads=2
+)
