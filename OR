@@ -1,1 +1,39 @@
-%fetch_wage(fips=16,yr=2024,qtr=3,out=work.idaho_wages);
+%macro fetch_wage_libname(fips=,yr=,qtr=,out=work.wage_data);
+
+%let oracle_user=your_user;
+%let oracle_password=your_password;
+
+libname wageora oracle
+user="&oracle_user"
+password="&oracle_password"
+path="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov"
+schema=wagerecusr;
+
+proc sql;
+create table &out as
+select
+BLS_ID,
+UI,
+RUN,
+WAGE,
+YR,
+QTR,
+state_code
+from wageora.wage_data
+where YR=&yr
+and QTR=&qtr
+and state_code="&fips";
+quit;
+
+proc sql noprint;
+select count(*) into :row_count trimmed
+from &out;
+quit;
+
+%put rows=&row_count;
+
+libname wageora clear;
+
+%mend;
+
+%fetch_wage_libname(fips=16,yr=2024,qtr=3,out=work.idaho_wages);
