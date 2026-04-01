@@ -12,7 +12,6 @@ def summarize_all_class_transitions(tracked):
     }
 
     df = tracked.copy()
-
     df["original_class"] = pd.Categorical(df["original_class"], categories=CLASS_ORDER, ordered=True)
     df["current_class"] = pd.Categorical(df["current_class"], categories=CLASS_ORDER, ordered=True)
 
@@ -29,10 +28,7 @@ def summarize_all_class_transitions(tracked):
     )
 
     state_within_class = (
-        df.groupby(
-            ["yr_qtr", "class_transition", "original_state", "state"],
-            dropna=False
-        )
+        df.groupby(["yr_qtr", "class_transition", "original_state", "state"], dropna=False)
         .size()
         .reset_index(name="count")
         .sort_values(["yr_qtr", "class_transition", "count"], ascending=[True, True, False])
@@ -40,10 +36,7 @@ def summarize_all_class_transitions(tracked):
     )
 
     sector_within_class = (
-        df.groupby(
-            ["yr_qtr", "class_transition", "original_sector", "sector"],
-            dropna=False
-        )
+        df.groupby(["yr_qtr", "class_transition", "original_sector", "sector"], dropna=False)
         .size()
         .reset_index(name="count")
         .sort_values(["yr_qtr", "class_transition", "count"], ascending=[True, True, False])
@@ -51,10 +44,7 @@ def summarize_all_class_transitions(tracked):
     )
 
     industry_within_class = (
-        df.groupby(
-            ["yr_qtr", "class_transition", "original_industry", "industry"],
-            dropna=False
-        )
+        df.groupby(["yr_qtr", "class_transition", "original_industry", "industry"], dropna=False)
         .size()
         .reset_index(name="count")
         .sort_values(["yr_qtr", "class_transition", "count"], ascending=[True, True, False])
@@ -75,39 +65,12 @@ def summarize_all_class_transitions(tracked):
         .reset_index(drop=True)
     )
 
-    movement_state = (
-        df.groupby(["yr_qtr", "movement", "original_state", "state"], dropna=False)
-        .size()
-        .reset_index(name="count")
-        .sort_values(["yr_qtr", "movement", "count"], ascending=[True, True, False])
-        .reset_index(drop=True)
-    )
-
-    movement_sector = (
-        df.groupby(["yr_qtr", "movement", "original_sector", "sector"], dropna=False)
-        .size()
-        .reset_index(name="count")
-        .sort_values(["yr_qtr", "movement", "count"], ascending=[True, True, False])
-        .reset_index(drop=True)
-    )
-
-    movement_industry = (
-        df.groupby(["yr_qtr", "movement", "original_industry", "industry"], dropna=False)
-        .size()
-        .reset_index(name="count")
-        .sort_values(["yr_qtr", "movement", "count"], ascending=[True, True, False])
-        .reset_index(drop=True)
-    )
-
     return {
         "class_summary": class_summary,
         "state_within_class": state_within_class,
         "sector_within_class": sector_within_class,
         "industry_within_class": industry_within_class,
-        "movement_summary": movement_summary,
-        "movement_state": movement_state,
-        "movement_sector": movement_sector,
-        "movement_industry": movement_industry
+        "movement_summary": movement_summary
     }
 
 def build_class_transition_matrix(class_summary, yr_qtr, value_col="count"):
@@ -231,7 +194,7 @@ def plot_top_class_transition_context(summary_df, yr_qtr, title, left_col, right
     plt.tight_layout()
     plt.show()
 
-def total_viz_func(tracked, example_yr_qtr=None, top_n=15):
+def plot_all_transition_viz(tracked, example_yr_qtr=None, top_n=15):
     summaries = summarize_all_class_transitions(tracked)
 
     class_summary = summaries["class_summary"]
@@ -282,4 +245,4 @@ def total_viz_func(tracked, example_yr_qtr=None, top_n=15):
 
     return summaries
 
-summaries = total_viz_func(tracked, example_yr_qtr="2021-1", top_n=15)
+summaries = plot_all_transition_viz(tracked, example_yr_qtr="2021-1", top_n=15)
