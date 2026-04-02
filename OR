@@ -1,9 +1,31 @@
 cur = conn.cursor()
 cur.execute("""
+    SELECT tablename
+    FROM pg_catalog.pg_tables
+    WHERE schemaname = 'public'
+    ORDER BY tablename
+""")
+tables = cur.fetchall()
+for (table,) in tables:
+    print(table)
+
+
+cur = conn.cursor()
+cur.execute("""
+    SELECT schema_name
+    FROM information_schema.schemata
+    ORDER BY schema_name
+""")
+for (schema,) in cur.fetchall():
+    print(schema)
+
+
+cur = conn.cursor()
+cur.execute("""
     SELECT schemaname, tablename
     FROM pg_catalog.pg_tables
-    WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-    ORDER BY schemaname, tablename
+    WHERE schemaname = 'public'
+    ORDER BY tablename
 """)
 tables = cur.fetchall()
 for schema, table in tables:
