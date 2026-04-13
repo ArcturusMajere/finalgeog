@@ -1,1 +1,29 @@
 
+%macro import_masterfile(year=,quarter=,dir=,out=masterfile);
+
+%let file=&dir./masterfile_&year._&quarter..csv;
+
+proc import
+    datafile="&file."
+    out=&out.
+    dbms=csv
+    replace;
+    guessingrows=max;
+    getnames=yes;
+run;
+
+data &out.;
+    set &out.;
+    year=&year.;
+    quarter=&quarter.;
+run;
+
+%mend;
+
+
+%import_masterfile(
+    year=2024,
+    quarter=3,
+    dir=/folders/myfolders/data,
+    out=master_2024_q3
+);
