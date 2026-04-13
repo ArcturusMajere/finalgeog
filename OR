@@ -1,1 +1,27 @@
-dominantnaics_yr2025_q3.csv
+%macro import_dominantnaics(year=,quarter=,dir=,out=dominantnaics);
+
+%let file=&dir./dominantnaics_yr&year._q&quarter..csv;
+
+proc import
+datafile="&file."
+out=&out.
+dbms=csv
+replace;
+guessingrows=max;
+getnames=yes;
+run;
+
+data &out.;
+set &out.;
+year=&year.;
+quarter=&quarter.;
+run;
+
+%mend;
+
+%import_dominantnaics(
+year=2025,
+quarter=3,
+dir=/folders/myfolders/data,
+out=dominantnaics_2025_q3
+);
