@@ -1,1 +1,56 @@
 
+import pandas as pd
+import numpy as np
+
+def summarize_id_bins(df):
+    out = df.copy()
+
+    yq = out["yr_qtr"].astype(str).str.split("-", expand=True)
+    out["year"] = pd.to_numeric(yq[0], errors="coerce")
+    out["qtr"] = pd.to_numeric(yq[1], errors="coerce")
+
+    out["period"] = np.select(
+        [
+            ((out["year"] > 2015) | ((out["year"] == 2015) & (out["qtr"] >= 1))) &
+            ((out["year"] < 2019) | ((out["year"] == 2019) & (out["qtr"] <= 4))),
+
+            ((out["year"] > 2020) | ((out["year"] == 2020) & (out["qtr"] >= 1))) &
+            ((out["year"] < 2024) | ((out["year"] == 2024) & (out["qtr"] <= 2))),
+
+            ((out["year"] > 2024) | ((out["year"] == 2024) & (out["qtr"] >= 3))) &
+            ((out["year"] < 2025) | ((out["year"] == 2025) & (out["qtr"] <= 3)))
+        ],
+        ["pre", "term", "post"],
+        default=np.nan
+    )
+
+    out = out[out["period"].notna()].copy()
+
+    result = (
+        out.groupby(["ID", "period"], as_index=False)
+        .agg(
+            mean_wage=("WAGE", "mean"),
+            median_wage=("WAGE", "median"),
+            median_hours=("HOURS", "median")
+        )
+    )
+
+    result["period"] = pd.Categorical(result["period"], categories=["pre", "term", "post"], ordered=True)
+    result = result.sort_values(["ID", "period"]).reset_index(drop=True)
+
+    return result
+
+
+
+result = summarize_id_bins(df)
+print(result.head())
+
+
+
+wide = (
+    result.pivot(index="ID", columns="period", values=["mean_wage", "median_wage", "median_hours"])
+    .sort_index(axis=1, level=1)
+)
+
+wide.columns = [f"{metric}_{period}" for metric, period in wide.columns]
+wide = wide.reset_index()
