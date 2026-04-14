@@ -1,12 +1,10 @@
 import pandas as pd
 
-def summarize_grp_cat_bins(df):
+def add_period(df):
     out = df.copy()
-
     yq = out["yr_qtr"].astype(str).str.split("-", expand=True)
     out["year"] = pd.to_numeric(yq[0], errors="coerce")
     out["qtr"] = pd.to_numeric(yq[1], errors="coerce")
-
     out["period"] = None
 
     pre = (
@@ -30,30 +28,28 @@ def summarize_grp_cat_bins(df):
     out.loc[term, "period"] = "term"
     out.loc[post, "period"] = "post"
 
-    out = out[out["period"].notna()].copy()
+    return out[out["period"].notna()].copy()
 
-    result = (
-        out.groupby(["grp", "CAT", "period"], as_index=False)
-        .agg(
-            mean_wage=("WAGE", "mean"),
-            median_wage=("WAGE", "median"),
-            median_hours=("HOURS", "median"),
-            n_ids=("ID", "nunique"),
-            n_rows=("ID", "size")
-        )
-        .sort_values(["grp", "CAT", "period"])
-        .reset_index(drop=True)
+tmp = add_period(df)
+
+grp_summary = (
+    tmp.groupby(["grp", "period"], as_index=False)
+    .agg(
+        mean_wage=("WAGE", "mean"),
+        median_wage=("WAGE", "median"),
+        median_hours=("HOURS", "median"),
+        n_ids=("ID", "nunique"),
+        n_rows=("ID", "size")
     )
-
-    return result
-
-grp_cat_summary = summarize_grp_cat_bins(df)
-
-wide = grp_cat_summary.pivot(
-    index=["grp", "CAT"],
-    columns="period",
-    values=["mean_wage", "median_wage", "median_hours", "n_ids", "n_rows"]
 )
 
-wide.columns = [f"{a}_{b}" for a, b in wide.columns]
-wide = wide.reset_index()
+cat_summary = (
+    tmp.groupby(["CAT", "period"], as_index=False)
+    .agg(
+        mean_wage=("WAGE", "mean"),
+        median_wage=("WAGE", "median"),
+        median_hours=("HOURS", "median"),
+        n_ids=("ID", "nunique"),
+        n_rows=("ID", "size")
+    )
+)
