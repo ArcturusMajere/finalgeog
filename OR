@@ -1,1 +1,59 @@
-TypeError: Choicelist and default value do not have a common dtype: The DType <class 'numpy.dtypes._PyFloatDType'> could not be promoted by <class 'numpy.dtypes.StrDType'>. This means that no common DType exists for the given inputs. For example they cannot be stored in a single array unless the dtype is `object`. The full list of DTypes is: (<class 'numpy.dtypes.StrDType'>, <class 'numpy.dtypes.StrDType'>, <class 'numpy.dtypes.StrDType'>, <class 'numpy.dtypes._PyFloatDType'>)
+import pandas as pd
+
+def summarize_grp_cat_bins(df):
+    out = df.copy()
+
+    yq = out["yr_qtr"].astype(str).str.split("-", expand=True)
+    out["year"] = pd.to_numeric(yq[0], errors="coerce")
+    out["qtr"] = pd.to_numeric(yq[1], errors="coerce")
+
+    out["period"] = None
+
+    pre = (
+        ((out["year"] == 2015) & (out["qtr"] >= 1)) |
+        ((out["year"] > 2015) & (out["year"] < 2020)) |
+        ((out["year"] == 2019) & (out["qtr"] <= 4))
+    )
+
+    term = (
+        ((out["year"] == 2020) & (out["qtr"] >= 1)) |
+        ((out["year"] > 2020) & (out["year"] < 2024)) |
+        ((out["year"] == 2024) & (out["qtr"] <= 2))
+    )
+
+    post = (
+        ((out["year"] == 2024) & (out["qtr"] >= 3)) |
+        ((out["year"] == 2025) & (out["qtr"] <= 3))
+    )
+
+    out.loc[pre, "period"] = "pre"
+    out.loc[term, "period"] = "term"
+    out.loc[post, "period"] = "post"
+
+    out = out[out["period"].notna()].copy()
+
+    result = (
+        out.groupby(["grp", "CAT", "period"], as_index=False)
+        .agg(
+            mean_wage=("WAGE", "mean"),
+            median_wage=("WAGE", "median"),
+            median_hours=("HOURS", "median"),
+            n_ids=("ID", "nunique"),
+            n_rows=("ID", "size")
+        )
+        .sort_values(["grp", "CAT", "period"])
+        .reset_index(drop=True)
+    )
+
+    return result
+
+grp_cat_summary = summarize_grp_cat_bins(df)
+
+wide = grp_cat_summary.pivot(
+    index=["grp", "CAT"],
+    columns="period",
+    values=["mean_wage", "median_wage", "median_hours", "n_ids", "n_rows"]
+)
+
+wide.columns = [f"{a}_{b}" for a, b in wide.columns]
+wide = wide.reset_index()
