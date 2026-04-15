@@ -1,4 +1,4 @@
-import pandas as pd
+=import pandas as pd
 import numpy as np
 
 def summarize_id_bins(df, method="static", ids=None, yr_qtrs=None, wage_col="WAGE", hours_col="HOURS"):
