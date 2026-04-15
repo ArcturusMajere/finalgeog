@@ -1,208 +1,53 @@
+def gapmap(df,ids=None,yr_qtrs=None,wage_col="WAGE"):
+    d=df.copy()
+    d["ID_enc"]=d["ID"].astype(str).str[-5:].apply(lambda x:x[::-1])
+    if ids is None: ids=sorted(d["ID_enc"].unique())
+    else: ids=[str(i)[-5:][::-1] for i in ids]
+    if yr_qtrs is None: yr_qtrs=sorted(d["yr_qtr"].unique())
+    mat=pd.DataFrame(0,index=yr_qtrs,columns=ids)
+    for _,r in d.iterrows():
+        i=r["ID_enc"];y=r["yr_qtr"]
+        if i in mat.columns and y in mat.index: mat.loc[y,i]=1
 
-import pandas as pd
-import numpy as np
+    gaps_out=[]
+    longest_gaps={}
+    for col in mat.columns:
+        arr=mat[col].to_numpy()
+        c=0;best=0;end=-1
+        for i,v in enumerate(arr):
+            if v==0:
+                c+=1
+                if c>best: best=c;end=i
+            else: c=0
+        if best>0:
+            start=end-best+1
+            pre=d.loc[(d["ID_enc"]==col)&(d["yr_qtr"].isin(yr_qtrs[:start])),wage_col]
+            post=d.loc[(d["ID_enc"]==col)&(d["yr_qtr"].isin(yr_qtrs[end+1:])),wage_col]
+            pre_mean=float(pre.mean()) if len(pre) else np.nan
+            post_mean=float(post.mean()) if len(post) else np.nan
+            gaps_out.append({"ID_enc":col,"gap_len":best,"gap_start":yr_qtrs[start],"gap_end":yr_qtrs[end],"pre_gap_mean":pre_mean,"post_gap_mean":post_mean,"delta_post_minus_pre":post_mean-pre_mean if np.isfinite(pre_mean) and np.isfinite(post_mean) else np.nan})
+        longest_gaps[col]=best
 
-def summarize_id_bins_from_zero_gap(df):
-    out = df.copy()
+    avg_gap=np.mean(list(longest_gaps.values())) if len(longest_gaps) else 0.0
+    plt.figure(figsize=(max(4,len(ids)/3),max(4,len(yr_qtrs)/3)))
+    ax=sns.heatmap(mat,cmap=sns.color_palette(["black","green"]),cbar=False,annot=False)
 
-    yq = out["yr_qtr"].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
-    out["year"] = pd.to_numeric(yq[0], errors="coerce")
-    out["qtr"] = pd.to_numeric(yq[1], errors="coerce")
-    out = out[out["year"].notna() & out["qtr"].isin([1, 2, 3, 4])].copy()
+    for j,col in enumerate(mat.columns):
+        best=longest_gaps[col]
+        if best>0:
+            arr=mat[col].to_numpy()
+            c=0;end=-1
+            for i,v in enumerate(arr):
+                if v==0:
+                    c+=1
+                    if c==best: end=i
+                else: c=0
+            start=end-best+1
+            ax.text(j+0.5,start+best/2,str(best),ha="center",va="center",color="white")
 
-    out["year"] = out["year"].astype(int)
-    out["qtr"] = out["qtr"].astype(int)
-    out["q_index"] = out["year"] * 4 + (out["qtr"] - 1)
-
-    qtr_level = (
-        out.groupby(["ID", "q_index"], as_index=False)
-        .agg(
-            year=("year", "first"),
-            qtr=("qtr", "first"),
-            quarter_wage=("WAGE", "sum")
-        )
-        .sort_values(["ID", "q_index"])
-        .reset_index(drop=True)
-    )
-
-    qtr_level["is_zero"] = qtr_level["quarter_wage"].fillna(0).eq(0)
-
-    qtr_level["prev_q_index"] = qtr_level.groupby("ID")["q_index"].shift()
-    qtr_level["prev_is_zero"] = qtr_level.groupby("ID")["is_zero"].shift()
-
-    qtr_level["new_zero_run"] = (
-        qtr_level["is_zero"] &
-        (
-            qtr_level["prev_is_zero"].ne(True) |
-            qtr_level["prev_q_index"].isna() |
-            (qtr_level["q_index"] != qtr_level["prev_q_index"] + 1)
-        )
-    )
-
-    qtr_level["zero_run_id"] = qtr_level.groupby("ID")["new_zero_run"].cumsum().where(qtr_level["is_zero"])
-
-    zero_runs = (
-        qtr_level[qtr_level["is_zero"]]
-        .groupby(["ID", "zero_run_id"], as_index=False)
-        .agg(
-            gap_start=("q_index", "min"),
-            gap_end=("q_index", "max"),
-            gap_len=("q_index", "size")
-        )
-        .sort_values(["ID", "gap_len", "gap_start"], ascending=[True, False, True])
-        .reset_index(drop=True)
-    )
-
-    longest_gap = zero_runs.drop_duplicates(subset=["ID"], keep="first").copy()
-
-    out = out.merge(longest_gap[["ID", "gap_start", "gap_end"]], on="ID", how="inner")
-
-    out["period"] = np.where(
-        out["q_index"] < out["gap_start"],
-        "pre",
-        np.where(out["q_index"] > out["gap_end"], "post", "term")
-    )
-
-    long_df = (
-        out.groupby(["ID", "period"], as_index=False)
-        .agg(
-            id_count=("ID", "size"),
-            mean_hours=("HOURS", "mean"),
-            median_hours=("HOURS", "median"),
-            mean_wage=("WAGE", "mean"),
-            wage_p25=("WAGE", lambda x: x.quantile(0.25)),
-            median_wage=("WAGE", "median"),
-            wage_p75=("WAGE", lambda x: x.quantile(0.75))
-        )
-    )
-
-    period_order = pd.CategoricalDtype(["pre", "term", "post"], ordered=True)
-    long_df["period"] = long_df["period"].astype(period_order)
-    long_df = long_df.sort_values(["ID", "period"]).reset_index(drop=True)
-
-    wide_df = long_df.pivot(
-        index="ID",
-        columns="period",
-        values=["id_count", "mean_hours", "median_hours", "mean_wage", "wage_p25", "median_wage", "wage_p75"]
-    )
-
-    wide_df = wide_df.reindex(columns=["pre", "term", "post"], level=1)
-    wide_df.columns = [f"{metric}_{period}" for metric, period in wide_df.columns]
-    wide_df = wide_df.reset_index()
-
-    gap_info = longest_gap.copy()
-    gap_info["term_start"] = (gap_info["gap_start"] // 4).astype(int).astype(str) + "-" + ((gap_info["gap_start"] % 4) + 1).astype(int).astype(str)
-    gap_info["term_end"] = (gap_info["gap_end"] // 4).astype(int).astype(str) + "-" + ((gap_info["gap_end"] % 4) + 1).astype(int).astype(str)
-    gap_info = gap_info[["ID", "term_start", "term_end", "gap_len"]].rename(columns={"gap_len": "term_qtr_count"})
-
-    wide_df = wide_df.merge(gap_info, on="ID", how="left")
-
-    return long_df, wide_df, gap_info
-
-long_df, wide_df, gap_info = summarize_id_bins_from_zero_gap(df)
-
-
-
-#MISSING
-
-import pandas as pd
-import numpy as np
-
-def summarize_id_bins_from_zero_gap(df):
-    out = df.copy()
-
-    yq = out["yr_qtr"].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
-    out["year"] = pd.to_numeric(yq[0], errors="coerce")
-    out["qtr"] = pd.to_numeric(yq[1], errors="coerce")
-    out = out[out["year"].notna() & out["qtr"].isin([1, 2, 3, 4])].copy()
-
-    out["year"] = out["year"].astype(int)
-    out["qtr"] = out["qtr"].astype(int)
-    out["q_index"] = out["year"] * 4 + (out["qtr"] - 1)
-
-    qtr_level = (
-        out.groupby(["ID", "q_index"], as_index=False)
-        .agg(
-            year=("year", "first"),
-            qtr=("qtr", "first"),
-            quarter_wage=("WAGE", lambda x: x.sum(min_count=1))
-        )
-        .sort_values(["ID", "q_index"])
-        .reset_index(drop=True)
-    )
-
-    qtr_level["is_zero"] = qtr_level["quarter_wage"].eq(0) & qtr_level["quarter_wage"].notna()
-
-    qtr_level["prev_q_index"] = qtr_level.groupby("ID")["q_index"].shift()
-    qtr_level["prev_is_zero"] = qtr_level.groupby("ID")["is_zero"].shift()
-
-    qtr_level["new_zero_run"] = (
-        qtr_level["is_zero"] &
-        (
-            qtr_level["prev_is_zero"].ne(True) |
-            qtr_level["prev_q_index"].isna() |
-            (qtr_level["q_index"] != qtr_level["prev_q_index"] + 1)
-        )
-    )
-
-    qtr_level["zero_run_id"] = qtr_level.groupby("ID")["new_zero_run"].cumsum().where(qtr_level["is_zero"])
-
-    zero_runs = (
-        qtr_level[qtr_level["is_zero"]]
-        .groupby(["ID", "zero_run_id"], as_index=False)
-        .agg(
-            gap_start=("q_index", "min"),
-            gap_end=("q_index", "max"),
-            gap_len=("q_index", "size")
-        )
-        .sort_values(["ID", "gap_len", "gap_start"], ascending=[True, False, True])
-        .reset_index(drop=True)
-    )
-
-    longest_gap = zero_runs.drop_duplicates(subset=["ID"], keep="first").copy()
-
-    out = out.merge(longest_gap[["ID", "gap_start", "gap_end"]], on="ID", how="inner")
-
-    out["period"] = np.where(
-        out["q_index"] < out["gap_start"],
-        "pre",
-        np.where(out["q_index"] > out["gap_end"], "post", "term")
-    )
-
-    long_df = (
-        out.groupby(["ID", "period"], as_index=False)
-        .agg(
-            id_count=("ID", "size"),
-            mean_hours=("HOURS", "mean"),
-            median_hours=("HOURS", "median"),
-            mean_wage=("WAGE", "mean"),
-            wage_p25=("WAGE", lambda x: x.quantile(0.25)),
-            median_wage=("WAGE", "median"),
-            wage_p75=("WAGE", lambda x: x.quantile(0.75))
-        )
-    )
-
-    period_order = pd.CategoricalDtype(["pre", "term", "post"], ordered=True)
-    long_df["period"] = long_df["period"].astype(period_order)
-    long_df = long_df.sort_values(["ID", "period"]).reset_index(drop=True)
-
-    wide_df = long_df.pivot(
-        index="ID",
-        columns="period",
-        values=["id_count", "mean_hours", "median_hours", "mean_wage", "wage_p25", "median_wage", "wage_p75"]
-    )
-
-    wide_df = wide_df.reindex(columns=["pre", "term", "post"], level=1)
-    wide_df.columns = [f"{metric}_{period}" for metric, period in wide_df.columns]
-    wide_df = wide_df.reset_index()
-
-    gap_info = longest_gap.copy()
-    gap_info["term_start"] = (gap_info["gap_start"] // 4).astype(int).astype(str) + "-" + ((gap_info["gap_start"] % 4) + 1).astype(int).astype(str)
-    gap_info["term_end"] = (gap_info["gap_end"] // 4).astype(int).astype(str) + "-" + ((gap_info["gap_end"] % 4) + 1).astype(int).astype(str)
-    gap_info = gap_info[["ID", "term_start", "term_end", "gap_len"]].rename(columns={"gap_len": "term_qtr_count"})
-
-    wide_df = wide_df.merge(gap_info, on="ID", how="left")
-
-    return long_df, wide_df, gap_info
-
-long_df, wide_df, gap_info = summarize_id_bins_from_zero_gap(df)
+    plt.title(f"Average longest gap length: {avg_gap:.2f} | IDs with gap: {sum(v>0 for v in longest_gaps.values())} | IDs without gap: {sum(v==0 for v in longest_gaps.values())}")
+    plt.xlabel("Encryp ID")
+    plt.ylabel("yr_qtr")
+    plt.show()
+    print(f"Average longest gap length: {avg_gap:.2f} | IDs with gap: {sum(v>0 for v in longest_gaps.values())} | IDs without gap: {sum(v==0 for v in longest_gaps.values())}")
+    return pd.DataFrame(gaps_out).sort_values(["gap_len","ID_enc"],ascending=[False,True]).reset_index(drop=True)
