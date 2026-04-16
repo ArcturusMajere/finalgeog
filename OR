@@ -1,1 +1,192 @@
-Choicelist and default value do not have a common dtype: The DType <class 'numpy.dtypes._PyFloatDType'> could not be promoted by <class 'numpy.dtypes.StrDType'>. This means that no common DType exists for the given inputs. For example they cannot be stored in a single array unless the dtype is `object`. The full list of DTypes is: (<class 'numpy.dtypes.StrDType'>, <class 'numpy.dtypes.StrDType'>, <class 'numpy.dtypes.StrDType'>, <class 'numpy.dtypes._PyFloatDType'>)
+import pandas as pd
+import numpy as np
+
+def summarize_id_bins(df, ids=None, yr_qtrs=None, wage_col="WAGE", hours_col="HOURS"):
+    d = df.copy()
+
+    yq = d["yr_qtr"].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
+    d["year"] = pd.to_numeric(yq[0], errors="coerce")
+    d["qtr"] = pd.to_numeric(yq[1], errors="coerce")
+    d = d[d["year"].notna() & d["qtr"].isin([1, 2, 3, 4])].copy()
+    d["year"] = d["year"].astype(int)
+    d["qtr"] = d["qtr"].astype(int)
+    d["q_index"] = d["year"] * 4 + (d["qtr"] - 1)
+    d["ID"] = d["ID"].astype(str)
+
+    d["hourly_wage"] = np.where(
+        d[hours_col].notna() & (d[hours_col] != 0),
+        d[wage_col] / d[hours_col],
+        np.nan
+    )
+
+    def build_summary(x):
+        s = (
+            x.groupby(["ID", "period"], as_index=False)
+            .agg(
+                id_count=("ID", "size"),
+                mean_hours=(hours_col, "mean"),
+                median_hours=(hours_col, "median"),
+                mean_wage=(wage_col, "mean"),
+                wage_p25=(wage_col, lambda z: z.quantile(0.25)),
+                median_wage=(wage_col, "median"),
+                wage_p75=(wage_col, lambda z: z.quantile(0.75)),
+                mean_hourly_wage=("hourly_wage", "mean"),
+                hourly_wage_p25=("hourly_wage", lambda z: z.quantile(0.25)),
+                median_hourly_wage=("hourly_wage", "median"),
+                hourly_wage_p75=("hourly_wage", lambda z: z.quantile(0.75))
+            )
+        )
+
+        col_order = [
+            "ID", "period", "id_count",
+            "mean_hours", "median_hours",
+            "mean_wage", "wage_p25", "median_wage", "wage_p75",
+            "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
+        ]
+        s = s[col_order]
+
+        hour_cols = ["mean_hours", "median_hours"]
+        wage_cols = ["mean_wage", "wage_p25", "median_wage", "wage_p75", "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"]
+
+        s[hour_cols] = s[hour_cols].round(1)
+        s[wage_cols] = (s[wage_cols] / 10).round() * 10
+
+        period_order = pd.CategoricalDtype(["pre", "term", "post"], ordered=True)
+        s["period"] = s["period"].astype(period_order)
+        s = s.sort_values(["ID", "period"]).reset_index(drop=True)
+
+        w = s.pivot(
+            index="ID",
+            columns="period",
+            values=[
+                "id_count",
+                "mean_hours", "median_hours",
+                "mean_wage", "wage_p25", "median_wage", "wage_p75",
+                "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
+            ]
+        )
+        w = w.reindex(columns=["pre", "term", "post"], level=1)
+        w.columns = [f"{a}_{b}" for a, b in w.columns]
+        w = w.reset_index()
+
+        return s, w
+
+    static_df = d.copy()
+    static_df["period"] = None
+    static_df.loc[static_df["year"].between(2015, 2019), "period"] = "pre"
+    static_df.loc[static_df["year"].between(2020, 2023) | ((static_df["year"] == 2024) & (static_df["qtr"] <= 2)), "period"] = "term"
+    static_df.loc[((static_df["year"] == 2024) & (static_df["qtr"] >= 3)) | ((static_df["year"] == 2025) & (static_df["qtr"] <= 3)), "period"] = "post"
+    static_df = static_df[static_df["period"].notna()].copy()
+
+    long_static, wide_static = build_summary(static_df)
+
+    gap_df = d.copy()
+
+    if ids is None:
+        ids = sorted(gap_df["ID"].unique())
+    else:
+        ids = [str(i) for i in ids]
+
+    if yr_qtrs is None:
+        yr_map = gap_df[["yr_qtr", "q_index"]].drop_duplicates().sort_values("q_index")
+        yr_qtrs = yr_map["yr_qtr"].astype(str).tolist()
+    else:
+        yr_tmp = pd.Series(yr_qtrs, name="yr_qtr").astype(str).to_frame()
+        yq2 = yr_tmp["yr_qtr"].str.extract(r"^\s*(\d{4})-(\d)\s*$")
+        yr_tmp["year"] = pd.to_numeric(yq2[0], errors="coerce")
+        yr_tmp["qtr"] = pd.to_numeric(yq2[1], errors="coerce")
+        yr_tmp = yr_tmp[yr_tmp["year"].notna() & yr_tmp["qtr"].isin([1, 2, 3, 4])].copy()
+        yr_tmp["year"] = yr_tmp["year"].astype(int)
+        yr_tmp["qtr"] = yr_tmp["qtr"].astype(int)
+        yr_tmp["q_index"] = yr_tmp["year"] * 4 + (yr_tmp["qtr"] - 1)
+        yr_tmp = yr_tmp.sort_values("q_index")
+        yr_qtrs = yr_tmp["yr_qtr"].tolist()
+
+    q_lookup = pd.DataFrame({"yr_qtr": yr_qtrs})
+    yq3 = q_lookup["yr_qtr"].str.extract(r"^\s*(\d{4})-(\d)\s*$")
+    q_lookup["year"] = pd.to_numeric(yq3[0], errors="coerce").astype(int)
+    q_lookup["qtr"] = pd.to_numeric(yq3[1], errors="coerce").astype(int)
+    q_lookup["q_index"] = q_lookup["year"] * 4 + (q_lookup["qtr"] - 1)
+
+    mat = pd.DataFrame(0, index=yr_qtrs, columns=ids, dtype=int)
+    present = gap_df[["ID", "yr_qtr"]].drop_duplicates()
+    present["yr_qtr"] = present["yr_qtr"].astype(str)
+
+    for _, r in present.iterrows():
+        i = r["ID"]
+        y = r["yr_qtr"]
+        if i in mat.columns and y in mat.index:
+            mat.loc[y, i] = 1
+
+    gaps_out = []
+    for col in mat.columns:
+        arr = mat[col].to_numpy()
+        c = 0
+        best = 0
+        end = -1
+        for i, v in enumerate(arr):
+            if v == 0:
+                c += 1
+                if c > best:
+                    best = c
+                    end = i
+            else:
+                c = 0
+        if best > 0:
+            start = end - best + 1
+            gaps_out.append({
+                "ID": col,
+                "gap_len": best,
+                "gap_start": yr_qtrs[start],
+                "gap_end": yr_qtrs[end]
+            })
+
+    gap_info = pd.DataFrame(gaps_out)
+
+    if gap_info.empty:
+        long_gap = pd.DataFrame(columns=long_static.columns.tolist() + ["gap_len", "gap_group"])
+        wide_gap = pd.DataFrame(columns=wide_static.columns.tolist() + ["gap_len", "gap_group"])
+        compare_df = wide_static.copy()
+        for c in compare_df.columns:
+            if c != "ID":
+                compare_df = compare_df.rename(columns={c: f"{c}_static"})
+        compare_df["gap_len"] = np.nan
+        compare_df["gap_group"] = None
+        return long_static, wide_static, long_gap, wide_gap, compare_df
+
+    gap_info["gap_group"] = None
+    gap_info.loc[gap_info["gap_len"].between(1, 8), "gap_group"] = "Group A"
+    gap_info.loc[gap_info["gap_len"].between(9, 16), "gap_group"] = "Group B"
+    gap_info.loc[gap_info["gap_len"] >= 17, "gap_group"] = "Group C"
+
+    gap_df = gap_df.merge(gap_info[["ID", "gap_start", "gap_end"]], on="ID", how="inner")
+    gap_df = gap_df.merge(q_lookup[["yr_qtr", "q_index"]], on="yr_qtr", how="left", suffixes=("", "_lookup"))
+
+    gap_bounds = gap_info.merge(
+        q_lookup[["yr_qtr", "q_index"]].rename(columns={"yr_qtr": "gap_start", "q_index": "gap_start_q_index"}),
+        on="gap_start",
+        how="left"
+    ).merge(
+        q_lookup[["yr_qtr", "q_index"]].rename(columns={"yr_qtr": "gap_end", "q_index": "gap_end_q_index"}),
+        on="gap_end",
+        how="left"
+    )
+
+    gap_df = gap_df.merge(gap_bounds[["ID", "gap_start_q_index", "gap_end_q_index"]], on="ID", how="left")
+
+    gap_df["period"] = np.where(
+        gap_df["q_index"] < gap_df["gap_start_q_index"],
+        "pre",
+        np.where(gap_df["q_index"] > gap_df["gap_end_q_index"], "post", "term")
+    )
+
+    long_gap, wide_gap = build_summary(gap_df)
+
+    long_gap = long_gap.merge(gap_info[["ID", "gap_len", "gap_group"]], on="ID", how="left")
+    wide_gap = wide_gap.merge(gap_info[["ID", "gap_len", "gap_group"]], on="ID", how="left")
+
+    compare_df = wide_static.merge(wide_gap, on="ID", how="outer", suffixes=("_static", "_gap"))
+
+    return long_static, wide_static, long_gap, wide_gap, compare_df
+
+long_static, wide_static, long_gap, wide_gap, compare_df = summarize_id_bins(df)
