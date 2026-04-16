@@ -82,3 +82,4 @@ def detect_possible_incarceration(df, wage_col="WAGE", yq_col="yr_qtr", lull_qua
     plt.show()
 
     return out, window_df
+quarter_df, incarceration_windows = detect_possible_incarceration(df)
