@@ -89,6 +89,63 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         static_df = static_df[static_df["period"].notna()].copy()
         static_periods = ["pre", "term", "post"]
 
+    elif static_mode == "lull_term_global":
+        qtr_level = (
+            d.groupby(["q_index", "yr_qtr"], as_index=False)
+            .agg(
+                quarter_wage=(wage_col, "sum"),
+                year=("year", "first"),
+                qtr=("qtr", "first")
+            )
+            .sort_values("q_index")
+            .reset_index(drop=True)
+        )
+
+        qmin = qtr_level["q_index"].min()
+        qmax = qtr_level["q_index"].max()
+
+        full = pd.DataFrame({"q_index": np.arange(qmin, qmax + 1)})
+        full["year"] = full["q_index"] // 4
+        full["qtr"] = (full["q_index"] % 4) + 1
+        full["yr_qtr"] = full["year"].astype(str) + "-" + full["qtr"].astype(str)
+        full = full.merge(qtr_level[["q_index", "quarter_wage"]], on="q_index", how="left")
+        full["quarter_wage"] = full["quarter_wage"].fillna(0)
+
+        threshold = full["quarter_wage"].quantile(lull_quantile)
+        full["is_lull"] = full["quarter_wage"] <= threshold
+        full["roll_lull_count"] = full["is_lull"].astype(int).rolling(lull_window, min_periods=lull_window).sum()
+        full["roll_wage_sum"] = full["quarter_wage"].rolling(lull_window, min_periods=lull_window).sum()
+
+        cand = full[full["roll_lull_count"].notna()].copy()
+        if cand.empty:
+            long_static = pd.DataFrame(columns=[
+                "ID", "period", "id_count",
+                "mean_hours", "median_hours",
+                "mean_wage", "wage_p25", "median_wage", "wage_p75",
+                "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
+            ])
+            wide_static = pd.DataFrame(columns=["ID"])
+        else:
+            best = cand.sort_values(["roll_lull_count", "roll_wage_sum", "q_index"], ascending=[False, True, True]).iloc[0]
+            term_end_q_index = int(best["q_index"])
+            term_start_q_index = term_end_q_index - lull_window + 1
+
+            static_info = pd.DataFrame([{
+                "term_start_q_index": term_start_q_index,
+                "term_end_q_index": term_end_q_index,
+                "term_start": f"{term_start_q_index // 4}-{(term_start_q_index % 4) + 1}",
+                "term_end": f"{term_end_q_index // 4}-{(term_end_q_index % 4) + 1}",
+                "term_lull_count": int(best["roll_lull_count"]),
+                "term_wage_sum": float(best["roll_wage_sum"])
+            }])
+
+            static_df["period"] = np.where(
+                static_df["q_index"] < term_start_q_index,
+                "pre",
+                np.where(static_df["q_index"] > term_end_q_index, "post", "term")
+            )
+            static_periods = ["pre", "term", "post"]
+
     elif static_mode == "lull_term":
         qtr_level = (
             d.groupby(["ID", "q_index", "yr_qtr"], as_index=False)
@@ -112,7 +169,6 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
             full["year"] = full["q_index"] // 4
             full["qtr"] = (full["q_index"] % 4) + 1
             full["yr_qtr"] = full["year"].astype(str) + "-" + full["qtr"].astype(str)
-
             full = full.merge(g[["q_index", "quarter_wage"]], on="q_index", how="left")
             full["quarter_wage"] = full["quarter_wage"].fillna(0)
 
@@ -159,9 +215,9 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
             static_periods = ["pre", "term", "post"]
 
     else:
-        raise ValueError("static_mode must be 'fixed_2019_post_2025', 'fixed_pre_term_post', or 'lull_term'")
+        raise ValueError("static_mode must be 'fixed_2019_post_2025', 'fixed_pre_term_post', 'lull_term_global', or 'lull_term'")
 
-    if static_mode != "lull_term" or (static_info is not None and not static_info.empty):
+    if static_mode not in ["lull_term", "lull_term_global"] or (static_info is not None and not static_info.empty):
         long_static, wide_static = build_summary(static_df, static_periods)
     else:
         long_static = pd.DataFrame(columns=[
@@ -172,9 +228,16 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         ])
         wide_static = pd.DataFrame(columns=["ID"])
 
-    if static_mode == "lull_term" and static_info is not None and not static_info.empty:
-        long_static = long_static.merge(static_info, on="ID", how="left")
-        wide_static = wide_static.merge(static_info, on="ID", how="left")
+    if static_mode == "lull_term":
+        if static_info is not None and not static_info.empty:
+            long_static = long_static.merge(static_info, on="ID", how="left")
+            wide_static = wide_static.merge(static_info, on="ID", how="left")
+
+    if static_mode == "lull_term_global":
+        if static_info is not None and not static_info.empty:
+            for col in static_info.columns:
+                long_static[col] = static_info.iloc[0][col]
+                wide_static[col] = static_info.iloc[0][col]
 
     gap_df = d.copy()
 
@@ -291,7 +354,4 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
 
     return long_static, wide_static, long_gap, wide_gap, compare_df
 
-long_static, wide_static, long_gap, wide_gap, compare_df = summarize_id_bins(df, static_mode="lull_term")
-long_static, wide_static, long_gap, wide_gap, compare_df = summarize_id_bins(df, static_mode="fixed_2019_post_2025")
-long_static, wide_static, long_gap, wide_gap, compare_df = summarize_id_bins(df, static_mode="fixed_pre_term_post")
-long_static, wide_static, long_gap, wide_gap, compare_df = summarize_id_bins(df, static_mode="lull_term")
+long_static, wide_static, long_gap, wide_gap, compare_df = summarize_id_bins(df, static_mode="lull_term_global")
