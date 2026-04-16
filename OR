@@ -1,10 +1,8 @@
-If you mean <= 20th percentile, it means quarters whose wage sum is in the bottom 20% of all quarters.
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-def plot_wage_lulls(df, wage_col="WAGE", yq_col="yr_qtr", lull_quantile=0.2, rolling_window=4):
+def detect_possible_incarceration(df, wage_col="WAGE", yq_col="yr_qtr", lull_quantile=0.2, window_qtrs=16, min_lull_share=0.75):
     d = df.copy()
 
     yq = d[yq_col].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
@@ -15,33 +13,72 @@ def plot_wage_lulls(df, wage_col="WAGE", yq_col="yr_qtr", lull_quantile=0.2, rol
     d["year"] = d["year"].astype(int)
     d["qtr"] = d["qtr"].astype(int)
     d["q_index"] = d["year"] * 4 + (d["qtr"] - 1)
-    d[yq_col] = d["year"].astype(str) + "-" + d["qtr"].astype(str)
 
-    out = (
-        d.groupby(["q_index", yq_col], as_index=False)
+    qmin = d["q_index"].min()
+    qmax = d["q_index"].max()
+    full_q = pd.DataFrame({"q_index": np.arange(qmin, qmax + 1)})
+    full_q["year"] = full_q["q_index"] // 4
+    full_q["qtr"] = (full_q["q_index"] % 4) + 1
+    full_q[yq_col] = full_q["year"].astype(str) + "-" + full_q["qtr"].astype(str)
+
+    wage_sum = (
+        d.groupby("q_index", as_index=False)
         .agg(wage_sum=(wage_col, "sum"))
-        .sort_values("q_index")
-        .reset_index(drop=True)
     )
 
-    out["rolling_mean"] = out["wage_sum"].rolling(rolling_window, min_periods=1).mean()
+    out = full_q.merge(wage_sum, on="q_index", how="left")
+    out["wage_sum"] = out["wage_sum"].fillna(0)
+
     threshold = out["wage_sum"].quantile(lull_quantile)
     out["is_lull"] = out["wage_sum"] <= threshold
+    out["rolling_lull_share_16q"] = out["is_lull"].astype(int).rolling(window_qtrs, min_periods=window_qtrs).mean()
+    out["possible_incarceration_window"] = out["rolling_lull_share_16q"] >= min_lull_share
+
+    windows = []
+    flagged = out["possible_incarceration_window"].fillna(False).to_numpy()
+
+    i = 0
+    while i < len(out):
+        if flagged[i]:
+            start_i = i - window_qtrs + 1
+            if start_i < 0:
+                i += 1
+                continue
+            end_i = i
+            j = i + 1
+            while j < len(out) and flagged[j]:
+                end_i = j
+                j += 1
+            true_start = max(0, start_i)
+            windows.append({
+                "start_yr_qtr": out.iloc[true_start][yq_col],
+                "end_yr_qtr": out.iloc[end_i][yq_col],
+                "quarters": end_i - true_start + 1,
+                "avg_lull_share": out.iloc[true_start:end_i + 1]["is_lull"].mean()
+            })
+            i = j
+        else:
+            i += 1
+
+    window_df = pd.DataFrame(windows)
 
     plt.figure(figsize=(12, 5))
-    plt.plot(out[yq_col], out["wage_sum"], marker="o", label="Wage sum")
-    plt.plot(out[yq_col], out["rolling_mean"], marker="o", linestyle="--", label=f"{rolling_window}-quarter rolling mean")
+    plt.plot(out[yq_col], out["wage_sum"], marker="o", label="Quarterly wage sum")
 
     lull_pts = out[out["is_lull"]]
     if len(lull_pts):
-        plt.scatter(lull_pts[yq_col], lull_pts["wage_sum"], color="red", s=80, label="Lulls")
+        plt.scatter(lull_pts[yq_col], lull_pts["wage_sum"], color="red", s=80, label="Lull quarters")
+
+    possible_pts = out[out["possible_incarceration_window"]]
+    if len(possible_pts):
+        plt.scatter(possible_pts[yq_col], possible_pts["wage_sum"], color="orange", s=110, marker="s", label="Possible 16-quarter incarceration window")
 
     plt.xticks(rotation=45)
     plt.xlabel("yr_qtr")
     plt.ylabel("Sum of wages")
-    plt.title(f"Wage sum by quarter with lulls at <= {int(lull_quantile*100)}th percentile")
+    plt.title("Quarterly wage sums with possible 4-year incarceration windows")
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    return out
+    return out, window_df
