@@ -1,1 +1,833 @@
 
+import pandas as pd
+import numpy as np
+
+def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=None, wage_col="WAGE", hours_col="HOURS", lull_quantile=0.2, lull_window=16):
+    d = df.copy()
+
+    yq = d["yr_qtr"].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
+    d["year"] = pd.to_numeric(yq[0], errors="coerce")
+    d["qtr"] = pd.to_numeric(yq[1], errors="coerce")
+    d = d[d["year"].notna() & d["qtr"].isin([1, 2, 3, 4])].copy()
+    d["year"] = d["year"].astype(int)
+    d["qtr"] = d["qtr"].astype(int)
+    d["q_index"] = d["year"] * 4 + (d["qtr"] - 1)
+    d["ID"] = d["ID"].astype(str)
+
+    d["hourly_wage"] = np.where(
+        d[hours_col].notna() & (d[hours_col] != 0),
+        d[wage_col] / d[hours_col],
+        np.nan
+    )
+
+    def add_delta_cols(w):
+        delta_specs = [
+            ("id_count_pre", "id_count_post", "delta_id_count", "count"),
+            ("mean_hours_pre", "mean_hours_post", "delta_mean_hours", "hours"),
+            ("median_hours_pre", "median_hours_post", "delta_median_hours", "hours"),
+            ("mean_wage_pre", "mean_wage_post", "delta_mean_wage", "wage"),
+            ("wage_p25_pre", "wage_p25_post", "delta_wage_p25", "wage"),
+            ("median_wage_pre", "median_wage_post", "delta_median_wage", "wage"),
+            ("wage_p75_pre", "wage_p75_post", "delta_wage_p75", "wage"),
+            ("mean_hourly_wage_pre", "mean_hourly_wage_post", "delta_mean_hourly_wage", "wage"),
+            ("hourly_wage_p25_pre", "hourly_wage_p25_post", "delta_hourly_wage_p25", "wage"),
+            ("median_hourly_wage_pre", "median_hourly_wage_post", "delta_median_hourly_wage", "wage"),
+            ("hourly_wage_p75_pre", "hourly_wage_p75_post", "delta_hourly_wage_p75", "wage")
+        ]
+        for pre_col, post_col, delta_col, kind in delta_specs:
+            if pre_col in w.columns and post_col in w.columns:
+                w[delta_col] = w[post_col] - w[pre_col]
+                if kind == "hours":
+                    w[delta_col] = w[delta_col].round(1)
+                elif kind == "wage":
+                    w[delta_col] = (w[delta_col] / 10).round() * 10
+        return w
+
+    def build_summary(x, periods):
+        s = (
+            x.groupby(["ID", "period"], as_index=False)
+            .agg(
+                id_count=("ID", "size"),
+                mean_hours=(hours_col, "mean"),
+                median_hours=(hours_col, "median"),
+                mean_wage=(wage_col, "mean"),
+                wage_p25=(wage_col, lambda z: z.quantile(0.25)),
+                median_wage=(wage_col, "median"),
+                wage_p75=(wage_col, lambda z: z.quantile(0.75)),
+                mean_hourly_wage=("hourly_wage", "mean"),
+                hourly_wage_p25=("hourly_wage", lambda z: z.quantile(0.25)),
+                median_hourly_wage=("hourly_wage", "median"),
+                hourly_wage_p75=("hourly_wage", lambda z: z.quantile(0.75))
+            )
+        )
+
+        cols = [
+            "ID", "period", "id_count",
+            "mean_hours", "median_hours",
+            "mean_wage", "wage_p25", "median_wage", "wage_p75",
+            "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
+        ]
+        s = s[cols]
+
+        hour_cols = ["mean_hours", "median_hours"]
+        wage_cols = ["mean_wage", "wage_p25", "median_wage", "wage_p75", "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"]
+
+        s[hour_cols] = s[hour_cols].round(1)
+        s[wage_cols] = (s[wage_cols] / 10).round() * 10
+
+        period_order = pd.CategoricalDtype(periods, ordered=True)
+        s["period"] = s["period"].astype(period_order)
+        s = s.sort_values(["ID", "period"]).reset_index(drop=True)
+
+        w = s.pivot(
+            index="ID",
+            columns="period",
+            values=[
+                "id_count",
+                "mean_hours", "median_hours",
+                "mean_wage", "wage_p25", "median_wage", "wage_p75",
+                "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
+            ]
+        )
+        w = w.reindex(columns=periods, level=1)
+        w.columns = [f"{a}_{b}" for a, b in w.columns]
+        w = w.reset_index()
+        w = add_delta_cols(w)
+
+        delta_cols = [c for c in w.columns if c.startswith("delta_")]
+        if delta_cols:
+            s = s.merge(w[["ID"] + delta_cols], on="ID", how="left")
+
+        return s, w
+
+    static_info = None
+    static_df = d.copy()
+
+    if static_mode == "fixed_2019_post_2025":
+        static_df["period"] = None
+        static_df.loc[static_df["year"] == 2019, "period"] = "pre"
+        static_df.loc[((static_df["year"] == 2024) & (static_df["qtr"] == 4)) | ((static_df["year"] == 2025) & (static_df["qtr"].isin([1, 2, 3]))), "period"] = "post"
+        static_df = static_df[static_df["period"].notna()].copy()
+        static_periods = ["pre", "post"]
+
+    elif static_mode == "fixed_pre_term_post":
+        static_df["period"] = None
+        static_df.loc[static_df["year"].between(2015, 2019), "period"] = "pre"
+        static_df.loc[static_df["year"].between(2020, 2023) | ((static_df["year"] == 2024) & (static_df["qtr"] <= 2)), "period"] = "term"
+        static_df.loc[((static_df["year"] == 2024) & (static_df["qtr"] >= 3)) | ((static_df["year"] == 2025) & (static_df["qtr"] <= 3)), "period"] = "post"
+        static_df = static_df[static_df["period"].notna()].copy()
+        static_periods = ["pre", "term", "post"]
+
+    elif static_mode == "lull_term_global":
+        qtr_level = (
+            d.groupby(["q_index", "yr_qtr"], as_index=False)
+            .agg(
+                quarter_wage=(wage_col, "sum"),
+                year=("year", "first"),
+                qtr=("qtr", "first")
+            )
+            .sort_values("q_index")
+            .reset_index(drop=True)
+        )
+
+        qmin = qtr_level["q_index"].min()
+        qmax = qtr_level["q_index"].max()
+
+        full = pd.DataFrame({"q_index": np.arange(qmin, qmax + 1)})
+        full["year"] = full["q_index"] // 4
+        full["qtr"] = (full["q_index"] % 4) + 1
+        full["yr_qtr"] = full["year"].astype(str) + "-" + full["qtr"].astype(str)
+        full = full.merge(qtr_level[["q_index", "quarter_wage"]], on="q_index", how="left")
+        full["quarter_wage"] = full["quarter_wage"].fillna(0)
+
+        threshold = full["quarter_wage"].quantile(lull_quantile)
+        full["is_lull"] = full["quarter_wage"] <= threshold
+        full["roll_lull_count"] = full["is_lull"].astype(int).rolling(lull_window, min_periods=lull_window).sum()
+        full["roll_wage_sum"] = full["quarter_wage"].rolling(lull_window, min_periods=lull_window).sum()
+
+        cand = full[full["roll_lull_count"].notna()].copy()
+        if cand.empty:
+            long_static = pd.DataFrame(columns=[
+                "ID", "period", "id_count",
+                "mean_hours", "median_hours",
+                "mean_wage", "wage_p25", "median_wage", "wage_p75",
+                "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
+                "delta_id_count", "delta_mean_hours", "delta_median_hours",
+                "delta_mean_wage", "delta_wage_p25", "delta_median_wage", "delta_wage_p75",
+                "delta_mean_hourly_wage", "delta_hourly_wage_p25", "delta_median_hourly_wage", "delta_hourly_wage_p75"
+            ])
+            wide_static = pd.DataFrame(columns=["ID"])
+        else:
+            best = cand.sort_values(["roll_lull_count", "roll_wage_sum", "q_index"], ascending=[False, True, True]).iloc[0]
+            term_end_q_index = int(best["q_index"])
+            term_start_q_index = term_end_q_index - lull_window + 1
+
+            static_info = pd.DataFrame([{
+                "term_start_q_index": term_start_q_index,
+                "term_end_q_index": term_end_q_index,
+                "term_start": f"{term_start_q_index // 4}-{(term_start_q_index % 4) + 1}",
+                "term_end": f"{term_end_q_index // 4}-{(term_end_q_index % 4) + 1}",
+                "term_lull_count": int(best["roll_lull_count"]),
+                "term_wage_sum": float(best["roll_wage_sum"])
+            }])
+
+            static_df["period"] = np.where(
+                static_df["q_index"] < term_start_q_index,
+                "pre",
+                np.where(static_df["q_index"] > term_end_q_index, "post", "term")
+            )
+            static_periods = ["pre", "term", "post"]
+
+    elif static_mode == "lull_term":
+        qtr_level = (
+            d.groupby(["ID", "q_index", "yr_qtr"], as_index=False)
+            .agg(
+                quarter_wage=(wage_col, "sum"),
+                year=("year", "first"),
+                qtr=("qtr", "first")
+            )
+            .sort_values(["ID", "q_index"])
+            .reset_index(drop=True)
+        )
+
+        all_windows = []
+
+        for idv, g in qtr_level.groupby("ID", sort=False):
+            g = g.sort_values("q_index").copy()
+            qmin = g["q_index"].min()
+            qmax = g["q_index"].max()
+
+            full = pd.DataFrame({"q_index": np.arange(qmin, qmax + 1)})
+            full["year"] = full["q_index"] // 4
+            full["qtr"] = (full["q_index"] % 4) + 1
+            full["yr_qtr"] = full["year"].astype(str) + "-" + full["qtr"].astype(str)
+            full = full.merge(g[["q_index", "quarter_wage"]], on="q_index", how="left")
+            full["quarter_wage"] = full["quarter_wage"].fillna(0)
+
+            threshold = full["quarter_wage"].quantile(lull_quantile)
+            full["is_lull"] = full["quarter_wage"] <= threshold
+            full["roll_lull_count"] = full["is_lull"].astype(int).rolling(lull_window, min_periods=lull_window).sum()
+            full["roll_wage_sum"] = full["quarter_wage"].rolling(lull_window, min_periods=lull_window).sum()
+
+            cand = full[full["roll_lull_count"].notna()].copy()
+            if len(cand) == 0:
+                continue
+
+            best = cand.sort_values(["roll_lull_count", "roll_wage_sum", "q_index"], ascending=[False, True, True]).iloc[0]
+            end_q = int(best["q_index"])
+            start_q = end_q - lull_window + 1
+
+            all_windows.append({
+                "ID": idv,
+                "term_start_q_index": start_q,
+                "term_end_q_index": end_q,
+                "term_start": f"{start_q // 4}-{(start_q % 4) + 1}",
+                "term_end": f"{end_q // 4}-{(end_q % 4) + 1}",
+                "term_lull_count": int(best["roll_lull_count"]),
+                "term_wage_sum": float(best["roll_wage_sum"])
+            })
+
+        static_info = pd.DataFrame(all_windows)
+
+        if static_info is None or static_info.empty:
+            long_static = pd.DataFrame(columns=[
+                "ID", "period", "id_count",
+                "mean_hours", "median_hours",
+                "mean_wage", "wage_p25", "median_wage", "wage_p75",
+                "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
+                "delta_id_count", "delta_mean_hours", "delta_median_hours",
+                "delta_mean_wage", "delta_wage_p25", "delta_median_wage", "delta_wage_p75",
+                "delta_mean_hourly_wage", "delta_hourly_wage_p25", "delta_median_hourly_wage", "delta_hourly_wage_p75"
+            ])
+            wide_static = pd.DataFrame(columns=["ID"])
+        else:
+            static_df = static_df.merge(static_info[["ID", "term_start_q_index", "term_end_q_index"]], on="ID", how="inner")
+            static_df["period"] = np.where(
+                static_df["q_index"] < static_df["term_start_q_index"],
+                "pre",
+                np.where(static_df["q_index"] > static_df["term_end_q_index"], "post", "term")
+            )
+            static_periods = ["pre", "term", "post"]
+
+    else:
+        raise ValueError("static_mode must be 'fixed_2019_post_2025', 'fixed_pre_term_post', 'lull_term_global', or 'lull_term'")
+
+    if static_mode not in ["lull_term", "lull_term_global"] or (static_info is not None and not static_info.empty):
+        long_static, wide_static = build_summary(static_df, static_periods)
+    else:
+        long_static = pd.DataFrame(columns=[
+            "ID", "period", "id_count",
+            "mean_hours", "median_hours",
+            "mean_wage", "wage_p25", "median_wage", "wage_p75",
+            "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
+            "delta_id_count", "delta_mean_hours", "delta_median_hours",
+            "delta_mean_wage", "delta_wage_p25", "delta_median_wage", "delta_wage_p75",
+            "delta_mean_hourly_wage", "delta_hourly_wage_p25", "delta_median_hourly_wage", "delta_hourly_wage_p75"
+        ])
+        wide_static = pd.DataFrame(columns=["ID"])
+
+    if static_mode == "lull_term":
+        if static_info is not None and not static_info.empty:
+            long_static = long_static.merge(static_info, on="ID", how="left")
+            wide_static = wide_static.merge(static_info, on="ID", how="left")
+
+    if static_mode == "lull_term_global":
+        if static_info is not None and not static_info.empty:
+            for col in static_info.columns:
+                long_static[col] = static_info.iloc[0][col]
+                wide_static[col] = static_info.iloc[0][col]
+
+    gap_df = d.copy()
+
+    if ids is None:
+        ids = sorted(gap_df["ID"].unique())
+    else:
+        ids = [str(i) for i in ids]
+
+    if yr_qtrs is None:
+        yr_map = gap_df[["yr_qtr", "q_index"]].drop_duplicates().sort_values("q_index")
+        yr_qtrs = yr_map["yr_qtr"].astype(str).tolist()
+    else:
+        yr_tmp = pd.Series(yr_qtrs, name="yr_qtr").astype(str).to_frame()
+        yq2 = yr_tmp["yr_qtr"].str.extract(r"^\s*(\d{4})-(\d)\s*$")
+        yr_tmp["year"] = pd.to_numeric(yq2[0], errors="coerce")
+        yr_tmp["qtr"] = pd.to_numeric(yq2[1], errors="coerce")
+        yr_tmp = yr_tmp[yr_tmp["year"].notna() & yr_tmp["qtr"].isin([1, 2, 3, 4])].copy()
+        yr_tmp["year"] = yr_tmp["year"].astype(int)
+        yr_tmp["qtr"] = yr_tmp["qtr"].astype(int)
+        yr_tmp["q_index"] = yr_tmp["year"] * 4 + (yr_tmp["qtr"] - 1)
+        yr_tmp = yr_tmp.sort_values("q_index")
+        yr_qtrs = yr_tmp["yr_qtr"].tolist()
+
+    q_lookup = pd.DataFrame({"yr_qtr": yr_qtrs})
+    yq3 = q_lookup["yr_qtr"].str.extract(r"^\s*(\d{4})-(\d)\s*$")
+    q_lookup["year"] = pd.to_numeric(yq3[0], errors="coerce").astype(int)
+    q_lookup["qtr"] = pd.to_numeric(yq3[1], errors="coerce").astype(int)
+    q_lookup["q_index"] = q_lookup["year"] * 4 + (q_lookup["qtr"] - 1)
+
+    mat = pd.DataFrame(0, index=yr_qtrs, columns=ids, dtype=int)
+    present = gap_df[["ID", "yr_qtr"]].drop_duplicates()
+    present["yr_qtr"] = present["yr_qtr"].astype(str)
+
+    for _, r in present.iterrows():
+        i = r["ID"]
+        y = r["yr_qtr"]
+        if i in mat.columns and y in mat.index:
+            mat.loc[y, i] = 1
+
+    gaps_out = []
+    for col in mat.columns:
+        arr = mat[col].to_numpy()
+        c = 0
+        best = 0
+        end = -1
+        for i, v in enumerate(arr):
+            if v == 0:
+                c += 1
+                if c > best:
+                    best = c
+                    end = i
+            else:
+                c = 0
+        if best > 0:
+            start = end - best + 1
+            gaps_out.append({
+                "ID": col,
+                "gap_len": best,
+                "gap_start": yr_qtrs[start],
+                "gap_end": yr_qtrs[end]
+            })
+
+    gap_info = pd.DataFrame(gaps_out)
+
+    if gap_info.empty:
+        long_gap = pd.DataFrame(columns=[
+            "ID", "period", "id_count",
+            "mean_hours", "median_hours",
+            "mean_wage", "wage_p25", "median_wage", "wage_p75",
+            "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
+            "delta_id_count", "delta_mean_hours", "delta_median_hours",
+            "delta_mean_wage", "delta_wage_p25", "delta_median_wage", "delta_wage_p75",
+            "delta_mean_hourly_wage", "delta_hourly_wage_p25", "delta_median_hourly_wage", "delta_hourly_wage_p75",
+            "gap_len", "gap_group"
+        ])
+        wide_gap = pd.DataFrame(columns=["ID"])
+        compare_df = wide_static.copy()
+        for c in compare_df.columns:
+            if c != "ID":
+                compare_df = compare_df.rename(columns={c: f"{c}_static"})
+        compare_df["gap_len"] = np.nan
+        compare_df["gap_group"] = None
+        return long_static, wide_static, long_gap, wide_gap, compare_df
+
+    gap_info["gap_group"] = None
+    gap_info.loc[gap_info["gap_len"].between(1, 8), "gap_group"] = "Group A"
+    gap_info.loc[gap_info["gap_len"].between(9, 16), "gap_group"] = "Group B"
+    gap_info.loc[gap_info["gap_len"] >= 17, "gap_group"] = "Group C"
+
+    gap_df = gap_df.merge(gap_info[["ID", "gap_start", "gap_end"]], on="ID", how="inner")
+    gap_df = gap_df.merge(q_lookup[["yr_qtr", "q_index"]], on="yr_qtr", how="left", suffixes=("", "_lookup"))
+
+    gap_bounds = gap_info.merge(
+        q_lookup[["yr_qtr", "q_index"]].rename(columns={"yr_qtr": "gap_start", "q_index": "gap_start_q_index"}),
+        on="gap_start",
+        how="left"
+    ).merge(
+        q_lookup[["yr_qtr", "q_index"]].rename(columns={"yr_qtr": "gap_end", "q_index": "gap_end_q_index"}),
+        on="gap_end",
+        how="left"
+    )
+
+    gap_df = gap_df.merge(gap_bounds[["ID", "gap_start_q_index", "gap_end_q_index"]], on="ID", how="left")
+
+    gap_df["period"] = np.where(
+        gap_df["q_index"] < gap_df["gap_start_q_index"],
+        "pre",
+        np.where(gap_df["q_index"] > gap_df["gap_end_q_index"], "post", "term")
+    )
+
+    long_gap, wide_gap = build_summary(gap_df, ["pre", "term", "post"])
+
+    long_gap = long_gap.merge(gap_info[["ID", "gap_len", "gap_group"]], on="ID", how="left")
+    wide_gap = wide_gap.merge(gap_info[["ID", "gap_len", "gap_group"]], on="ID", how="left")
+
+    compare_df = wide_static.merge(wide_gap, on="ID", how="outer", suffixes=("_static", "_gap"))
+
+    return long_static, wide_static, long_gap, wide_gap, compare_df
+
+long_static, wide_static, long_gap, wide_gap, compare_df = summarize_id_bins(df, static_mode="lull_term_global")
+
+
+
+#######
+import pandas as pd
+import numpy as np
+
+def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=None, wage_col="WAGE", hours_col="HOURS", ui_col="UI", lull_quantile=0.2, lull_window=16):
+    d = df.copy()
+
+    yq = d["yr_qtr"].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
+    d["year"] = pd.to_numeric(yq[0], errors="coerce")
+    d["qtr"] = pd.to_numeric(yq[1], errors="coerce")
+    d = d[d["year"].notna() & d["qtr"].isin([1, 2, 3, 4])].copy()
+    d["year"] = d["year"].astype(int)
+    d["qtr"] = d["qtr"].astype(int)
+    d["q_index"] = d["year"] * 4 + (d["qtr"] - 1)
+    d["ID"] = d["ID"].astype(str)
+
+    d["hourly_wage"] = np.where(
+        d[hours_col].notna() & (d[hours_col] != 0),
+        d[wage_col] / d[hours_col],
+        np.nan
+    )
+
+    def compute_tenure(x):
+        if ui_col not in x.columns:
+            return pd.DataFrame(columns=["ID", "period", "tenure"])
+
+        t = x[["ID", "period", "q_index", ui_col]].copy()
+        t = t[t[ui_col].notna()].copy()
+        if t.empty:
+            return pd.DataFrame(columns=["ID", "period", "tenure"])
+
+        t[ui_col] = t[ui_col].astype(str)
+        t = t.drop_duplicates(["ID", "period", "q_index", ui_col"]).sort_values(["ID", "period", ui_col, "q_index"]).reset_index(drop=True)
+
+        t["prev_q_index"] = t.groupby(["ID", "period", ui_col])["q_index"].shift()
+        t["new_run"] = t["prev_q_index"].isna() | (t["q_index"] != t["prev_q_index"] + 1)
+        t["run_id"] = t.groupby(["ID", "period", ui_col])["new_run"].cumsum()
+
+        runs = (
+            t.groupby(["ID", "period", ui_col, "run_id"], as_index=False)
+            .agg(run_len=("q_index", "size"))
+        )
+
+        tenure = (
+            runs.groupby(["ID", "period"], as_index=False)
+            .agg(tenure=("run_len", "max"))
+        )
+
+        return tenure
+
+    def add_delta_cols(w):
+        delta_specs = [
+            ("id_count_pre", "id_count_post", "delta_id_count", "count"),
+            ("tenure_pre", "tenure_post", "delta_tenure", "count"),
+            ("mean_hours_pre", "mean_hours_post", "delta_mean_hours", "hours"),
+            ("median_hours_pre", "median_hours_post", "delta_median_hours", "hours"),
+            ("mean_wage_pre", "mean_wage_post", "delta_mean_wage", "wage"),
+            ("wage_p25_pre", "wage_p25_post", "delta_wage_p25", "wage"),
+            ("median_wage_pre", "median_wage_post", "delta_median_wage", "wage"),
+            ("wage_p75_pre", "wage_p75_post", "delta_wage_p75", "wage"),
+            ("mean_hourly_wage_pre", "mean_hourly_wage_post", "delta_mean_hourly_wage", "wage"),
+            ("hourly_wage_p25_pre", "hourly_wage_p25_post", "delta_hourly_wage_p25", "wage"),
+            ("median_hourly_wage_pre", "median_hourly_wage_post", "delta_median_hourly_wage", "wage"),
+            ("hourly_wage_p75_pre", "hourly_wage_p75_post", "delta_hourly_wage_p75", "wage")
+        ]
+        for pre_col, post_col, delta_col, kind in delta_specs:
+            if pre_col in w.columns and post_col in w.columns:
+                w[delta_col] = w[post_col] - w[pre_col]
+                if kind == "hours":
+                    w[delta_col] = w[delta_col].round(1)
+                elif kind == "wage":
+                    w[delta_col] = (w[delta_col] / 10).round() * 10
+        return w
+
+    def build_summary(x, periods):
+        tenure_df = compute_tenure(x)
+
+        s = (
+            x.groupby(["ID", "period"], as_index=False)
+            .agg(
+                id_count=("ID", "size"),
+                mean_hours=(hours_col, "mean"),
+                median_hours=(hours_col, "median"),
+                mean_wage=(wage_col, "mean"),
+                wage_p25=(wage_col, lambda z: z.quantile(0.25)),
+                median_wage=(wage_col, "median"),
+                wage_p75=(wage_col, lambda z: z.quantile(0.75)),
+                mean_hourly_wage=("hourly_wage", "mean"),
+                hourly_wage_p25=("hourly_wage", lambda z: z.quantile(0.25)),
+                median_hourly_wage=("hourly_wage", "median"),
+                hourly_wage_p75=("hourly_wage", lambda z: z.quantile(0.75))
+            )
+        )
+
+        s = s.merge(tenure_df, on=["ID", "period"], how="left")
+
+        cols = [
+            "ID", "period", "id_count", "tenure",
+            "mean_hours", "median_hours",
+            "mean_wage", "wage_p25", "median_wage", "wage_p75",
+            "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
+        ]
+        s = s[cols]
+
+        hour_cols = ["mean_hours", "median_hours"]
+        wage_cols = ["mean_wage", "wage_p25", "median_wage", "wage_p75", "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"]
+
+        s[hour_cols] = s[hour_cols].round(1)
+        s[wage_cols] = (s[wage_cols] / 10).round() * 10
+
+        period_order = pd.CategoricalDtype(periods, ordered=True)
+        s["period"] = s["period"].astype(period_order)
+        s = s.sort_values(["ID", "period"]).reset_index(drop=True)
+
+        w = s.pivot(
+            index="ID",
+            columns="period",
+            values=[
+                "id_count", "tenure",
+                "mean_hours", "median_hours",
+                "mean_wage", "wage_p25", "median_wage", "wage_p75",
+                "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
+            ]
+        )
+        w = w.reindex(columns=periods, level=1)
+        w.columns = [f"{a}_{b}" for a, b in w.columns]
+        w = w.reset_index()
+        w = add_delta_cols(w)
+
+        delta_cols = [c for c in w.columns if c.startswith("delta_")]
+        if delta_cols:
+            s = s.merge(w[["ID"] + delta_cols], on="ID", how="left")
+
+        return s, w
+
+    static_info = None
+    static_df = d.copy()
+
+    if static_mode == "fixed_2019_post_2025":
+        static_df["period"] = None
+        static_df.loc[static_df["year"] == 2019, "period"] = "pre"
+        static_df.loc[((static_df["year"] == 2024) & (static_df["qtr"] == 4)) | ((static_df["year"] == 2025) & (static_df["qtr"].isin([1, 2, 3]))), "period"] = "post"
+        static_df = static_df[static_df["period"].notna()].copy()
+        static_periods = ["pre", "post"]
+
+    elif static_mode == "fixed_pre_term_post":
+        static_df["period"] = None
+        static_df.loc[static_df["year"].between(2015, 2019), "period"] = "pre"
+        static_df.loc[static_df["year"].between(2020, 2023) | ((static_df["year"] == 2024) & (static_df["qtr"] <= 2)), "period"] = "term"
+        static_df.loc[((static_df["year"] == 2024) & (static_df["qtr"] >= 3)) | ((static_df["year"] == 2025) & (static_df["qtr"] <= 3)), "period"] = "post"
+        static_df = static_df[static_df["period"].notna()].copy()
+        static_periods = ["pre", "term", "post"]
+
+    elif static_mode == "lull_term_global":
+        qtr_level = (
+            d.groupby(["q_index", "yr_qtr"], as_index=False)
+            .agg(
+                quarter_wage=(wage_col, "sum"),
+                year=("year", "first"),
+                qtr=("qtr", "first")
+            )
+            .sort_values("q_index")
+            .reset_index(drop=True)
+        )
+
+        qmin = qtr_level["q_index"].min()
+        qmax = qtr_level["q_index"].max()
+
+        full = pd.DataFrame({"q_index": np.arange(qmin, qmax + 1)})
+        full["year"] = full["q_index"] // 4
+        full["qtr"] = (full["q_index"] % 4) + 1
+        full["yr_qtr"] = full["year"].astype(str) + "-" + full["qtr"].astype(str)
+        full = full.merge(qtr_level[["q_index", "quarter_wage"]], on="q_index", how="left")
+        full["quarter_wage"] = full["quarter_wage"].fillna(0)
+
+        threshold = full["quarter_wage"].quantile(lull_quantile)
+        full["is_lull"] = full["quarter_wage"] <= threshold
+        full["roll_lull_count"] = full["is_lull"].astype(int).rolling(lull_window, min_periods=lull_window).sum()
+        full["roll_wage_sum"] = full["quarter_wage"].rolling(lull_window, min_periods=lull_window).sum()
+
+        cand = full[full["roll_lull_count"].notna()].copy()
+        if cand.empty:
+            long_static = pd.DataFrame(columns=[
+                "ID", "period", "id_count", "tenure",
+                "mean_hours", "median_hours",
+                "mean_wage", "wage_p25", "median_wage", "wage_p75",
+                "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
+                "delta_id_count", "delta_tenure", "delta_mean_hours", "delta_median_hours",
+                "delta_mean_wage", "delta_wage_p25", "delta_median_wage", "delta_wage_p75",
+                "delta_mean_hourly_wage", "delta_hourly_wage_p25", "delta_median_hourly_wage", "delta_hourly_wage_p75"
+            ])
+            wide_static = pd.DataFrame(columns=["ID"])
+        else:
+            best = cand.sort_values(["roll_lull_count", "roll_wage_sum", "q_index"], ascending=[False, True, True]).iloc[0]
+            term_end_q_index = int(best["q_index"])
+            term_start_q_index = term_end_q_index - lull_window + 1
+
+            static_info = pd.DataFrame([{
+                "term_start_q_index": term_start_q_index,
+                "term_end_q_index": term_end_q_index,
+                "term_start": f"{term_start_q_index // 4}-{(term_start_q_index % 4) + 1}",
+                "term_end": f"{term_end_q_index // 4}-{(term_end_q_index % 4) + 1}",
+                "term_lull_count": int(best["roll_lull_count"]),
+                "term_wage_sum": float(best["roll_wage_sum"])
+            }])
+
+            static_df["period"] = np.where(
+                static_df["q_index"] < term_start_q_index,
+                "pre",
+                np.where(static_df["q_index"] > term_end_q_index, "post", "term")
+            )
+            static_periods = ["pre", "term", "post"]
+
+    elif static_mode == "lull_term":
+        qtr_level = (
+            d.groupby(["ID", "q_index", "yr_qtr"], as_index=False)
+            .agg(
+                quarter_wage=(wage_col, "sum"),
+                year=("year", "first"),
+                qtr=("qtr", "first")
+            )
+            .sort_values(["ID", "q_index"])
+            .reset_index(drop=True)
+        )
+
+        all_windows = []
+
+        for idv, g in qtr_level.groupby("ID", sort=False):
+            g = g.sort_values("q_index").copy()
+            qmin = g["q_index"].min()
+            qmax = g["q_index"].max()
+
+            full = pd.DataFrame({"q_index": np.arange(qmin, qmax + 1)})
+            full["year"] = full["q_index"] // 4
+            full["qtr"] = (full["q_index"] % 4) + 1
+            full["yr_qtr"] = full["year"].astype(str) + "-" + full["qtr"].astype(str)
+            full = full.merge(g[["q_index", "quarter_wage"]], on="q_index", how="left")
+            full["quarter_wage"] = full["quarter_wage"].fillna(0)
+
+            threshold = full["quarter_wage"].quantile(lull_quantile)
+            full["is_lull"] = full["quarter_wage"] <= threshold
+            full["roll_lull_count"] = full["is_lull"].astype(int).rolling(lull_window, min_periods=lull_window).sum()
+            full["roll_wage_sum"] = full["quarter_wage"].rolling(lull_window, min_periods=lull_window).sum()
+
+            cand = full[full["roll_lull_count"].notna()].copy()
+            if len(cand) == 0:
+                continue
+
+            best = cand.sort_values(["roll_lull_count", "roll_wage_sum", "q_index"], ascending=[False, True, True]).iloc[0]
+            end_q = int(best["q_index"])
+            start_q = end_q - lull_window + 1
+
+            all_windows.append({
+                "ID": idv,
+                "term_start_q_index": start_q,
+                "term_end_q_index": end_q,
+                "term_start": f"{start_q // 4}-{(start_q % 4) + 1}",
+                "term_end": f"{end_q // 4}-{(end_q % 4) + 1}",
+                "term_lull_count": int(best["roll_lull_count"]),
+                "term_wage_sum": float(best["roll_wage_sum"])
+            })
+
+        static_info = pd.DataFrame(all_windows)
+
+        if static_info is None or static_info.empty:
+            long_static = pd.DataFrame(columns=[
+                "ID", "period", "id_count", "tenure",
+                "mean_hours", "median_hours",
+                "mean_wage", "wage_p25", "median_wage", "wage_p75",
+                "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
+                "delta_id_count", "delta_tenure", "delta_mean_hours", "delta_median_hours",
+                "delta_mean_wage", "delta_wage_p25", "delta_median_wage", "delta_wage_p75",
+                "delta_mean_hourly_wage", "delta_hourly_wage_p25", "delta_median_hourly_wage", "delta_hourly_wage_p75"
+            ])
+            wide_static = pd.DataFrame(columns=["ID"])
+        else:
+            static_df = static_df.merge(static_info[["ID", "term_start_q_index", "term_end_q_index"]], on="ID", how="inner")
+            static_df["period"] = np.where(
+                static_df["q_index"] < static_df["term_start_q_index"],
+                "pre",
+                np.where(static_df["q_index"] > static_df["term_end_q_index"], "post", "term")
+            )
+            static_periods = ["pre", "term", "post"]
+
+    else:
+        raise ValueError("static_mode must be 'fixed_2019_post_2025', 'fixed_pre_term_post', 'lull_term_global', or 'lull_term'")
+
+    if static_mode not in ["lull_term", "lull_term_global"] or (static_info is not None and not static_info.empty):
+        long_static, wide_static = build_summary(static_df, static_periods)
+    else:
+        long_static = pd.DataFrame(columns=[
+            "ID", "period", "id_count", "tenure",
+            "mean_hours", "median_hours",
+            "mean_wage", "wage_p25", "median_wage", "wage_p75",
+            "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
+            "delta_id_count", "delta_tenure", "delta_mean_hours", "delta_median_hours",
+            "delta_mean_wage", "delta_wage_p25", "delta_median_wage", "delta_wage_p75",
+            "delta_mean_hourly_wage", "delta_hourly_wage_p25", "delta_median_hourly_wage", "delta_hourly_wage_p75"
+        ])
+        wide_static = pd.DataFrame(columns=["ID"])
+
+    if static_mode == "lull_term":
+        if static_info is not None and not static_info.empty:
+            long_static = long_static.merge(static_info, on="ID", how="left")
+            wide_static = wide_static.merge(static_info, on="ID", how="left")
+
+    if static_mode == "lull_term_global":
+        if static_info is not None and not static_info.empty:
+            for col in static_info.columns:
+                long_static[col] = static_info.iloc[0][col]
+                wide_static[col] = static_info.iloc[0][col]
+
+    gap_df = d.copy()
+
+    if ids is None:
+        ids = sorted(gap_df["ID"].unique())
+    else:
+        ids = [str(i) for i in ids]
+
+    if yr_qtrs is None:
+        yr_map = gap_df[["yr_qtr", "q_index"]].drop_duplicates().sort_values("q_index")
+        yr_qtrs = yr_map["yr_qtr"].astype(str).tolist()
+    else:
+        yr_tmp = pd.Series(yr_qtrs, name="yr_qtr").astype(str).to_frame()
+        yq2 = yr_tmp["yr_qtr"].str.extract(r"^\s*(\d{4})-(\d)\s*$")
+        yr_tmp["year"] = pd.to_numeric(yq2[0], errors="coerce")
+        yr_tmp["qtr"] = pd.to_numeric(yq2[1], errors="coerce")
+        yr_tmp = yr_tmp[yr_tmp["year"].notna() & yr_tmp["qtr"].isin([1, 2, 3, 4])].copy()
+        yr_tmp["year"] = yr_tmp["year"].astype(int)
+        yr_tmp["qtr"] = yr_tmp["qtr"].astype(int)
+        yr_tmp["q_index"] = yr_tmp["year"] * 4 + (yr_tmp["qtr"] - 1)
+        yr_tmp = yr_tmp.sort_values("q_index")
+        yr_qtrs = yr_tmp["yr_qtr"].tolist()
+
+    q_lookup = pd.DataFrame({"yr_qtr": yr_qtrs})
+    yq3 = q_lookup["yr_qtr"].str.extract(r"^\s*(\d{4})-(\d)\s*$")
+    q_lookup["year"] = pd.to_numeric(yq3[0], errors="coerce").astype(int)
+    q_lookup["qtr"] = pd.to_numeric(yq3[1], errors="coerce").astype(int)
+    q_lookup["q_index"] = q_lookup["year"] * 4 + (q_lookup["qtr"] - 1)
+
+    mat = pd.DataFrame(0, index=yr_qtrs, columns=ids, dtype=int)
+    present = gap_df[["ID", "yr_qtr"]].drop_duplicates()
+    present["yr_qtr"] = present["yr_qtr"].astype(str)
+
+    for _, r in present.iterrows():
+        i = r["ID"]
+        y = r["yr_qtr"]
+        if i in mat.columns and y in mat.index:
+            mat.loc[y, i] = 1
+
+    gaps_out = []
+    for col in mat.columns:
+        arr = mat[col].to_numpy()
+        c = 0
+        best = 0
+        end = -1
+        for i, v in enumerate(arr):
+            if v == 0:
+                c += 1
+                if c > best:
+                    best = c
+                    end = i
+            else:
+                c = 0
+        if best > 0:
+            start = end - best + 1
+            gaps_out.append({
+                "ID": col,
+                "gap_len": best,
+                "gap_start": yr_qtrs[start],
+                "gap_end": yr_qtrs[end]
+            })
+
+    gap_info = pd.DataFrame(gaps_out)
+
+    if gap_info.empty:
+        long_gap = pd.DataFrame(columns=[
+            "ID", "period", "id_count", "tenure",
+            "mean_hours", "median_hours",
+            "mean_wage", "wage_p25", "median_wage", "wage_p75",
+            "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
+            "delta_id_count", "delta_tenure", "delta_mean_hours", "delta_median_hours",
+            "delta_mean_wage", "delta_wage_p25", "delta_median_wage", "delta_wage_p75",
+            "delta_mean_hourly_wage", "delta_hourly_wage_p25", "delta_median_hourly_wage", "delta_hourly_wage_p75",
+            "gap_len", "gap_group"
+        ])
+        wide_gap = pd.DataFrame(columns=["ID"])
+        compare_df = wide_static.copy()
+        for c in compare_df.columns:
+            if c != "ID":
+                compare_df = compare_df.rename(columns={c: f"{c}_static"})
+        compare_df["gap_len"] = np.nan
+        compare_df["gap_group"] = None
+        return long_static, wide_static, long_gap, wide_gap, compare_df
+
+    gap_info["gap_group"] = None
+    gap_info.loc[gap_info["gap_len"].between(1, 8), "gap_group"] = "Group A"
+    gap_info.loc[gap_info["gap_len"].between(9, 16), "gap_group"] = "Group B"
+    gap_info.loc[gap_info["gap_len"] >= 17, "gap_group"] = "Group C"
+
+    gap_df = gap_df.merge(gap_info[["ID", "gap_start", "gap_end"]], on="ID", how="inner")
+    gap_df = gap_df.merge(q_lookup[["yr_qtr", "q_index"]], on="yr_qtr", how="left", suffixes=("", "_lookup"))
+
+    gap_bounds = gap_info.merge(
+        q_lookup[["yr_qtr", "q_index"]].rename(columns={"yr_qtr": "gap_start", "q_index": "gap_start_q_index"}),
+        on="gap_start",
+        how="left"
+    ).merge(
+        q_lookup[["yr_qtr", "q_index"]].rename(columns={"yr_qtr": "gap_end", "q_index": "gap_end_q_index"}),
+        on="gap_end",
+        how="left"
+    )
+
+    gap_df = gap_df.merge(gap_bounds[["ID", "gap_start_q_index", "gap_end_q_index"]], on="ID", how="left")
+
+    gap_df["period"] = np.where(
+        gap_df["q_index"] < gap_df["gap_start_q_index"],
+        "pre",
+        np.where(gap_df["q_index"] > gap_df["gap_end_q_index"], "post", "term")
+    )
+
+    long_gap, wide_gap = build_summary(gap_df, ["pre", "term", "post"])
+
+    long_gap = long_gap.merge(gap_info[["ID", "gap_len", "gap_group"]], on="ID", how="left")
+    wide_gap = wide_gap.merge(gap_info[["ID", "gap_len", "gap_group"]], on="ID", how="left")
+
+    compare_df = wide_static.merge(wide_gap, on="ID", how="outer", suffixes=("_static", "_gap"))
+
+    return long_static, wide_static, long_gap, wide_gap, compare_df
+
+
+long_static, wide_static, long_gap, wide_gap, compare_df = summarize_id_bins(df, static_mode="lull_term_global", ui_col="UI")
