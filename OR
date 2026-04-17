@@ -1,7 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def plot_hours_lulls(df, hours_col="HOURS", yq_col="yr_qtr", lull_quantile=0.2, rolling_window=4):
+def plot_wage_hours_side_by_side(df, wage_col="WAGE", hours_col="HOURS", yq_col="yr_qtr", rolling_window=4):
     d = df.copy()
 
     yq = d[yq_col].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
@@ -16,31 +16,40 @@ def plot_hours_lulls(df, hours_col="HOURS", yq_col="yr_qtr", lull_quantile=0.2, 
 
     out = (
         d.groupby(["q_index", yq_col], as_index=False)
-        .agg(hours_sum=(hours_col, "sum"))
+        .agg(
+            wage_sum=(wage_col, "sum"),
+            hours_sum=(hours_col, "sum")
+        )
         .sort_values("q_index")
         .reset_index(drop=True)
     )
 
-    out["rolling_4q_avg_hours_sum"] = out["hours_sum"].rolling(rolling_window, min_periods=1).mean()
-    threshold = out["hours_sum"].quantile(lull_quantile)
-    out["is_lull"] = out["hours_sum"] <= threshold
+    out["wage_roll_4q"] = out["wage_sum"].rolling(rolling_window, min_periods=1).mean()
+    out["hours_roll_4q"] = out["hours_sum"].rolling(rolling_window, min_periods=1).mean()
 
-    plt.figure(figsize=(12, 5))
-    plt.plot(out[yq_col], out["hours_sum"], marker="o", label="Sum of hours")
-    plt.plot(out[yq_col], out["rolling_4q_avg_hours_sum"], marker="o", linestyle="--", label=f"{rolling_window}-quarter rolling average")
+    fig, ax1 = plt.subplots(figsize=(13, 6))
+    ax2 = ax1.twinx()
 
-    lull_pts = out[out["is_lull"]]
-    if len(lull_pts):
-        plt.scatter(lull_pts[yq_col], lull_pts["hours_sum"], color="red", s=80, label="Lulls")
+    l1 = ax1.plot(out[yq_col], out["wage_sum"], color="blue", marker="o", label="Wage sum")
+    l2 = ax1.plot(out[yq_col], out["wage_roll_4q"], color="cyan", linestyle="--", marker="o", label=f"Wage {rolling_window}Q rolling avg")
 
-    plt.xticks(rotation=45)
-    plt.xlabel("yr_qtr")
-    plt.ylabel("Sum of hours")
-    plt.title("Quarterly sum of hours with 4-quarter rolling average")
-    plt.legend()
+    l3 = ax2.plot(out[yq_col], out["hours_sum"], color="green", marker="s", label="Hours sum")
+    l4 = ax2.plot(out[yq_col], out["hours_roll_4q"], color="orange", linestyle="--", marker="s", label=f"Hours {rolling_window}Q rolling avg")
+
+    ax1.set_xlabel("yr_qtr")
+    ax1.set_ylabel("Wage sum")
+    ax2.set_ylabel("Hours sum")
+    ax1.set_title("Quarterly wage and hours sums with 4-quarter rolling averages")
+    ax1.tick_params(axis="x", rotation=45)
+
+    lines = l1 + l2 + l3 + l4
+    labels = [line.get_label() for line in lines]
+    ax1.legend(lines, labels, loc="upper left")
+
     plt.tight_layout()
     plt.show()
 
-hours_lull_df = plot_hours_lulls(df)
-
     return out
+
+
+plot_df = plot_wage_hours_side_by_side(df)
