@@ -1,7 +1,7 @@
-# quarters whose wage sum is in the bottom 20% of all quarters.
+import pandas as pd
+import matplotlib.pyplot as plt
 
-
-def plot_wage_lulls(df, wage_col="WAGE", yq_col="yr_qtr", lull_quantile=0.2, rolling_window=4):
+def plot_hours_lulls(df, hours_col="HOURS", yq_col="yr_qtr", lull_quantile=0.2, rolling_window=4):
     d = df.copy()
 
     yq = d[yq_col].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
@@ -16,30 +16,31 @@ def plot_wage_lulls(df, wage_col="WAGE", yq_col="yr_qtr", lull_quantile=0.2, rol
 
     out = (
         d.groupby(["q_index", yq_col], as_index=False)
-        .agg(wage_sum=(wage_col, "sum"))
+        .agg(hours_sum=(hours_col, "sum"))
         .sort_values("q_index")
         .reset_index(drop=True)
     )
 
-    out["rolling_mean"] = out["wage_sum"].rolling(rolling_window, min_periods=1).mean()
-    threshold = out["wage_sum"].quantile(lull_quantile)
-    out["is_lull"] = out["wage_sum"] <= threshold
+    out["rolling_4q_avg_hours_sum"] = out["hours_sum"].rolling(rolling_window, min_periods=1).mean()
+    threshold = out["hours_sum"].quantile(lull_quantile)
+    out["is_lull"] = out["hours_sum"] <= threshold
 
     plt.figure(figsize=(12, 5))
-    plt.plot(out[yq_col], out["wage_sum"], marker="o", label="Wage sum")
-    plt.plot(out[yq_col], out["rolling_mean"], marker="o", linestyle="--", label=f"{rolling_window}-quarter rolling mean")
+    plt.plot(out[yq_col], out["hours_sum"], marker="o", label="Sum of hours")
+    plt.plot(out[yq_col], out["rolling_4q_avg_hours_sum"], marker="o", linestyle="--", label=f"{rolling_window}-quarter rolling average")
 
     lull_pts = out[out["is_lull"]]
-    if len(lull_pts):plt.scatter(lull_pts[yq_col], lull_pts["wage_sum"], color="red", s=100, label="Most Probable Incarceration")
+    if len(lull_pts):
+        plt.scatter(lull_pts[yq_col], lull_pts["hours_sum"], color="red", s=80, label="Lulls")
 
     plt.xticks(rotation=45)
     plt.xlabel("yr_qtr")
-    plt.ylabel("Sum of wages")
-    plt.title(f"Quarterly wage sum of PROWD cohort with lulls* at <= {int(lull_quantile*100)}th percentile")
+    plt.ylabel("Sum of hours")
+    plt.title("Quarterly sum of hours with 4-quarter rolling average")
     plt.legend()
     plt.tight_layout()
     plt.show()
-    print("* quarters whose wage sum is in the bottom 20% of all quarters")
-    return out
 
- the same graph with sum of hours/rolling 4 qtr average of sum of hours for the group
+hours_lull_df = plot_hours_lulls(df)
+
+    return out
