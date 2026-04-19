@@ -1,1 +1,100 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
+def plot_id_lull_map_clustered(df, wage_col="WAGE", yq_col="yr_qtr", id_col="ID", lull_quantile=0.2, window=16):
+    d = df.copy()
+    d[id_col] = d[id_col].astype(str)
+
+    yq = d[yq_col].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
+    d["year"] = pd.to_numeric(yq[0], errors="coerce")
+    d["qtr"] = pd.to_numeric(yq[1], errors="coerce")
+    d = d[d["year"].notna() & d["qtr"].isin([1, 2, 3, 4])].copy()
+
+    d["year"] = d["year"].astype(int)
+    d["qtr"] = d["qtr"].astype(int)
+    d["q_index"] = d["year"] * 4 + (d["qtr"] - 1)
+    d[yq_col] = d["year"].astype(str) + "-" + d["qtr"].astype(str)
+
+    q_all = pd.DataFrame({"q_index": np.arange(d["q_index"].min(), d["q_index"].max() + 1)})
+    q_all["year"] = q_all["q_index"] // 4
+    q_all["qtr"] = (q_all["q_index"] % 4) + 1
+    q_all[yq_col] = q_all["year"].astype(str) + "-" + q_all["qtr"].astype(str)
+
+    ids = sorted(d[id_col].unique())
+
+    mat = pd.DataFrame(0, index=q_all[yq_col], columns=ids)
+    lull_overlay = pd.DataFrame(0, index=q_all[yq_col], columns=ids)
+    order_info = []
+
+    for idv, g in d.groupby(id_col):
+        g = g.groupby(["q_index"], as_index=False)[wage_col].sum()
+
+        full = q_all.merge(g, on="q_index", how="left")
+        full[wage_col] = full[wage_col].fillna(0)
+
+        thresh = full[wage_col].quantile(lull_quantile)
+        full["is_lull"] = full[wage_col] <= thresh
+        full["roll_lull"] = full["is_lull"].astype(int).rolling(window, min_periods=window).sum()
+        full["roll_sum"] = full[wage_col].rolling(window, min_periods=window).sum()
+
+        present_idx = full[full[wage_col] > 0][yq_col]
+        mat.loc[present_idx, idv] = 1
+
+        cand = full.dropna(subset=["roll_lull"]).copy()
+        if len(cand) == 0:
+            order_info.append({
+                "ID": idv,
+                "has_lull": 0,
+                "lull_start": np.inf,
+                "lull_end": np.inf,
+                "lull_mid": np.inf,
+                "lull_score": -np.inf,
+                "lull_sum": np.inf
+            })
+            continue
+
+        best = cand.sort_values(["roll_lull", "roll_sum", "q_index"], ascending=[False, True, True]).iloc[0]
+        end = int(best["q_index"])
+        start = end - window + 1
+        mid = (start + end) / 2
+
+        lull_idx = full[(full["q_index"] >= start) & (full["q_index"] <= end)][yq_col]
+        lull_overlay.loc[lull_idx, idv] = 1
+
+        order_info.append({
+            "ID": idv,
+            "has_lull": 1,
+            "lull_start": start,
+            "lull_end": end,
+            "lull_mid": mid,
+            "lull_score": float(best["roll_lull"]),
+            "lull_sum": float(best["roll_sum"])
+        })
+
+    order_df = pd.DataFrame(order_info).sort_values(
+        ["has_lull", "lull_mid", "lull_score", "lull_sum", "ID"],
+        ascending=[False, True, False, True, True]
+    )
+
+    ordered_ids = order_df["ID"].tolist()
+    mat = mat[ordered_ids]
+    lull_overlay = lull_overlay[ordered_ids]
+
+    plt.figure(figsize=(max(8, len(ordered_ids) / 3), max(6, len(q_all) / 6)))
+    ax = sns.heatmap(mat, cmap=sns.color_palette(["black", "green"]), cbar=False)
+
+    for j, idv in enumerate(ordered_ids):
+        rows = np.where(lull_overlay[idv].values == 1)[0]
+        if len(rows):
+            ax.scatter([j + 0.5] * len(rows), rows + 0.5, color="red", s=10)
+
+    ax.set_title("Per-ID Lull Windows Clustered by Timing")
+    ax.set_xlabel("ID")
+    ax.set_ylabel("yr_qtr")
+    plt.tight_layout()
+    plt.show()
+
+    return mat, lull_overlay, order_df
+mat, lull_overlay, order_df = plot_id_lull_map_clustered(df)
