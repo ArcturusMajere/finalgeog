@@ -1,7 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def plot_wage_hours_side_by_side(df, wage_col="WAGE", hours_col="HOURS", yq_col="yr_qtr", rolling_window=4):
+def plot_wage_hours_side_by_side(df, wage_col="WAGE", hours_col="HOURS", yq_col="yr_qtr", rolling_window=4, lull_window=16):
     d = df.copy()
 
     yq = d[yq_col].astype(str).str.extract(r"^\s*(\d{4})-(\d)\s*$")
@@ -26,26 +26,54 @@ def plot_wage_hours_side_by_side(df, wage_col="WAGE", hours_col="HOURS", yq_col=
 
     out["wage_roll_4q"] = out["wage_mean"].rolling(rolling_window, min_periods=1).mean()
     out["hours_roll_4q"] = out["hours_mean"].rolling(rolling_window, min_periods=1).mean()
+    out["wage_roll_16q"] = out["wage_mean"].rolling(lull_window, min_periods=lull_window).mean()
 
-    fig, ax1 = plt.subplots(figsize=(13, 6))
+    lull_start = None
+    lull_end = None
+    if out["wage_roll_16q"].notna().any():
+        lull_end = out["wage_roll_16q"].idxmin()
+        lull_start = lull_end - lull_window + 1
+
+    fig, ax1 = plt.subplots(figsize=(14, 6))
     ax2 = ax1.twinx()
 
-    l1 = ax1.plot(out[yq_col], out["wage_mean"], color="blue", marker="o", label="Wage mean")
-    l2 = ax1.plot(out[yq_col], out["wage_roll_4q"], color="cyan", linestyle="--", marker="o", label=f"Wage mean {rolling_window}Q rolling avg")
+    if lull_start is not None and lull_end is not None:
+        ax1.axvspan(lull_start - 0.5, lull_end + 0.5, color="gold", alpha=0.25, label=f"Lowest {lull_window}Q wage-mean window")
 
-    l3 = ax2.plot(out[yq_col], out["hours_mean"], color="green", marker="s", label="Hours mean")
-    l4 = ax2.plot(out[yq_col], out["hours_roll_4q"], color="orange", linestyle="--", marker="s", label=f"Hours mean {rolling_window}Q rolling avg")
+    l1 = ax1.plot(out[yq_col], out["wage_mean"], color="magenta", marker="o", linewidth=2.5, label="Wage mean")
+    l2 = ax1.plot(out[yq_col], out["wage_roll_4q"], color="deepskyblue", linestyle="--", marker="o", linewidth=2.5, label=f"Wage mean {rolling_window}Q rolling avg")
+
+    l3 = ax2.plot(out[yq_col], out["hours_mean"], color="limegreen", marker="s", linewidth=2.5, label="Hours mean")
+    l4 = ax2.plot(out[yq_col], out["hours_roll_4q"], color="darkorange", linestyle="--", marker="s", linewidth=2.5, label=f"Hours mean {rolling_window}Q rolling avg")
+
+    if lull_start is not None and lull_end is not None:
+        lull_pts = out.iloc[lull_start:lull_end + 1]
+        ax1.scatter(lull_pts[yq_col], lull_pts["wage_mean"], color="red", s=80, zorder=5, label="Lowest-window wage mean")
 
     ax1.set_xlabel("yr_qtr")
     ax1.set_ylabel("Wage mean")
     ax2.set_ylabel("Hours mean")
-    ax1.set_title("Quarterly mean wage and mean hours with 4-quarter rolling averages")
+    ax1.set_title(f"Quarterly mean wage and hours with highlighted lowest {lull_window}-quarter wage window")
     ax1.tick_params(axis="x", rotation=45)
 
-    lines = l1 + l2 + l3 + l4
-    labels = [line.get_label() for line in lines]
-    ax1.legend(lines, labels, loc="upper left")
+    lines = []
+    labels = []
 
+    if lull_start is not None and lull_end is not None:
+        patch = plt.Line2D([0], [0], color="gold", linewidth=10, alpha=0.25)
+        lines.append(patch)
+        labels.append(f"Lowest {lull_window}Q wage-mean window")
+
+    for group in [l1, l2, l3, l4]:
+        lines += group
+        labels += [x.get_label() for x in group]
+
+    if lull_start is not None and lull_end is not None:
+        dot = plt.Line2D([0], [0], marker="o", color="red", linestyle="", markersize=8)
+        lines.append(dot)
+        labels.append("Lowest-window wage mean")
+
+    ax1.legend(lines, labels, loc="upper left")
     plt.tight_layout()
     plt.show()
 
