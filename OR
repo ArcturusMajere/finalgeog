@@ -1,1 +1,482 @@
 
+import pandas as pd
+import numpy as np
+import webbrowser
+import tempfile
+import os
+
+
+def compare_dataframes(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    tol: float = None,
+    show_heatmap: bool = True,
+    df1_name: str = "DataFrame 1",
+    df2_name: str = "DataFrame 2",
+) -> dict:
+    """
+    Compare two DataFrames and return a disagreement report,
+    with an optional colorful interactive HTML heatmap.
+
+    Parameters
+    ----------
+    df1, df2     : pd.DataFrame
+    tol          : float, optional — numeric tolerance (e.g. 0.01). If None, exact match.
+    show_heatmap : bool — open heatmap in browser (default True)
+    df1_name     : str — label for df1 in the heatmap
+    df2_name     : str — label for df2 in the heatmap
+
+    Returns
+    -------
+    dict with keys:
+        shape_match   : bool
+        common_cols   : list
+        only_in_df1   : list  (columns)
+        only_in_df2   : list
+        disagreement  : pd.DataFrame  (bool mask, True = mismatch)
+        diff_df       : pd.DataFrame  (details for mismatched cells)
+        summary       : pd.Series     (mismatch count per column)
+        mismatch_rate : float         (0.0 – 1.0)
+        heatmap_path  : str | None    (path to saved HTML file)
+    """
+    common_cols = list(df1.columns.intersection(df2.columns))
+    only_in_df1 = list(df1.columns.difference(df2.columns))
+    only_in_df2 = list(df2.columns.difference(df1.columns))
+
+    n_rows = min(len(df1), len(df2))
+    row_diff = abs(len(df1) - len(df2))
+
+    a = df1[common_cols].iloc[:n_rows].reset_index(drop=True)
+    b = df2[common_cols].iloc[:n_rows].reset_index(drop=True)
+
+    # ── Build disagreement mask ──────────────────────────────────────────────
+    if tol is not None:
+        num_cols = a.select_dtypes(include=np.number).columns
+        mask = a.ne(b)
+        for col in num_cols:
+            mask[col] = (a[col] - b[col]).abs() > tol
+    else:
+        mask = a.ne(b)
+
+    # ── Long-form diff ───────────────────────────────────────────────────────
+    rows = [
+        {"row": r, "col": c, "df1": a.at[r, c], "df2": b.at[r, c]}
+        for r in range(n_rows)
+        for c in common_cols
+        if mask.at[r, c]
+    ]
+    diff_df = pd.DataFrame(rows, columns=["row", "col", "df1", "df2"])
+
+    total_cells = mask.size
+    mismatch_count = int(mask.values.sum())
+    mismatch_rate = mismatch_count / total_cells if total_cells else 0.0
+
+    # ── Build heatmap ────────────────────────────────────────────────────────
+    heatmap_path = None
+    if show_heatmap:
+        heatmap_path = _build_heatmap(
+            a, b, mask, diff_df,
+            df1_name, df2_name,
+            mismatch_count, total_cells, mismatch_rate,
+            row_diff, only_in_df1, only_in_df2,
+            tol,
+        )
+        webbrowser.open(f"file://{heatmap_path}")
+
+    return {
+        "shape_match":   df1.shape == df2.shape,
+        "common_cols":   common_cols,
+        "only_in_df1":   only_in_df1,
+        "only_in_df2":   only_in_df2,
+        "disagreement":  mask,
+        "diff_df":       diff_df,
+        "summary":       mask.sum().rename("mismatches"),
+        "mismatch_rate": mismatch_rate,
+        "heatmap_path":  heatmap_path,
+    }
+
+
+# ── HTML heatmap builder ─────────────────────────────────────────────────────
+
+def _build_heatmap(
+    a, b, mask, diff_df,
+    df1_name, df2_name,
+    mismatch_count, total_cells, mismatch_rate,
+    row_diff, only_in_df1, only_in_df2,
+    tol,
+):
+    cols = list(a.columns)
+    n_rows = len(a)
+
+    # Per-column mismatch rate → drives column header heat
+    col_rates = {c: mask[c].mean() for c in cols}
+
+    def cell_style(match, v1, v2):
+        if match:
+            return "match"
+        try:
+            diff = abs(float(v1) - float(v2))
+            if diff < 1:
+                return "mismatch-low"
+            elif diff < 10:
+                return "mismatch-mid"
+            else:
+                return "mismatch-high"
+        except (ValueError, TypeError):
+            return "mismatch-high"
+
+    def col_heat_class(rate):
+        if rate == 0:
+            return "col-cool"
+        elif rate < 0.25:
+            return "col-warm-low"
+        elif rate < 0.6:
+            return "col-warm-mid"
+        else:
+            return "col-warm-high"
+
+    # Build table rows
+    table_rows = []
+    for r in range(n_rows):
+        cells = [f'<td class="row-idx">{r}</td>']
+        for c in cols:
+            v1 = a.at[r, c]
+            v2 = b.at[r, c]
+            m = mask.at[r, c]
+            cls = cell_style(m, v1, v2)
+            if m:
+                inner = (
+                    f'<span class="v1">{v1}</span>'
+                    f'<span class="v2">{v2}</span>'
+                )
+                title = f'df1: {v1} | df2: {v2}'
+                cells.append(f'<td class="{cls}" title="{title}">{inner}</td>')
+            else:
+                cells.append(f'<td class="{cls}">{v1}</td>')
+        table_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    # Column headers
+    col_headers = ['<th class="row-idx">#</th>']
+    for c in cols:
+        rate_pct = f"{col_rates[c]*100:.0f}%"
+        col_headers.append(
+            f'<th class="{col_heat_class(col_rates[c])}" title="{rate_pct} mismatch">'
+            f'{c}<span class="col-rate">{rate_pct}</span></th>'
+        )
+
+    # Warnings
+    warnings = []
+    if row_diff:
+        warnings.append(f"⚠ Row count differs by {row_diff} — only first {len(a)} rows compared")
+    if only_in_df1:
+        warnings.append(f"⚠ Columns only in {df1_name}: {', '.join(only_in_df1)}")
+    if only_in_df2:
+        warnings.append(f"⚠ Columns only in {df2_name}: {', '.join(only_in_df2)}")
+    if tol is not None:
+        warnings.append(f"ℹ Numeric tolerance: ±{tol}")
+    warnings_html = "".join(f'<div class="warn">{w}</div>' for w in warnings)
+
+    match_count = total_cells - mismatch_count
+    pct = f"{mismatch_rate*100:.1f}"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataFrame Comparison</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap');
+
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+  :root {{
+    --bg:       #0d0d14;
+    --surface:  #13131f;
+    --border:   rgba(255,255,255,0.07);
+    --text:     #e8e8f0;
+    --muted:    #6b6b80;
+
+    --match:         #0f2d1a;
+    --match-text:    #4ade80;
+    --match-border:  #166534;
+
+    --low:           #1a2a0f;
+    --low-text:      #a3e635;
+    --low-border:    #3a5c10;
+
+    --mid:           #2d1f08;
+    --mid-text:      #fb923c;
+    --mid-border:    #7c3a0a;
+
+    --high:          #2d0a0a;
+    --high-text:     #f87171;
+    --high-border:   #7f1d1d;
+
+    --col-cool:      #1a2535;
+    --col-cool-text: #60a5fa;
+
+    --col-wl:        #1f2a12;
+    --col-wl-text:   #bef264;
+
+    --col-wm:        #2d200a;
+    --col-wm-text:   #fbbf24;
+
+    --col-wh:        #2d0d0d;
+    --col-wh-text:   #f87171;
+  }}
+
+  body {{
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    padding: 2rem;
+  }}
+
+  /* ── Header ── */
+  .header {{
+    margin-bottom: 2rem;
+  }}
+  .header h1 {{
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    background: linear-gradient(90deg, #60a5fa, #f472b6, #fb923c);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.4rem;
+  }}
+  .header .subtitle {{
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-family: 'JetBrains Mono', monospace;
+  }}
+
+  /* ── Stats ── */
+  .stats {{
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }}
+  .stat {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.4rem;
+    min-width: 120px;
+  }}
+  .stat-val {{
+    font-size: 1.8rem;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 0.3rem;
+  }}
+  .stat-label {{
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }}
+  .stat-total  .stat-val {{ color: #60a5fa; }}
+  .stat-match  .stat-val {{ color: #4ade80; }}
+  .stat-miss   .stat-val {{ color: #f87171; }}
+  .stat-rate   .stat-val {{ color: #fb923c; }}
+
+  /* ── Progress bar ── */
+  .progress-wrap {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.4rem;
+    margin-bottom: 1.5rem;
+  }}
+  .progress-label {{
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.6rem;
+  }}
+  .progress-bar {{
+    height: 10px;
+    border-radius: 99px;
+    background: #1a1a2e;
+    overflow: hidden;
+    display: flex;
+  }}
+  .bar-match {{ background: linear-gradient(90deg, #22c55e, #16a34a); }}
+  .bar-miss  {{ background: linear-gradient(90deg, #ef4444, #dc2626); }}
+
+  /* ── Warnings ── */
+  .warn {{
+    background: #1c1a0d;
+    border: 1px solid #4a3a00;
+    color: #fbbf24;
+    border-radius: 8px;
+    padding: 0.5rem 0.9rem;
+    font-size: 0.82rem;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 0.5rem;
+  }}
+
+  /* ── Legend ── */
+  .legend {{
+    display: flex;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.2rem;
+    font-size: 0.78rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted);
+    align-items: center;
+  }}
+  .legend-item {{ display: flex; align-items: center; gap: 6px; }}
+  .legend-swatch {{
+    width: 14px; height: 14px; border-radius: 4px; border: 1px solid;
+  }}
+  .s-match {{ background: var(--match); border-color: var(--match-border); }}
+  .s-low   {{ background: var(--low);   border-color: var(--low-border); }}
+  .s-mid   {{ background: var(--mid);   border-color: var(--mid-border); }}
+  .s-high  {{ background: var(--high);  border-color: var(--high-border); }}
+
+  /* ── Table ── */
+  .table-wrap {{
+    overflow: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    max-height: 70vh;
+  }}
+  table {{
+    border-collapse: collapse;
+    width: 100%;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+  }}
+  thead th {{
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }}
+  .row-idx {{
+    background: var(--surface) !important;
+    color: var(--muted) !important;
+    width: 40px;
+    text-align: center;
+    border-right: 1px solid var(--border);
+    position: sticky;
+    left: 0;
+    z-index: 3;
+  }}
+  thead .row-idx {{ z-index: 4; }}
+
+  /* Column header heat classes */
+  .col-cool     {{ background: var(--col-cool); color: var(--col-cool-text); }}
+  .col-warm-low {{ background: var(--col-wl);   color: var(--col-wl-text); }}
+  .col-warm-mid {{ background: var(--col-wm);   color: var(--col-wm-text); }}
+  .col-warm-high{{ background: var(--col-wh);   color: var(--col-wh-text); }}
+  .col-rate {{
+    display: block;
+    font-size: 0.65rem;
+    opacity: 0.7;
+    font-weight: 400;
+  }}
+
+  /* Cell classes */
+  td {{ padding: 6px 12px; border: 1px solid var(--border); vertical-align: middle; }}
+  tbody tr:hover td {{ filter: brightness(1.25); }}
+
+  .match        {{ background: var(--match); color: var(--match-text); }}
+  .mismatch-low {{ background: var(--low);   color: var(--low-text); }}
+  .mismatch-mid {{ background: var(--mid);   color: var(--mid-text); }}
+  .mismatch-high{{ background: var(--high);  color: var(--high-text); }}
+
+  .v1 {{ display: block; }}
+  .v2 {{ display: block; opacity: 0.65; font-size: 0.7rem; }}
+
+  /* ── Footer ── */
+  .footer {{
+    margin-top: 2rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    text-align: center;
+  }}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>DataFrame Comparison</h1>
+  <div class="subtitle">{df1_name} &nbsp;vs&nbsp; {df2_name}</div>
+</div>
+
+<div class="stats">
+  <div class="stat stat-total">
+    <div class="stat-val">{total_cells}</div>
+    <div class="stat-label">Total cells</div>
+  </div>
+  <div class="stat stat-match">
+    <div class="stat-val">{match_count}</div>
+    <div class="stat-label">Matches</div>
+  </div>
+  <div class="stat stat-miss">
+    <div class="stat-val">{mismatch_count}</div>
+    <div class="stat-label">Mismatches</div>
+  </div>
+  <div class="stat stat-rate">
+    <div class="stat-val">{pct}%</div>
+    <div class="stat-label">Disagreement</div>
+  </div>
+</div>
+
+<div class="progress-wrap">
+  <div class="progress-label">Agreement vs Disagreement</div>
+  <div class="progress-bar">
+    <div class="bar-match" style="width:{100 - float(pct):.1f}%"></div>
+    <div class="bar-miss"  style="width:{pct}%"></div>
+  </div>
+</div>
+
+{warnings_html}
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch s-match"></div>Match</div>
+  <div class="legend-item"><div class="legend-swatch s-low"></div>Small diff (&lt;1)</div>
+  <div class="legend-item"><div class="legend-swatch s-mid"></div>Medium diff (&lt;10)</div>
+  <div class="legend-item"><div class="legend-swatch s-high"></div>Large diff / type mismatch</div>
+  <span style="margin-left:auto">top = {df1_name} &nbsp;·&nbsp; bottom = {df2_name}</span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>{"".join(col_headers)}</tr></thead>
+    <tbody>{"".join(table_rows)}</tbody>
+  </table>
+</div>
+
+<div class="footer">
+  Generated by compare_dataframes() &nbsp;·&nbsp; {n_rows} rows × {len(cols)} common columns
+</div>
+
+</body>
+</html>"""
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".html", delete=False,
+        prefix="df_compare_", encoding="utf-8"
+    )
+    tmp.write(html)
+    tmp.close()
+    return tmp.name
