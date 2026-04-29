@@ -1,9 +1,5 @@
-from pathlib import Path
-from IPython.display import Markdown,display
-qmd_path=Path("your_file.qmd")
-text=qmd_path.read_text(encoding="utf-8")
-display(Markdown(text))
+def combine_categories6(df):
+    cat=df[['category_1','category_2','category_3','category_4','category_5','category_6']].stack().reset_index(level=1,drop=True)
+    df_long=df.drop(columns=['category_1','category_2','category_3','category_4','category_5','category_6']).join(cat.rename('CAT'))
+    return df_long.reset_index(drop=True)
 
-
-import subprocess
-subprocess.run(["quarto","render","report.qmd"],check=True)
