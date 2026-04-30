@@ -1,11 +1,3 @@
-NEW CATEGORY
-AA: IDS WITH GAP LENGTH = 0-8 quarters
-B: IDS WITH GAP LENGTH= 9-16 quarters
-C: IDS WITH GAP LENGTH>=17 quarters
-D: MISSING (NO DATA)
-
-# BIGBOY AGG
-
 def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=None, wage_col="WAGE", hours_col="HOURS", ui_col="UI", lull_quantile=0.2, lull_window=16):
     d = df.copy()
 
@@ -76,6 +68,13 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
                     w[delta_col] = (w[delta_col] / 10).round() * 10
         return w
 
+    def add_tenure_group(s):
+        s["tenure_group"] = "DD: MISSING (NO DATA)"
+        s.loc[s["tenure"].between(0, 8, inclusive="both"), "tenure_group"] = "AA: IDS WITH tenure = 0-8 quarters"
+        s.loc[s["tenure"].between(9, 16, inclusive="both"), "tenure_group"] = "BB: IDS WITH GAP tenure = 9-16 quarters"
+        s.loc[s["tenure"] >= 17, "tenure_group"] = "CC: IDS WITH tenure >=17 quarters"
+        return s
+
     def build_summary(x, periods):
         tenure_df = compute_tenure(x)
 
@@ -97,9 +96,10 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         )
 
         s = s.merge(tenure_df, on=["ID", "period"], how="left")
+        s = add_tenure_group(s)
 
         cols = [
-            "ID", "period", "id_count", "tenure",
+            "ID", "period", "id_count", "tenure", "tenure_group",
             "mean_hours", "median_hours",
             "mean_wage", "wage_p25", "median_wage", "wage_p75",
             "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
@@ -120,7 +120,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
             index="ID",
             columns="period",
             values=[
-                "id_count", "tenure",
+                "id_count", "tenure", "tenure_group",
                 "mean_hours", "median_hours",
                 "mean_wage", "wage_p25", "median_wage", "wage_p75",
                 "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75"
@@ -185,7 +185,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         cand = full[full["roll_lull_count"].notna()].copy()
         if cand.empty:
             long_static = pd.DataFrame(columns=[
-                "ID", "period", "id_count", "tenure",
+                "ID", "period", "id_count", "tenure", "tenure_group",
                 "mean_hours", "median_hours",
                 "mean_wage", "wage_p25", "median_wage", "wage_p75",
                 "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
@@ -268,7 +268,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
 
         if static_info is None or static_info.empty:
             long_static = pd.DataFrame(columns=[
-                "ID", "period", "id_count", "tenure",
+                "ID", "period", "id_count", "tenure", "tenure_group",
                 "mean_hours", "median_hours",
                 "mean_wage", "wage_p25", "median_wage", "wage_p75",
                 "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
@@ -293,7 +293,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         long_static, wide_static = build_summary(static_df, static_periods)
     else:
         long_static = pd.DataFrame(columns=[
-            "ID", "period", "id_count", "tenure",
+            "ID", "period", "id_count", "tenure", "tenure_group",
             "mean_hours", "median_hours",
             "mean_wage", "wage_p25", "median_wage", "wage_p75",
             "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
@@ -379,7 +379,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
 
     if gap_info.empty:
         long_gap = pd.DataFrame(columns=[
-            "ID", "period", "id_count", "tenure",
+            "ID", "period", "id_count", "tenure", "tenure_group",
             "mean_hours", "median_hours",
             "mean_wage", "wage_p25", "median_wage", "wage_p75",
             "mean_hourly_wage", "hourly_wage_p25", "median_hourly_wage", "hourly_wage_p75",
