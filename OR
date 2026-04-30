@@ -32,7 +32,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         return pd.DataFrame(columns=cols)
 
     def empty_wide():
-        return pd.DataFrame(columns=["ID", "tenure_max_pre_post", "tenure_group"])
+        return pd.DataFrame(columns=["ID", "tenure_max_pre_post", "tenure_group", "gap_len", "gap_group"])
 
     def compute_tenure(x):
         if ui_col not in x.columns:
@@ -378,6 +378,10 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
     if gap_info.empty:
         long_gap = empty_long(["gap_len", "gap_group"])
         wide_gap = empty_wide()
+        if "gap_len" not in wide_static.columns:
+            wide_static["gap_len"] = np.nan
+        if "gap_group" not in wide_static.columns:
+            wide_static["gap_group"] = None
         compare_df = wide_static.copy()
         for c in compare_df.columns:
             if c != "ID":
@@ -390,6 +394,8 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
     gap_info.loc[gap_info["gap_len"].between(1, 8), "gap_group"] = "Group A"
     gap_info.loc[gap_info["gap_len"].between(9, 16), "gap_group"] = "Group B"
     gap_info.loc[gap_info["gap_len"] >= 17, "gap_group"] = "Group C"
+
+    wide_static = wide_static.merge(gap_info[["ID", "gap_len", "gap_group"]], on="ID", how="left")
 
     gap_df = gap_df.merge(gap_info[["ID", "gap_start", "gap_end"]], on="ID", how="inner")
     gap_df = gap_df.merge(q_lookup[["yr_qtr", "q_index"]], on="yr_qtr", how="left", suffixes=("", "_lookup"))
