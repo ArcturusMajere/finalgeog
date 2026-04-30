@@ -1,2 +1,2 @@
-mask=(df['fips']==9)&(df['year']>=2022)
+mask=df['fips'].astype(str).str.zfill(2).eq('09')&(df['year']>=2022)
 df.loc[mask,'ui_acct']=df.loc[mask,'ui_acct'].apply(ct_edit)
