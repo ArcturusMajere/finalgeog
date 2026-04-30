@@ -1,1 +1,295 @@
+import oracledb;import pandas as pd;import time;import us
+import warnings; warnings.filterwarnings('ignore')
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Font, NamedStyle
+from queue import Queue
+from typing import List, Dict
+from dataclasses import dataclass
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import numpy as np
 
+
+threads = 4 # watch out for resources!!
+
+
+@dataclass
+class DBConfig:
+    username: str
+    password: str
+
+class OracleYearPartitionedQuery:
+    def __init__(self, db_config: DBConfig, start_year: int = 2006, end_year: int = 2024, 
+                 thick_mode: bool = False):
+        self.db_config = db_config
+        self.start_year = start_year
+        self.end_year = end_year
+        self.result_queue = Queue()
+        
+        if thick_mode:
+            oracledb.init_oracle_client()
+    
+    def get_connection(self):
+        return oracledb.connect(
+            user=self.db_config.username,
+            password=self.db_config.password,
+            dsn="cfdbprd05.psb.bls.gov/wgrecprd.psb.bls.gov")
+    
+    def process_year(self, base_query: str, year: int) -> List[Dict]:
+        wrapped_query = f"""
+            WITH filtered_data AS ( {base_query} )
+            SELECT *
+            FROM filtered_data
+            WHERE YR = {year}"""
+        
+        results = []
+        try:
+            with self.get_connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(wrapped_query)
+                    columns = [col[0] for col in cursor.description]
+                    batch_size = 10000
+                    total_rows = 0
+                    while True:
+                        rows = cursor.fetchmany(batch_size)
+                        if not rows:
+                            break
+                        batch_results = [dict(zip(columns, row)) for row in rows]
+                        results.extend(batch_results)
+                        total_rows += len(batch_results)
+                        #print(f"Extracting {year}...")
+                        
+            print(f"Completed Year {year}: Total {len(results)} records & {int(len(results)/4)} states found ")
+            
+        except Exception as e:
+            print(f"Error processing year {year}: {str(e)}")
+            raise
+        
+        self.result_queue.put((year, results))
+        return results
+
+    def execute_parallel(self, query: str, max_concurrent_threads: int = threads) -> List[Dict]:
+        years = list(range(self.start_year, self.end_year + 1))
+        total_years = len(years)
+        print(f"Starting parallel execution for years {self.start_year} to {self.end_year}")
+        print(f"Using maximum {max_concurrent_threads} concurrent threads")
+        start_time = time.time()
+        with ThreadPoolExecutor(max_workers=max_concurrent_threads) as executor:
+            futures = [executor.submit(self.process_year, query, year) for year in years]
+            for future in futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Thread execution failed: {str(e)}")
+        all_results = []
+        temp_results = []
+        
+        while not self.result_queue.empty():
+            temp_results.append(self.result_queue.get())
+        
+        temp_results.sort(key=lambda x: x[0])  # x[0] is year btw
+        
+        print("\nProcessing Summary:")
+        print("-" * 40)
+        for year, results in temp_results:
+            print(f"Year {year}: {len(results):,} records")
+            all_results.extend(results)
+        
+        end_time = time.time()
+        total_time = end_time - start_time
+        print("\nPerformance Metrics:")
+        print("-" * 40)
+        total_time=total_time/60
+        print(f"Total Processing Time: {total_time:.2f} minutes")
+        print(f"Average Time per Year: {total_time/total_years:.2f} minutes")
+        print(f"Total Records: {len(all_results):,}")
+        return all_results
+    
+def convertfips2state(state_code):
+    state = us.states.lookup(state_code)
+    return state.abbr
+
+
+
+
+
+if __name__ == "__main__":
+    config = DBConfig(username = open('USER.txt').read(), password = open('password.txt').read())
+    
+    query = """SELECT STATE_CODE, QTR, YR, COUNT(*) AS total_records,
+               COUNT(DISTINCT BLS_ID) AS bls_id_count,
+               COUNT(DISTINCT UI) AS ui_count,
+               COUNT(DISTINCT EIN) AS ein_count,
+               SUM(WAGE) AS total_wage,
+               AVG(WAGE) AS avg_wage
+               FROM wagerecusr.wage_data
+               GROUP BY STATE_CODE, QTR, YR
+               """
+
+    threaded_query = OracleYearPartitionedQuery(config,start_year=2006,end_year=2025,thick_mode=False )
+    results = threaded_query.execute_parallel(query, max_concurrent_threads=threads)
+    auto_summary_raw=pd.DataFrame(results)
+    auto_summary_raw['YR_QTR'] = auto_summary_raw['YR'].astype(str) + '-' + auto_summary_raw['QTR'].astype(str)
+    auto_summary_raw['STATE'] = auto_summary_raw['STATE_CODE'].apply(convertfips2state)
+    auto_summary_raw['AVERAGE_WAGE_BLS'] = auto_summary_raw['TOTAL_WAGE']/auto_summary_raw['BLS_ID_COUNT']
+    wage_summary_Oracle_State = auto_summary_raw
+    wage_summary_Oracle_State['TOTAL_RECORDS'] = wage_summary_Oracle_State['TOTAL_RECORDS'].astype(int)
+
+
+
+
+# 1. Count Total 
+count_total = wage_summary_Oracle_State.groupby(['YR_QTR', 'STATE','BLS_ID_COUNT', 'EIN_COUNT', 'TOTAL_WAGE', 'AVG_WAGE', 'AVERAGE_WAGE_BLS'])\
+    .agg({'TOTAL_RECORDS': 'sum'})\
+    .pivot_table(index='YR_QTR', columns=['STATE'], values='TOTAL_RECORDS')\
+    .fillna(' ').reset_index()
+count_total.columns = ['YR_QTR'] + list(count_total.columns[1:])
+count_total = count_total.sort_values(by=['YR_QTR'], ascending=False)
+
+# 2. Submission check
+submission_check = count_total.copy()
+submission_check = submission_check.astype(str)
+states = submission_check.columns[1:]
+submission_check[states] = np.where(submission_check[states] != ' ', 'X', ' ')
+
+# 3 total records & diff
+counts_pivot = wage_summary_Oracle_State.groupby(['YR_QTR', 'STATE'])['TOTAL_RECORDS'].sum().unstack()
+percent_diff = counts_pivot.pct_change(periods=1, axis=0) * 100
+percent_diff = percent_diff.round(2)
+percent_diff.columns = [f'{state} %change' for state in percent_diff.columns]
+df1 = pd.concat([counts_pivot, percent_diff], axis=1)
+
+states = counts_pivot.columns.tolist()
+columns_order = []
+for state in states:
+    columns_order.append(state)
+    columns_order.append(f'{state} %change')
+df1 = df1[columns_order]
+percentage_cols = [col for col in df1.columns if col.endswith(' %change')]
+df1[percentage_cols] = df1[percentage_cols].applymap(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+df1 = df1.replace({pd.NA: '', np.nan: ''})
+df1 = df1.sort_values(by='YR_QTR', ascending=False).reset_index()
+
+
+# 3 UI COUNTS & diff
+counts_pivot = wage_summary_Oracle_State.groupby(['YR_QTR', 'STATE'])['UI_COUNT'].sum().unstack()
+percent_diff = counts_pivot.pct_change(periods=1, axis=0) * 100
+percent_diff = percent_diff.round(2)
+percent_diff.columns = [f'{state} %change' for state in percent_diff.columns]
+df2 = pd.concat([counts_pivot, percent_diff], axis=1)
+
+states = counts_pivot.columns.tolist()
+columns_order = []
+for state in states:
+    columns_order.append(state)
+    columns_order.append(f'{state} %change')
+df2 = df2[columns_order]
+percentage_cols = [col for col in df2.columns if col.endswith(' %change')]
+df2[percentage_cols] = df2[percentage_cols].applymap(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+df2 = df2.replace({pd.NA: '', np.nan: ''})
+UI = df2.sort_values(by='YR_QTR', ascending=False).reset_index()
+
+# 3 COUNNTS & diff
+counts_pivot = wage_summary_Oracle_State.groupby(['YR_QTR', 'STATE'])['BLS_ID_COUNT'].sum().unstack()
+percent_diff = counts_pivot.pct_change(periods=1, axis=0) * 100
+percent_diff = percent_diff.round(2)
+percent_diff.columns = [f'{state} %change' for state in percent_diff.columns]
+df3 = pd.concat([counts_pivot, percent_diff], axis=1)
+
+states = counts_pivot.columns.tolist()
+columns_order = []
+for state in states:
+    columns_order.append(state)
+    columns_order.append(f'{state} %change')
+df3 = df3[columns_order]
+percentage_cols = [col for col in df3.columns if col.endswith(' %change')]
+df3[percentage_cols] = df3[percentage_cols].applymap(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+df3 = df3.replace({pd.NA: '', np.nan: ''})
+bls_id = df3.sort_values(by='YR_QTR', ascending=False).reset_index()
+
+# 3 COUNNTS & diff
+counts_pivot = wage_summary_Oracle_State.groupby(['YR_QTR', 'STATE'])['EIN_COUNT'].sum().unstack()
+percent_diff = counts_pivot.pct_change(periods=1, axis=0) * 100
+percent_diff = percent_diff.round(2)
+percent_diff.columns = [f'{state} %change' for state in percent_diff.columns]
+df4 = pd.concat([counts_pivot, percent_diff], axis=1)
+
+states = counts_pivot.columns.tolist()
+columns_order = []
+for state in states:
+    columns_order.append(state)
+    columns_order.append(f'{state} %change')
+df4 = df4[columns_order]
+percentage_cols = [col for col in df4.columns if col.endswith(' %change')]
+df4[percentage_cols] = df4[percentage_cols].applymap(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+df4 = df4.replace({pd.NA: '', np.nan: ''})
+ein = df4.sort_values(by='YR_QTR', ascending=False).reset_index()
+
+# 3 COUNNTS & diff
+counts_pivot = wage_summary_Oracle_State.groupby(['YR_QTR', 'STATE'])['TOTAL_WAGE'].sum().unstack()
+percent_diff = counts_pivot.pct_change(periods=1, axis=0) * 100
+percent_diff = percent_diff.round(2)
+percent_diff.columns = [f'{state} %change' for state in percent_diff.columns]
+df5 = pd.concat([counts_pivot, percent_diff], axis=1)
+
+states = counts_pivot.columns.tolist()
+columns_order = []
+for state in states:
+    columns_order.append(state)
+    columns_order.append(f'{state} %change')
+df5 = df5[columns_order]
+percentage_cols = [col for col in df5.columns if col.endswith(' %change')]
+df5[percentage_cols] = df5[percentage_cols].applymap(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+df5 = df5.replace({pd.NA: '', np.nan: ''})
+total_wages = df5.sort_values(by='YR_QTR', ascending=False).reset_index()
+
+# 3 COUNNTS & diff
+counts_pivot = wage_summary_Oracle_State.groupby(['YR_QTR', 'STATE'])['AVG_WAGE'].sum().unstack()
+percent_diff = counts_pivot.pct_change(periods=1, axis=0) * 100
+percent_diff = percent_diff.round(2)
+percent_diff.columns = [f'{state} %change' for state in percent_diff.columns]
+df6 = pd.concat([counts_pivot, percent_diff], axis=1)
+
+states = counts_pivot.columns.tolist()
+columns_order = []
+for state in states:
+    columns_order.append(state)
+    columns_order.append(f'{state} %change')
+df6 = df6[columns_order]
+percentage_cols = [col for col in df6.columns if col.endswith(' %change')]
+df6[percentage_cols] = df6[percentage_cols].applymap(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+df6 = df6.replace({pd.NA: '', np.nan: ''})
+average_wages = df6.sort_values(by='YR_QTR', ascending=False).reset_index()
+
+# 3 COUNNTS & diff
+counts_pivot = wage_summary_Oracle_State.groupby(['YR_QTR', 'STATE'])['AVERAGE_WAGE_BLS'].sum().unstack()
+percent_diff = counts_pivot.pct_change(periods=1, axis=0) * 100
+percent_diff = percent_diff.round(2)
+percent_diff.columns = [f'{state} %change' for state in percent_diff.columns]
+df7 = pd.concat([counts_pivot, percent_diff], axis=1)
+
+states = counts_pivot.columns.tolist()
+columns_order = []
+for state in states:
+    columns_order.append(state)
+    columns_order.append(f'{state} %change')
+df7 = df7[columns_order]
+percentage_cols = [col for col in df7.columns if col.endswith(' %change')]
+df7[percentage_cols] = df7[percentage_cols].applymap(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+df7 = df7.replace({pd.NA: '', np.nan: ''})
+average_wages_bls_id = df7.sort_values(by='YR_QTR', ascending=False).reset_index()
+
+dataset_names = {
+    "WR Qtr Submissions": submission_check,
+    "Records":df1,
+    "UI": UI,
+    "BLS ID": bls_id,
+    "EIN": ein,
+    "Sum of Wages": total_wages,
+    "Average Wage Record": average_wages,
+    "Average Wage Per BLS ID": average_wages_bls_id}
+
+# 12. Export Each DataFrame to Separate Sheets in the Same Excel File
+with pd.ExcelWriter("wage_records_summary_report.xlsx") as writer:
+    for sheet_name, df in dataset_names.items():
+        df.to_excel(writer, sheet_name=sheet_name)
