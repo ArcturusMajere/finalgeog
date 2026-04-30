@@ -1,1 +1,176 @@
-conn = psycopg2.connect(**AWS_CONFIG)
+import time
+import warnings
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from queue import Queue
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
+import psycopg2
+import us
+
+warnings.filterwarnings("ignore")
+
+THREADS = 4
+TABLE_NAME = "wagerecusr.wage_data"
+
+AWS_CONFIG = {
+    "host": "your-host.amazonaws.com",
+    "port": 5432,
+    "dbname": "your_database",
+    "user": "your_username",
+    "password": "your_password"
+}
+
+
+class PostgresYearPartitionedQuery:
+    def __init__(self, aws_config: dict, start_year: int = 2006, end_year: int = 2025):
+        self.aws_config = aws_config
+        self.start_year = start_year
+        self.end_year = end_year
+        self.result_queue = Queue()
+
+    def get_connection(self):
+        return psycopg2.connect(**self.aws_config)
+
+    def process_year(self, year: int) -> List[Dict]:
+        query = f"""
+        SELECT state_code, qtr, yr,
+               COUNT(*) AS total_records,
+               COUNT(DISTINCT bls_id) AS bls_id_count,
+               COUNT(DISTINCT ui) AS ui_count,
+               COUNT(DISTINCT ein) AS ein_count,
+               SUM(wage) AS total_wage,
+               AVG(wage) AS avg_wage
+        FROM {TABLE_NAME}
+        WHERE yr = %s
+        GROUP BY state_code, qtr, yr
+        """
+
+        results = []
+
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (year,))
+                    columns = [desc[0].upper() for desc in cur.description]
+
+                    while True:
+                        rows = cur.fetchmany(10000)
+                        if not rows:
+                            break
+                        results.extend(dict(zip(columns, row)) for row in rows)
+
+            print(f"Completed Year {year}: Total {len(results)} records found")
+
+        except Exception as e:
+            print(f"Error processing year {year}: {e}")
+            raise
+
+        self.result_queue.put((year, results))
+        return results
+
+    def execute_parallel(self, max_concurrent_threads: int = THREADS) -> List[Dict]:
+        years = range(self.start_year, self.end_year + 1)
+        start_time = time.time()
+
+        print(f"Starting parallel execution for years {self.start_year} to {self.end_year}")
+        print(f"Using maximum {max_concurrent_threads} concurrent threads")
+
+        with ThreadPoolExecutor(max_workers=max_concurrent_threads) as executor:
+            futures = [executor.submit(self.process_year, year) for year in years]
+            for future in futures:
+                future.result()
+
+        temp_results = []
+
+        while not self.result_queue.empty():
+            temp_results.append(self.result_queue.get())
+
+        temp_results.sort(key=lambda x: x[0])
+
+        all_results = []
+
+        print("\nProcessing Summary:")
+        print("-" * 40)
+
+        for year, results in temp_results:
+            print(f"Year {year}: {len(results):,} records")
+            all_results.extend(results)
+
+        total_time = (time.time() - start_time) / 60
+
+        print("\nPerformance Metrics:")
+        print("-" * 40)
+        print(f"Total Processing Time: {total_time:.2f} minutes")
+        print(f"Average Time per Year: {total_time / len(list(years)):.2f} minutes")
+        print(f"Total Records: {len(all_results):,}")
+
+        return all_results
+
+
+def convert_fips_to_state(state_code):
+    state = us.states.lookup(state_code)
+    return state.abbr if state else None
+
+
+def build_metric_report(df: pd.DataFrame, metric: str) -> pd.DataFrame:
+    counts = df.groupby(["YR_QTR", "STATE"])[metric].sum().unstack()
+    pct_change = counts.pct_change(periods=1, axis=0).mul(100).round(2)
+    pct_change.columns = [f"{state} %change" for state in pct_change.columns]
+
+    report = pd.concat([counts, pct_change], axis=1)
+
+    ordered_cols = []
+
+    for state in counts.columns:
+        ordered_cols.extend([state, f"{state} %change"])
+
+    report = report[ordered_cols]
+
+    pct_cols = [col for col in report.columns if col.endswith(" %change")]
+    report[pct_cols] = report[pct_cols].map(lambda x: f"{x:.2f}%" if pd.notna(x) else "")
+
+    return report.replace({pd.NA: "", np.nan: ""}).sort_values("YR_QTR", ascending=False).reset_index()
+
+
+def build_submission_check(df: pd.DataFrame) -> pd.DataFrame:
+    report = df.groupby(["YR_QTR", "STATE"])["TOTAL_RECORDS"].sum().unstack().fillna("")
+    report = report.sort_index(ascending=False).reset_index().astype(str)
+
+    states = report.columns[1:]
+    report[states] = np.where(report[states] != "", "X", "")
+
+    return report
+
+
+def get_wage_summary(aws_config: dict) -> pd.DataFrame:
+    runner = PostgresYearPartitionedQuery(aws_config, start_year=2006, end_year=2025)
+    df = pd.DataFrame(runner.execute_parallel(max_concurrent_threads=THREADS))
+
+    df["YR_QTR"] = df["YR"].astype(str) + "-" + df["QTR"].astype(str)
+    df["STATE"] = df["STATE_CODE"].apply(convert_fips_to_state)
+    df["AVERAGE_WAGE_BLS"] = df["TOTAL_WAGE"] / df["BLS_ID_COUNT"]
+    df["TOTAL_RECORDS"] = df["TOTAL_RECORDS"].astype(int)
+
+    return df
+
+
+if __name__ == "__main__":
+    wage_summary = get_wage_summary(AWS_CONFIG)
+
+    dataset_names = {
+        "WR Qtr Submissions": build_submission_check(wage_summary),
+        "Records": build_metric_report(wage_summary, "TOTAL_RECORDS"),
+        "UI": build_metric_report(wage_summary, "UI_COUNT"),
+        "BLS ID": build_metric_report(wage_summary, "BLS_ID_COUNT"),
+        "EIN": build_metric_report(wage_summary, "EIN_COUNT"),
+        "Sum of Wages": build_metric_report(wage_summary, "TOTAL_WAGE"),
+        "Average Wage Record": build_metric_report(wage_summary, "AVG_WAGE"),
+        "Average Wage Per BLS ID": build_metric_report(wage_summary, "AVERAGE_WAGE_BLS")
+    }
+
+    with pd.ExcelWriter("wage_records_summary_report.xlsx") as writer:
+        for sheet_name, df in dataset_names.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
