@@ -146,10 +146,10 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         else:
             w["tenure_max_pre_post"] = np.nan
 
-        w["tenure_group"] = "DD"
-        w.loc[w["tenure_max_pre_post"].between(0, 8, inclusive="both"), "tenure_group"] = "AA"
-        w.loc[w["tenure_max_pre_post"].between(9, 16, inclusive="both"), "tenure_group"] = "BB"
-        w.loc[w["tenure_max_pre_post"] >= 17, "tenure_group"] = "CC"
+        w["tenure_group"] = "D"
+        w.loc[w["tenure_max_pre_post"].between(0, 8, inclusive="both"), "tenure_group"] = "A"
+        w.loc[w["tenure_max_pre_post"].between(9, 16, inclusive="both"), "tenure_group"] = "B"
+        w.loc[w["tenure_max_pre_post"] >= 17, "tenure_group"] = "C"
 
         w = add_delta_cols(w)
 
@@ -391,9 +391,9 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         return long_static, wide_static, long_gap, wide_gap, compare_df
 
     gap_info["gap_group"] = None
-    gap_info.loc[gap_info["gap_len"].between(1, 8), "gap_group"] = "Group A"
-    gap_info.loc[gap_info["gap_len"].between(9, 16), "gap_group"] = "Group B"
-    gap_info.loc[gap_info["gap_len"] >= 17, "gap_group"] = "Group C"
+    gap_info.loc[gap_info["gap_len"].between(1, 8), "gap_group"] = "A"
+    gap_info.loc[gap_info["gap_len"].between(9, 16), "gap_group"] = "B"
+    gap_info.loc[gap_info["gap_len"] >= 17, "gap_group"] = "C"
 
     wide_static = wide_static.merge(gap_info[["ID", "gap_len", "gap_group"]], on="ID", how="left")
 
