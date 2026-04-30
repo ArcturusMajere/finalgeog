@@ -1,4 +1,3 @@
-
 def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=None, wage_col="WAGE", hours_col="HOURS", ui_col="UI", lull_quantile=0.2, lull_window=16):
     d = df.copy()
 
@@ -31,6 +30,9 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         if extra_cols:
             cols += extra_cols
         return pd.DataFrame(columns=cols)
+
+    def empty_wide():
+        return pd.DataFrame(columns=["ID", "tenure_max_pre_post", "tenure_group"])
 
     def compute_tenure(x):
         if ui_col not in x.columns:
@@ -205,7 +207,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         cand = full[full["roll_lull_count"].notna()].copy()
         if cand.empty:
             long_static = empty_long()
-            wide_static = pd.DataFrame(columns=["ID", "tenure_max_pre_post", "tenure_group"])
+            wide_static = empty_wide()
         else:
             best = cand.sort_values(["roll_lull_count", "roll_wage_sum", "q_index"], ascending=[False, True, True]).iloc[0]
             term_end_q_index = int(best["q_index"])
@@ -280,7 +282,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
 
         if static_info is None or static_info.empty:
             long_static = empty_long()
-            wide_static = pd.DataFrame(columns=["ID", "tenure_max_pre_post", "tenure_group"])
+            wide_static = empty_wide()
         else:
             static_df = static_df.merge(static_info[["ID", "term_start_q_index", "term_end_q_index"]], on="ID", how="inner")
             static_df["period"] = np.where(
@@ -297,7 +299,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
         long_static, wide_static = build_summary(static_df, static_periods)
     else:
         long_static = empty_long()
-        wide_static = pd.DataFrame(columns=["ID", "tenure_max_pre_post", "tenure_group"])
+        wide_static = empty_wide()
 
     if static_mode == "lull_term":
         if static_info is not None and not static_info.empty:
@@ -375,7 +377,7 @@ def summarize_id_bins(df, static_mode="fixed_2019_post_2025", ids=None, yr_qtrs=
 
     if gap_info.empty:
         long_gap = empty_long(["gap_len", "gap_group"])
-        wide_gap = pd.DataFrame(columns=["ID", "tenure_max_pre_post", "tenure_group"])
+        wide_gap = empty_wide()
         compare_df = wide_static.copy()
         for c in compare_df.columns:
             if c != "ID":
