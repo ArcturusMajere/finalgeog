@@ -1,1 +1,2 @@
 
+df.loc[(df['fips'] == 9) & (df['year'] == 2022) & (df['qtr'] == 1), 'ui_acct'] = df.loc[(df['fips'] == 9) & (df['year'] == 2022) & (df['qtr'] == 1), 'ui_acct'].apply(ct_edit)
