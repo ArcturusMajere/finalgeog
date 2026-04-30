@@ -31,3 +31,35 @@ def get_first_id_appearance(user, password, dsn):
         df = pd.read_sql(sql, conn)
 
     return df
+
+
+
+import oracledb
+import pandas as pd
+
+def get_first_id_appearance(user,password,dsn):
+    sql="""
+        WITH first_period AS (
+            SELECT
+                BLS_ID AS ID,
+                MIN(YR * 10 + QTR) AS FIRST_YRQTR
+            FROM wagerecusr.wage_data
+            WHERE BLS_ID IS NOT NULL
+            GROUP BY BLS_ID
+        )
+        SELECT
+            w.BLS_ID AS ID,
+            w.YR,
+            w.QTR,
+            w.STATE_CODE AS FIPS,
+            1 AS PRESENT
+        FROM wagerecusr.wage_data w
+        JOIN first_period f
+            ON w.BLS_ID = f.ID
+           AND w.YR * 10 + w.QTR = f.FIRST_YRQTR
+    """
+
+    with oracledb.connect(user=user,password=password,dsn=dsn) as conn:
+        df=pd.read_sql(sql,conn)
+
+    return df
