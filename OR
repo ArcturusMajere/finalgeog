@@ -1,1 +1,33 @@
 
+import oracledb
+import pandas as pd
+
+def get_first_id_appearance(user, password, dsn):
+    sql = """
+        WITH ranked AS (
+            SELECT
+                BLS_ID AS ID,
+                YR,
+                QTR,
+                STATE_CODE AS FIPS,
+                ROW_NUMBER() OVER (
+                    PARTITION BY BLS_ID
+                    ORDER BY YR, QTR
+                ) AS rn
+            FROM wagerecusr.wage_data
+            WHERE BLS_ID IS NOT NULL
+        )
+        SELECT
+            ID,
+            YR,
+            QTR,
+            FIPS,
+            1 AS PRESENT
+        FROM ranked
+        WHERE rn = 1
+    """
+
+    with oracledb.connect(user=user, password=password, dsn=dsn) as conn:
+        df = pd.read_sql(sql, conn)
+
+    return df
