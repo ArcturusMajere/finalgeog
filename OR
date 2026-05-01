@@ -1,5 +1,8 @@
-def ct_edits(value):
-    s = str(value)
-    if len(s) == 10 and s.startswith("000"):
-        return s[3:] + "000"
-    return s
+mask=(
+    df['fips'].astype(str).str.zfill(2).eq('09')
+    & (
+        (df['year']<2022)
+        | ((df['year']==2022)&(df['qtr']<=1))
+    )
+)
+df.loc[mask,'ui_acct']=df.loc[mask,'ui_acct'].apply(ct_edit)
