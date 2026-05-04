@@ -1,1 +1,2 @@
 
+df = df[~((df['orginal_class'] != df['current_class']) & (df['yr_qtr'] == '2020-1'))]
