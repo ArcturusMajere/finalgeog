@@ -1,126 +1,123 @@
-def getdominant(yr, qtr, fipslists=None, naicslevels=naicslevels):
-    def load_ldb_data(yr, qtr, fips):
-        df = openldb_v1(yr, qtr, fips)
-        if len(df) > 0:
-            return df
+def get_dominant(yr,qtr,fipslists=None,naicslevels=naicslevels):
+    if fipslists is None:
+        load_fips=None
+    else:
+        load_fips=list(set(fipslists[0]+fipslists[1]))
+
+    df0=openldb_v1(yr,qtr,load_fips)
+
+    if len(df0)==0:
         try:
-            return openldb_v0(yr, qtr, fips)
-        except Exception:
-            return openldb_v0_dbeslint(yr, qtr, fips)
+            df0=openldb_v0(yr,qtr,load_fips)
+        except:
+            df0=openldb_v0_dbeslint(yr,qtr,load_fips)
 
-    def add_naics_levels(df, naicslevels):
-        df = df.copy()
-        for level in naicslevels:
-            df[f'naics{level}'] = df['naics_code'].astype(str).str[:level]
-        sector_map = {k: k for k in df['naics2'].unique()}
-        for n in [31, 32, 33]:
-            sector_map[str(n)] = '31-33'
-        for n in [44, 45]:
-            sector_map[str(n)] = '44-45'
-        for n in [48, 49]:
-            sector_map[str(n)] = '48-49'
-        df['naics2'] = df['naics2'].map(sector_map)
-        return df
-
-    def prepare_base(df, yr, qtr, naicslevels):
-        df = df.copy()
-        empcols = [c for c in df.columns if c.endswith('_EMPL')]
-        df['aaemp'] = df[empcols].mean(axis=1)
-        df['year'] = yr
-        df['qtr'] = qtr
-        return add_naics_levels(df, naicslevels)
-
-    def build_ui_level(df, gv1, naicslevels):
-        total_emp = df.groupby(gv1, as_index=False).agg({'aaemp': 'sum', 'meei': 'max'})
-        final = {}
-
-        for level in naicslevels:
-            c = f'naics{level}'
-            dom = (
-                df.groupby(gv1 + [c], as_index=False)
-                .agg({'aaemp': 'sum', 'wages': 'sum', 'randomly_generated_number': 'mean'})
-                .sort_values(gv1 + ['aaemp', 'wages', 'randomly_generated_number'])
-                .groupby(gv1, as_index=False)
-                .agg({c: 'last', 'aaemp': 'last', 'wages': 'count'})
-                .rename(columns={'wages': f'number_unique_{c}'})
-            )
-            final[c] = dom
-
-        first_level = naicslevels[0]
-        out = final[f'naics{first_level}'].rename(columns={'aaemp': f'aaemp_naics{first_level}'})
-
-        for level in naicslevels[1:]:
-            c = f'naics{level}'
-            temp = final[c][gv1 + ['aaemp', c, f'number_unique_{c}']].rename(columns={'aaemp': f'aaemp_{c}'})
-            out = out.merge(temp, on=gv1, how='outer')
-
-        out = out.merge(total_emp.rename(columns={'aaemp': 'aaemp_ui'}), on=gv1, how='inner')
-        out['Dmulti'] = out['meei'].isin([3, 4, 5, 6]).astype(int)
-
-        for level in naicslevels:
-            cond1 = out[f'number_unique_naics{level}'].eq(1)
-            cond2 = out['aaemp_ui'].eq(0)
-            out[f'prop_emp_dom_naics{level}'] = np.where(
-                cond1,
-                1,
-                np.where(cond2, 0, out[f'aaemp_naics{level}'] / out['aaemp_ui'])
-            )
-
-        out['Dui_level'] = True
-        kcols = (
-            gv1
-            + [f'prop_emp_dom_naics{level}' for level in naicslevels]
-            + [f'naics{level}' for level in naicslevels]
-            + ['Dmulti', 'Dui_level']
-        )
-        return out[kcols]
-
-    def build_run_level(df, gv1, naicslevels):
-        df = df.copy()
-        for level in naicslevels:
-            df[f'prop_emp_dom_naics{level}'] = 1
-        df['Dmulti'] = df['meei'].isin([3, 4, 5, 6]).astype(int)
-        df['Dui_level'] = False
-        kcols = (
-            gv1
-            + [f'prop_emp_dom_naics{level}' for level in naicslevels]
-            + [f'naics{level}' for level in naicslevels]
-            + ['Dmulti', 'Dui_level']
-        )
-        return df[kcols]
+    df0.sort_values(['fips','ui_acct','run'],inplace=True)
+    np.random.seed(42)
+    df0['randomly_generated_number']=np.random.rand(len(df0))
+    df0=df0[df0['meei']!=9]
 
     if fipslists is None:
-        df0 = load_ldb_data(yr, qtr, None)
-        fipslists = [df0['fips'].unique().tolist(), []]
-    else:
-        all_fips = list(set(fipslists[0] + fipslists[1]))
-        df0 = load_ldb_data(yr, qtr, all_fips)
+        fipslists=[df0['fips'].unique().tolist(),[]]
 
-    df0 = df0.copy()
-    df0 = df0[df0['meei'].ne(9)]
-    df0 = df0.sort_values(['fips', 'ui_acct', 'run'])
+    dff=[]
 
-    np.random.seed(42)
-    df0['randomly_generated_number'] = np.random.rand(len(df0))
+    for userun,fipslist in enumerate(fipslists):
+        df=df0[df0['fips'].isin(fipslist)].copy()
 
-    results = []
-
-    for userun, fipslist in enumerate(fipslists):
-        df = df0[df0['fips'].isin(fipslist)].copy()
-        if df.empty:
+        if len(df)==0:
             continue
 
-        df = prepare_base(df, yr, qtr, naicslevels)
+        empcols=[c for c in df.columns if c.endswith('_EMPL')]
+        df.loc[:,'aaemp']=df[empcols].mean(axis=1)
+        df.loc[:,'year']=yr
+        df.loc[:,'qtr']=qtr
 
-        if userun == 0:
-            gv1 = ['fips', 'ui_acct', 'year', 'qtr']
-            results.append(build_ui_level(df, gv1, naicslevels))
+        if userun==1:
+            gv1=['fips','ui_acct','run','year','qtr']
+        elif userun==0:
+            gv1=['fips','ui_acct','year','qtr']
 
-        elif userun == 1:
-            gv1 = ['fips', 'ui_acct', 'run', 'year', 'qtr']
-            results.append(build_run_level(df, gv1, naicslevels))
+        for naicslevel in naicslevels:
+            df.loc[:,f'naics{naicslevel}']=df['naics_code'].astype(str).str[:naicslevel]
 
-    if not results:
-        return pd.DataFrame()
+        sectordict={k:k for k in df['naics2'].unique()}
 
-    return pd.concat(results, ignore_index=True)
+        for n in [31,32,33]:
+            sectordict[str(n)]='31-33'
+
+        for n in [44,45]:
+            sectordict[str(n)]='44-45'
+
+        for n in [48,49]:
+            sectordict[str(n)]='48-49'
+
+        df.loc[:,'naics2']=df['naics2'].map(sectordict)
+
+        if userun==0:
+            dfg=df.groupby(gv1,as_index=False).agg({'aaemp':'sum','meei':'max'})
+            finaldict={}
+
+            for naicslevel in naicslevels:
+                c=f'naics{naicslevel}'
+                dft=(
+                    df.groupby(gv1+[c],as_index=False)
+                    .agg({'aaemp':'sum','wages':'sum','randomly_generated_number':'mean'})
+                    .sort_values(
+                        gv1+['aaemp','wages','randomly_generated_number'],
+                        ascending=[True for _ in gv1]+[True,True,True]
+                    )
+                    .groupby(gv1,as_index=False)
+                    .agg({c:'last','aaemp':'last','wages':'count'})
+                    .rename(columns={'wages':f'number_unique_{c}'})
+                )
+                finaldict[c]=dft
+
+            first_level=naicslevels[0]
+            dft=finaldict[f'naics{first_level}'].rename(columns={'aaemp':f'aaemp_naics{first_level}'})
+
+            for naicslevel in naicslevels[1:]:
+                dft1=(
+                    finaldict[f'naics{naicslevel}']
+                    [gv1+['aaemp',f'naics{naicslevel}',f'number_unique_naics{naicslevel}']]
+                    .rename(columns={'aaemp':f'aaemp_naics{naicslevel}'})
+                )
+                dft=dft.merge(dft1,on=gv1,how='outer')
+
+            dft=dft.merge(dfg.rename(columns={'aaemp':'aaemp_ui'}),on=gv1,how='inner')
+            dft['Dmulti']=1*(dft['meei'].isin([3,4,5,6]))
+
+            for naicslevel in naicslevels:
+                cond1=dft[f'number_unique_naics{naicslevel}']==1
+                cond2=dft['aaemp_ui']==0
+                dft[f'prop_emp_dom_naics{naicslevel}']=np.where(
+                    cond1,
+                    1,
+                    np.where(cond2,0,dft[f'aaemp_naics{naicslevel}']/dft['aaemp_ui'])
+                )
+
+            dft['Dui_level']=True
+            kcols=(
+                gv1+
+                [f'prop_emp_dom_naics{naicslevel}' for naicslevel in naicslevels]+
+                [f'naics{naicslevel}' for naicslevel in naicslevels]+
+                ['Dmulti','Dui_level']
+            )
+            dff.append(dft[kcols])
+
+        elif userun==1:
+            for naicslevel in naicslevels:
+                df.loc[:,f'prop_emp_dom_naics{naicslevel}']=1
+
+            df.loc[:,'Dmulti']=1*(df['meei'].isin([3,4,5,6]))
+            df.loc[:,'Dui_level']=False
+
+            kcols=(
+                gv1+
+                [f'prop_emp_dom_naics{naicslevel}' for naicslevel in naicslevels]+
+                [f'naics{naicslevel}' for naicslevel in naicslevels]+
+                ['Dmulti','Dui_level']
+            )
+            dff.append(df[kcols])
+
+    return pd.concat(dff,ignore_index=True)
