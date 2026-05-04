@@ -1,2 +1,2 @@
-
-df = df[~((df['orginal_class'] != df['current_class']) & (df['yr_qtr'] == '2020-1'))]
+fiplist_clean = [str(x).lstrip('0') for x in fiplist]
+df2 = df[df['fips'].astype(str).str.lstrip('0').isin(fiplist_clean)]
