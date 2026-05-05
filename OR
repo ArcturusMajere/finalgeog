@@ -1,68 +1,27 @@
-import pandas as pd
-import plotly.graph_objects as go
 
-def unknown_percent_heatmap(df, unknown_sector='00:Unknown', save_html=None, show=True):
-    data=df.copy()
-    needed={'state','sector','counts'}
-    missing=needed-set(data.columns)
-    if missing:
-        raise ValueError(f"Missing columns: {missing}")
-    if 'yr_qtr' not in data.columns:
-        if {'yr','qtr'}.issubset(data.columns):
-            data['yr_qtr']=data['yr'].astype(str)+'-'+data['qtr'].astype(str)
-        else:
-            raise ValueError("df must contain 'yr_qtr' or both 'yr' and 'qtr'")
-    data['state']=data['state'].astype(str)
-    data['sector']=data['sector'].astype(str)
-    data['yr_qtr']=data['yr_qtr'].astype(str)
-    data['counts']=pd.to_numeric(data['counts'],errors='coerce').fillna(0)
+def extract_one(args):
+    fips, yr, qtr = args
+    df = Extract_QTR(fips, yr, qtr)
+    return df
+def extracthreaded(fipslist,
+    start_year=2020,start_qtr=1,end_year=2025,end_qtr=3,max_workers=4):
+    tasks = []
+    for yr in range(start_year, end_year + 1):
+        for qtr in range(1, 5):
+            if yr == start_year and qtr < start_qtr:
+                continue
+            if yr == end_year and qtr > end_qtr:
+                continue
+            for fips in fipslist:
+                tasks.append((fips, yr, qtr))
+    out = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(extract_one, task) for task in tasks]
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                out.append(result)
+    if not out:
+        return pd.DataFrame()
 
-    total_counts=data.groupby(['state','yr_qtr'],as_index=False)['counts'].sum().rename(columns={'counts':'total_counts'})
-    unknown_counts=data[data['sector'].eq(unknown_sector)].groupby(['state','yr_qtr'],as_index=False)['counts'].sum().rename(columns={'counts':'unknown_counts'})
-
-    merged=total_counts.merge(unknown_counts,on=['state','yr_qtr'],how='left')
-    merged['unknown_counts']=merged['unknown_counts'].fillna(0)
-    merged['pct_unknown']=merged['unknown_counts'].div(merged['total_counts']).mul(100)
-
-    qtr_order=sorted(merged['yr_qtr'].unique(),key=lambda x:(int(x.split('-')[0]),int(x.split('-')[1])))
-    state_order=sorted(merged['state'].unique())
-
-    pct=merged.pivot(index='yr_qtr',columns='state',values='pct_unknown').reindex(index=qtr_order,columns=state_order)
-    unk=merged.pivot(index='yr_qtr',columns='state',values='unknown_counts').reindex(index=qtr_order,columns=state_order)
-    tot=merged.pivot(index='yr_qtr',columns='state',values='total_counts').reindex(index=qtr_order,columns=state_order)
-
-    customdata=[[[unk.loc[y,x],tot.loc[y,x]] for x in pct.columns] for y in pct.index]
-
-    fig=go.Figure(
-        go.Heatmap(
-            z=pct.to_numpy(),
-            x=pct.columns.tolist(),
-            y=pct.index.tolist(),
-            customdata=customdata,
-            colorscale='Viridis',
-            colorbar=dict(title='% unknown'),
-            hovertemplate='state=%{x}<br>yr_qtr=%{y}<br>% unknown=%{z:.2f}%<br>unknown count=%{customdata[0]:,.0f}<br>total count=%{customdata[1]:,.0f}<extra></extra>'
-        )
-    )
-
-    fig.update_layout(
-        title=f'Percent {unknown_sector} of total counts',
-        xaxis_title='state',
-        yaxis_title='yr_qtr',
-        height=max(500,25*len(pct.index))
-    )
-
-    if save_html is not None:
-        fig.write_html(save_html)
-
-    if show:
-        fig.show()
-
-    return fig, merged
-
-
-fig, unknown_summary = unknown_percent_heatmap(
-    all_qtr_df,
-    unknown_sector='00:Unknown',
-    save_html='unknown_percent_heatmap.html'
-)
+    return pd.concat(out, ignore_index=True)
