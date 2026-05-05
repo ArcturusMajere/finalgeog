@@ -1,9 +1,19 @@
+import pandas as pd
+import plotly.graph_objects as go
 
-def unkheatmap(data,unknown_sector='00:Unknown',save_html=None):
-   
+def unknown_percent_heatmap(df,unknown_sector='00:Unknown',save_html=None):
+    data=df.copy()
+    needed={'state','sector','counts'}
+    missing=needed-set(data.columns)
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+    if 'yr_qtr' not in data.columns:
+        if {'yr','qtr'}.issubset(data.columns):
+            data['yr_qtr']=data['yr'].astype(str)+'-'+data['qtr'].astype(str)
+        else:
+            raise ValueError("df must contain 'yr_qtr' or both 'yr' and 'qtr'")
     data['state']=data['state'].astype(str)
     data['sector']=data['sector'].astype(str)
-    data['yr_qtr']=data['yr_qtr'].astype(str)
     data['counts']=pd.to_numeric(data['counts'],errors='coerce').fillna(0)
 
     total_counts=data.groupby(['state','yr_qtr'],as_index=False)['counts'].sum().rename(columns={'counts':'total_counts'})
@@ -13,7 +23,7 @@ def unkheatmap(data,unknown_sector='00:Unknown',save_html=None):
     merged['unknown_counts']=merged['unknown_counts'].fillna(0)
     merged['pct_unknown']=merged['unknown_counts'].div(merged['total_counts']).mul(100)
 
-    qtr_order=sorted(merged['yr_qtr'].unique(),key=lambda x:(int(x.split('-')[0]),int(x.split('-')[1])))
+    qtr_order=list(pd.unique(data['yr_qtr']))
     state_order=sorted(merged['state'].unique())
 
     pct=merged.pivot(index='yr_qtr',columns='state',values='pct_unknown').reindex(index=qtr_order,columns=state_order)
