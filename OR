@@ -1,27 +1,43 @@
 
-def extract_one(args):
-    fips, yr, qtr = args
-    df = Extract_QTR(fips, yr, qtr)
-    return df
-def extracthreaded(fipslist,
-    start_year=2020,start_qtr=1,end_year=2025,end_qtr=3,max_workers=4):
-    tasks = []
-    for yr in range(start_year, end_year + 1):
-        for qtr in range(1, 5):
-            if yr == start_year and qtr < start_qtr:
-                continue
-            if yr == end_year and qtr > end_qtr:
-                continue
-            for fips in fipslist:
-                tasks.append((fips, yr, qtr))
-    out = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(extract_one, task) for task in tasks]
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                out.append(result)
-    if not out:
-        return pd.DataFrame()
+def unkheatmap(data,unknown_sector='00:Unknown',save_html=None):
+   
+    data['state']=data['state'].astype(str)
+    data['sector']=data['sector'].astype(str)
+    data['yr_qtr']=data['yr_qtr'].astype(str)
+    data['counts']=pd.to_numeric(data['counts'],errors='coerce').fillna(0)
 
-    return pd.concat(out, ignore_index=True)
+    total_counts=data.groupby(['state','yr_qtr'],as_index=False)['counts'].sum().rename(columns={'counts':'total_counts'})
+    unknown_counts=data[data['sector'].eq(unknown_sector)].groupby(['state','yr_qtr'],as_index=False)['counts'].sum().rename(columns={'counts':'unknown_counts'})
+
+    merged=total_counts.merge(unknown_counts,on=['state','yr_qtr'],how='left')
+    merged['unknown_counts']=merged['unknown_counts'].fillna(0)
+    merged['pct_unknown']=merged['unknown_counts'].div(merged['total_counts']).mul(100)
+
+    qtr_order=sorted(merged['yr_qtr'].unique(),key=lambda x:(int(x.split('-')[0]),int(x.split('-')[1])))
+    state_order=sorted(merged['state'].unique())
+
+    pct=merged.pivot(index='yr_qtr',columns='state',values='pct_unknown').reindex(index=qtr_order,columns=state_order)
+
+    fig=go.Figure(
+        go.Heatmap(
+            z=pct.to_numpy(),
+            x=pct.columns.tolist(),
+            y=pct.index.tolist(),
+            colorscale='Viridis',
+            colorbar=dict(title='% unknown'),
+            hovertemplate='yr_qtr=%{y}<br>state=%{x}<br>percent unknown=%{z:.2f}%<extra></extra>'
+        )
+    )
+
+    fig.update_layout(
+        title=f'Percent {unknown_sector} of total counts',
+        xaxis_title='state',
+        yaxis_title='yr_qtr',
+        height=max(500,25*len(pct.index))
+    )
+
+    if save_html:
+        fig.write_html(save_html)
+
+    fig.show()
+    return fig,merged
