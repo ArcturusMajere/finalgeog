@@ -1,1 +1,46 @@
 
+def unknown_percent_heatmap(data,unknown_sector='00:Unknown',save_html=None):
+    data['state']=data['state'].astype(str)
+    data['sector']=data['sector'].astype(str)
+    data['yr_qtr']=data['yr_qtr'].astype(str)
+    data['yr_qtr_label']='Q '+data['yr_qtr']
+    data['counts']=pd.to_numeric(data['counts'],errors='coerce').fillna(0)
+    total_counts=data.groupby(['state','yr_qtr','yr_qtr_label'],as_index=False)['counts'].sum().rename(columns={'counts':'total_counts'})
+    unknown_counts=data[data['sector'].eq(unknown_sector)].groupby(['state','yr_qtr','yr_qtr_label'],as_index=False)['counts'].sum().rename(columns={'counts':'unknown_counts'})
+    merged=total_counts.merge(unknown_counts,on=['state','yr_qtr','yr_qtr_label'],how='left')
+    merged['unknown_counts']=merged['unknown_counts'].fillna(0)
+    merged['pct_unknown']=merged['unknown_counts'].div(merged['total_counts']).mul(100)
+    qtr_order=list(pd.unique(data['yr_qtr_label']))
+    state_order=list(pd.unique(data['state']))
+    heat=merged.pivot(index='yr_qtr_label',columns='state',values='pct_unknown').reindex(index=qtr_order,columns=state_order)
+    yr_lookup=merged.drop_duplicates('yr_qtr_label').set_index('yr_qtr_label')['yr_qtr'].to_dict()
+    customdata=[[[yr_lookup[y]] for x in heat.columns] for y in heat.index]
+
+    fig=go.Figure(
+        go.Heatmap(
+            z=heat.to_numpy(),
+            x=heat.columns.tolist(),
+            y=heat.index.tolist(),
+            customdata=customdata,
+            colorscale='Viridis',
+            colorbar=dict(title='% unknown'),
+            hovertemplate='yr_qtr=%{customdata[0]}<br>state=%{x}<br>percent unknown=%{z:.2f}%<extra></extra>'  ))
+
+    fig.update_layout(
+        title=f'Percent {unknown_sector} of total counts',
+        xaxis_title='state',
+        yaxis_title='yr_qtr',
+        height=max(500,25*len(heat.index)),
+        xaxis=dict(type='category',categoryorder='array',categoryarray=state_order),
+        yaxis=dict(type='category',categoryorder='array',categoryarray=qtr_order) )
+
+    fig.update_yaxes(
+        tickmode='array',
+        tickvals=qtr_order,
+        ticktext=[y.replace('Q ','',1) for y in qtr_order] )
+
+    if save_html:
+        fig.write_html(save_html)
+
+    fig.show()
+    return fig,merged
