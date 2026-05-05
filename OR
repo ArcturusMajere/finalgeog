@@ -1,7 +1,7 @@
 import pandas as pd
 import plotly.graph_objects as go
 
-def unknown_percent_heatmap(df,unknown_sector='00:Unknown'):
+def unknown_percent_heatmap(df, unknown_sector='00:Unknown', save_html=None, show=True):
     data=df.copy()
     needed={'state','sector','counts'}
     missing=needed-set(data.columns)
@@ -51,6 +51,18 @@ def unknown_percent_heatmap(df,unknown_sector='00:Unknown'):
         yaxis_title='yr_qtr',
         height=max(500,25*len(pct.index))
     )
-    fig.show()
 
-    return merged
+    if save_html is not None:
+        fig.write_html(save_html)
+
+    if show:
+        fig.show()
+
+    return fig, merged
+
+
+fig, unknown_summary = unknown_percent_heatmap(
+    all_qtr_df,
+    unknown_sector='00:Unknown',
+    save_html='unknown_percent_heatmap.html'
+)
