@@ -1,5 +1,46 @@
 import pandas as pd
 import plotly.graph_objects as go
+
+def sector_counts_heatmap(df,sector='00:Unknown'):
+    data=df.copy()
+    if 'yr_qtr' not in data.columns:
+        if {'yr','qtr'}.issubset(data.columns):
+            data['yr_qtr']=data['yr'].astype(str)+'-'+data['qtr'].astype(str)
+        else:
+            raise ValueError("df must contain 'yr_qtr' or both 'yr' and 'qtr'")
+    needed={'state','sector','counts','yr_qtr'}
+    missing=needed-set(data.columns)
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+    data['state']=data['state'].astype(str)
+    data['sector']=data['sector'].astype(str)
+    data['yr_qtr']=data['yr_qtr'].astype(str)
+    d=data[data['sector'].eq(sector)].copy()
+    if d.empty:
+        raise ValueError(f"No rows found for sector: {sector}")
+    qtr_order=sorted(d['yr_qtr'].unique(),key=lambda x:(int(x.split('-')[0]),int(x.split('-')[1])))
+    state_order=sorted(d['state'].unique())
+    heat=d.pivot_table(index='yr_qtr',columns='state',values='counts',aggfunc='sum').reindex(index=qtr_order,columns=state_order)
+    fig=go.Figure(
+        go.Heatmap(
+            z=heat.to_numpy(),
+            x=heat.columns.tolist(),
+            y=heat.index.tolist(),
+            colorscale='Viridis',
+            hovertemplate='state=%{x}<br>yr_qtr=%{y}<br>counts=%{z:,.0f}<extra></extra>'
+        )
+    )
+    fig.update_layout(
+        title=f"Counts heatmap for sector {sector}",
+        xaxis_title='state',
+        yaxis_title='yr_qtr',
+        height=max(500,25*len(heat.index))
+    )
+    fig.show()
+
+
+import pandas as pd
+import plotly.graph_objects as go
 import ipywidgets as widgets
 from IPython.display import display
 
