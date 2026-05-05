@@ -1,9 +1,7 @@
 import pandas as pd
 import plotly.express as px
-import webbrowser
-from pathlib import Path
 
-def mean_wage_heatmap_by_state(df,html_file=None,open_browser=False):
+def mean_wage_heatmap_by_state(df,html_file=None):
     data=df.copy()
     needed={'yr_qtr','state','counts','mean_wage'}
     missing=needed-set(data.columns)
@@ -52,10 +50,7 @@ def mean_wage_heatmap_by_state(df,html_file=None,open_browser=False):
     )
 
     if html_file is not None:
-        path=Path(html_file).resolve()
-        fig.write_html(path)
-        if open_browser:
-            webbrowser.open(path.as_uri())
+        fig.write_html(html_file)
 
     fig.show()
     return heat,fig
