@@ -1,89 +1,56 @@
 import pandas as pd
 import plotly.graph_objects as go
 
-def sector_counts_heatmap(df,sector='00:Unknown'):
+def unknown_percent_heatmap(df,unknown_sector='00:Unknown'):
     data=df.copy()
-    if 'yr_qtr' not in data.columns:
-        if {'yr','qtr'}.issubset(data.columns):
-            data['yr_qtr']=data['yr'].astype(str)+'-'+data['qtr'].astype(str)
-        else:
-            raise ValueError("df must contain 'yr_qtr' or both 'yr' and 'qtr'")
-    needed={'state','sector','counts','yr_qtr'}
+    needed={'state','sector','counts'}
     missing=needed-set(data.columns)
     if missing:
         raise ValueError(f"Missing columns: {missing}")
-    data['state']=data['state'].astype(str)
-    data['sector']=data['sector'].astype(str)
-    data['yr_qtr']=data['yr_qtr'].astype(str)
-    d=data[data['sector'].eq(sector)].copy()
-    if d.empty:
-        raise ValueError(f"No rows found for sector: {sector}")
-    qtr_order=sorted(d['yr_qtr'].unique(),key=lambda x:(int(x.split('-')[0]),int(x.split('-')[1])))
-    state_order=sorted(d['state'].unique())
-    heat=d.pivot_table(index='yr_qtr',columns='state',values='counts',aggfunc='sum').reindex(index=qtr_order,columns=state_order)
-    fig=go.Figure(
-        go.Heatmap(
-            z=heat.to_numpy(),
-            x=heat.columns.tolist(),
-            y=heat.index.tolist(),
-            colorscale='Viridis',
-            hovertemplate='state=%{x}<br>yr_qtr=%{y}<br>counts=%{z:,.0f}<extra></extra>'
-        )
-    )
-    fig.update_layout(
-        title=f"Counts heatmap for sector {sector}",
-        xaxis_title='state',
-        yaxis_title='yr_qtr',
-        height=max(500,25*len(heat.index))
-    )
-    fig.show()
-
-
-import pandas as pd
-import plotly.graph_objects as go
-import ipywidgets as widgets
-from IPython.display import display
-
-def interactive_heatmap(df):
-    data=df.copy()
     if 'yr_qtr' not in data.columns:
         if {'yr','qtr'}.issubset(data.columns):
             data['yr_qtr']=data['yr'].astype(str)+'-'+data['qtr'].astype(str)
         else:
             raise ValueError("df must contain 'yr_qtr' or both 'yr' and 'qtr'")
-    data['yr_qtr']=data['yr_qtr'].astype(str)
+    data['state']=data['state'].astype(str)
     data['sector']=data['sector'].astype(str)
-    metric_options=[c for c in ['counts','mean_wage','median_wage','percentile75','percentile25'] if c in data.columns]
-    if not metric_options:
-        raise ValueError("No valid metric columns found")
-    qtr_order=sorted(data['yr_qtr'].unique(),key=lambda x:(int(str(x).split('-')[0]),int(str(x).split('-')[1])))
-    has_state='state' in data.columns
-    if has_state:
-        data['state']=data['state'].astype(str)
-        state_options=sorted(data['state'].unique())
+    data['yr_qtr']=data['yr_qtr'].astype(str)
+    data['counts']=pd.to_numeric(data['counts'],errors='coerce').fillna(0)
 
-    def draw(metric,state=None):
-        d=data.copy()
-        if has_state and state is not None:
-            d=d[d['state']==str(state)]
-        heat=d.pivot_table(index='sector',columns='yr_qtr',values=metric,aggfunc='mean')
-        heat=heat.reindex(columns=qtr_order)
-        if 'counts' in d.columns:
-            cnt=d.pivot_table(index='sector',columns='yr_qtr',values='counts',aggfunc='sum')
-            cnt=cnt.reindex(index=heat.index,columns=heat.columns)
-            customdata=cnt.to_numpy()
-            hovertemplate=f"sector=%{{y}}<br>yr_qtr=%{{x}}<br>{metric}=%{{z:,.2f}}<br>counts=%{{customdata:,.0f}}<extra></extra>"
-        else:
-            customdata=None
-            hovertemplate=f"sector=%{{y}}<br>yr_qtr=%{{x}}<br>{metric}=%{{z:,.2f}}<extra></extra>"
-        fig=go.Figure(go.Heatmap(z=heat.to_numpy(),x=heat.columns.tolist(),y=heat.index.tolist(),customdata=customdata,colorscale='Viridis',hovertemplate=hovertemplate))
-        title=f"{metric} by sector and quarter"
-        if has_state and state is not None:
-            title=f"{title} | state {state}"
-        fig.update_layout(title=title,xaxis_title='yr_qtr',yaxis_title='sector',height=max(500,30*len(heat.index)))
-        fig.show()
+    total_counts=data.groupby(['state','yr_qtr'],as_index=False)['counts'].sum().rename(columns={'counts':'total_counts'})
+    unknown_counts=data[data['sector'].eq(unknown_sector)].groupby(['state','yr_qtr'],as_index=False)['counts'].sum().rename(columns={'counts':'unknown_counts'})
 
-    if has_state:
-        widgets.interact(draw,metric=widgets.Dropdown(options=metric_options,value=metric_options[0],description='metric'),state=widgets.Dropdown(options=state_options,value=state_options[0],description='state'))
-    else:
-        widgets.interact(draw,metric=widgets.Dropdown(options=metric_options,value=metric_options[0],description='metric'))
+    merged=total_counts.merge(unknown_counts,on=['state','yr_qtr'],how='left')
+    merged['unknown_counts']=merged['unknown_counts'].fillna(0)
+    merged['pct_unknown']=merged['unknown_counts'].div(merged['total_counts']).mul(100)
+
+    qtr_order=sorted(merged['yr_qtr'].unique(),key=lambda x:(int(x.split('-')[0]),int(x.split('-')[1])))
+    state_order=sorted(merged['state'].unique())
+
+    pct=merged.pivot(index='yr_qtr',columns='state',values='pct_unknown').reindex(index=qtr_order,columns=state_order)
+    unk=merged.pivot(index='yr_qtr',columns='state',values='unknown_counts').reindex(index=qtr_order,columns=state_order)
+    tot=merged.pivot(index='yr_qtr',columns='state',values='total_counts').reindex(index=qtr_order,columns=state_order)
+
+    customdata=[[[unk.loc[y,x],tot.loc[y,x]] for x in pct.columns] for y in pct.index]
+
+    fig=go.Figure(
+        go.Heatmap(
+            z=pct.to_numpy(),
+            x=pct.columns.tolist(),
+            y=pct.index.tolist(),
+            customdata=customdata,
+            colorscale='Viridis',
+            colorbar=dict(title='% unknown'),
+            hovertemplate='state=%{x}<br>yr_qtr=%{y}<br>% unknown=%{z:.2f}%<br>unknown count=%{customdata[0]:,.0f}<br>total count=%{customdata[1]:,.0f}<extra></extra>'
+        )
+    )
+
+    fig.update_layout(
+        title=f'Percent {unknown_sector} of total counts',
+        xaxis_title='state',
+        yaxis_title='yr_qtr',
+        height=max(500,25*len(pct.index))
+    )
+    fig.show()
+
+    return merged
