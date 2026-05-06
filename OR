@@ -1,7 +1,9 @@
 import pandas as pd
 import plotly.express as px
+import webbrowser
+from pathlib import Path
 
-def mean_wage_heatmap_by_state(df,html_file=None):
+def mean_wage_heatmap_by_state(df,html_file=None,open_browser=False):
     data=df.copy()
     needed={'yr_qtr','state','counts','mean_wage'}
     missing=needed-set(data.columns)
@@ -27,7 +29,7 @@ def mean_wage_heatmap_by_state(df,html_file=None):
     heat['mean_wage']=heat['total_wage']/heat['total_counts']
 
     plot_df=heat.pivot(index='yr_qtr',columns='state',values='mean_wage')
-    plot_df=plot_df.reindex(index=yr_order,columns=state_order)
+    plot_df=plot_df.reindex(index=yr_order[::-1],columns=state_order)
 
     fig=px.imshow(
         plot_df,
@@ -36,7 +38,7 @@ def mean_wage_heatmap_by_state(df,html_file=None):
     )
 
     fig.update_xaxes(type='category',categoryorder='array',categoryarray=state_order)
-    fig.update_yaxes(type='category',categoryorder='array',categoryarray=yr_order)
+    fig.update_yaxes(type='category',categoryorder='array',categoryarray=yr_order[::-1])
 
     fig.update_traces(
         hovertemplate='yr_qtr: %{y}<br>state: %{x}<br>mean_wage: %{z:,.2f}<extra></extra>'
@@ -50,7 +52,12 @@ def mean_wage_heatmap_by_state(df,html_file=None):
     )
 
     if html_file is not None:
-        fig.write_html(html_file)
+        path=Path(html_file).resolve()
+        fig.write_html(path)
+        if open_browser:
+            webbrowser.open(path.as_uri())
 
     fig.show()
     return heat,fig
+
+plot_df=plot_df.reindex(index=yr_order[::-1],columns=state_order)
