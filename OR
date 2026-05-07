@@ -1,9 +1,5 @@
-def wage_sector_state_heatmap_html(df,metrics=None,html_path='wage_sector_state_heatmap.html'):
-    data=df.copy()
-    needed={'yr_qtr','sector','state'}
-    missing=needed-set(data.columns)
-    if missing:
-        raise ValueError(f"Missing columns: {missing}")
+def wage_sector_state_heatmap_html(data,metrics=None,html_path='wage_sector_state_heatmap.html'):
+
     data['yr_qtr']=data['yr_qtr'].map(lambda x:str(x))
     data['sector']=data['sector'].map(lambda x:str(x))
     data['state']=data['state'].map(lambda x:str(x))
@@ -13,7 +9,7 @@ def wage_sector_state_heatmap_html(df,metrics=None,html_path='wage_sector_state_
         raise ValueError("No metric columns found.")
     for c in metrics:
         data[c]=pd.to_numeric(data[c],errors='coerce')
-    yr_order=list(data['yr_qtr'].drop_duplicates())
+    yr_order=list(data['yr_qtr'].drop_duplicates())[::-1]
     sector_order=list(data['sector'].drop_duplicates())
     state_order=['ALL']+sorted(data['state'].dropna().unique())
     heatmaps={}
