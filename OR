@@ -1,15 +1,12 @@
 
-import pandas as pd
 import plotly.graph_objects as go
+import ipywidgets as widgets
+from IPython.display import display
 
-def wage_sector_heatmap(df,metrics=None,html_path=None):
-    data=df.copy()
-    needed={'yr_qtr','sector'}
-    missing=needed-set(data.columns)
-    if missing:
-        raise ValueError(f"Missing columns: {missing}")
+def wage_sector_state_heatmap(df,metrics=None,html_path=None):
     data['yr_qtr']=data['yr_qtr'].astype(str)
     data['sector']=data['sector'].astype(str)
+    data['state']=data['state'].astype(str)
     if metrics is None:
         metrics=[c for c in ['counts','mean_wage','median_wage','percentile75','percentile25'] if c in data.columns]
     if not metrics:
@@ -18,50 +15,38 @@ def wage_sector_heatmap(df,metrics=None,html_path=None):
         data[c]=pd.to_numeric(data[c],errors='coerce')
     yr_order=list(pd.unique(data['yr_qtr']))
     sector_order=list(pd.unique(data['sector']))
-    traces=[]
-    buttons=[]
-    for i,metric in enumerate(metrics):
-        pivot=data.pivot_table(index='sector',columns='yr_qtr',values=metric,aggfunc='mean')
-        pivot=pivot.reindex(index=sector_order,columns=yr_order)
-        traces.append(go.Heatmap(
-            z=pivot.values,
-            x=pivot.columns,
-            y=pivot.index,
-            colorscale='Viridis',
-            colorbar=dict(title=metric),
-            hovertemplate='yr_qtr: %{x}<br>sector: %{y}<br>'+metric+': %{z}<extra></extra>',
-            visible=(i==0)
-        ))
-        buttons.append(dict(
-            label=metric,
-            method='update',
-            args=[
-                {'visible':[j==i for j in range(len(metrics))]},
-                {'title':f'Heatmap of {metric} by sector and yr_qtr'}
-            ]
-        ))
-    fig=go.Figure(data=traces)
-    fig.update_layout(
-        title=f'Heatmap of {metrics[0]} by sector and yr_qtr',
-        xaxis_title='yr_qtr',
-        yaxis_title='sector',
-        height=max(500,35*len(sector_order)),
-        updatemenus=[dict(
-            buttons=buttons,
-            direction='down',
-            showactive=True,
-            x=1.02,
-            xanchor='left',
-            y=1.12,
-            yanchor='top'
-        )],
-        margin=dict(l=120,r=120,t=90,b=80)
-    )
-    fig.update_xaxes(type='category')
-    fig.update_yaxes(type='category',autorange='reversed')
-    if html_path:
-        fig.write_html(html_path)
-    fig.show()
-    return fig
+    state_order=sorted(data['state'].dropna().unique())
+    state_dd=widgets.Dropdown(options=state_order,value=state_order[0],description='State:')
+    metric_dd=widgets.Dropdown(options=metrics,value=metrics[0],description='Metric:')
+    out=widgets.Output()
+    def draw(state,metric):
+        with out:
+            out.clear_output(wait=True)
+            d=data[data['state']==state]
+            pivot=d.pivot_table(index='sector',columns='yr_qtr',values=metric,aggfunc='mean')
+            pivot=pivot.reindex(index=sector_order,columns=yr_order)
+            fig=go.Figure(data=go.Heatmap(
+                z=pivot.values,
+                x=pivot.columns,
+                y=pivot.index,
+                colorscale='Viridis',
+                hovertemplate='state: '+state+'<br>yr_qtr: %{x}<br>sector: %{y}<br>'+metric+': %{z}<extra></extra>'
+            ))
+            fig.update_layout(
+                title=f'{metric} heatmap by sector and yr_qtr for state {state}',
+                xaxis_title='yr_qtr',
+                yaxis_title='sector',
+                height=max(500,35*len(sector_order)),
+                margin=dict(l=120,r=80,t=90,b=80)
+            )
+            fig.update_xaxes(type='category')
+            fig.update_yaxes(type='category',autorange='reversed')
+            if html_path:
+                fig.write_html(html_path)
+            fig.show()
+    ui=widgets.HBox([state_dd,metric_dd])
+    widgets.interactive_output(draw,{'state':state_dd,'metric':metric_dd})
+    display(ui,out)
+    draw(state_dd.value,metric_dd.value)
 
-fig=wage_sector_heatmap(df,html_path='wage_sector_heatmap.html')
+wage_sector_state_heatmap(df,html_path='wage_sector_state_heatmap.html')
