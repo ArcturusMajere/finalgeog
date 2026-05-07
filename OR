@@ -15,11 +15,11 @@ def wage_sector_state_heatmap_html(df,metrics=None,html_path='wage_sector_state_
         data[c]=pd.to_numeric(data[c],errors='coerce')
     yr_order=list(data['yr_qtr'].drop_duplicates())
     sector_order=list(data['sector'].drop_duplicates())
-    state_order=sorted(data['state'].dropna().unique())
+    state_order=['ALL']+sorted(data['state'].dropna().unique())
     heatmaps={}
     for state in state_order:
         heatmaps[state]={}
-        d=data[data['state']==state]
+        d=data if state=='ALL' else data[data['state']==state]
         for metric in metrics:
             pivot=d.pivot_table(index='yr_qtr',columns='sector',values=metric,aggfunc='mean')
             pivot=pivot.reindex(index=yr_order,columns=sector_order)
@@ -119,5 +119,3 @@ metricSelect.addEventListener('change',updatePlot);
     Path(html_path).write_text(html,encoding='utf-8')
     display(HTML(f'<a href="{html_path}" target="_blank">Open heatmap HTML</a>'))
     return html_path
-
-
