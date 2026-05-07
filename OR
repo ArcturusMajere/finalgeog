@@ -1,1 +1,67 @@
 
+import pandas as pd
+import plotly.graph_objects as go
+
+def wage_sector_heatmap(df,metrics=None,html_path=None):
+    data=df.copy()
+    needed={'yr_qtr','sector'}
+    missing=needed-set(data.columns)
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+    data['yr_qtr']=data['yr_qtr'].astype(str)
+    data['sector']=data['sector'].astype(str)
+    if metrics is None:
+        metrics=[c for c in ['counts','mean_wage','median_wage','percentile75','percentile25'] if c in data.columns]
+    if not metrics:
+        raise ValueError("No metric columns found.")
+    for c in metrics:
+        data[c]=pd.to_numeric(data[c],errors='coerce')
+    yr_order=list(pd.unique(data['yr_qtr']))
+    sector_order=list(pd.unique(data['sector']))
+    traces=[]
+    buttons=[]
+    for i,metric in enumerate(metrics):
+        pivot=data.pivot_table(index='sector',columns='yr_qtr',values=metric,aggfunc='mean')
+        pivot=pivot.reindex(index=sector_order,columns=yr_order)
+        traces.append(go.Heatmap(
+            z=pivot.values,
+            x=pivot.columns,
+            y=pivot.index,
+            colorscale='Viridis',
+            colorbar=dict(title=metric),
+            hovertemplate='yr_qtr: %{x}<br>sector: %{y}<br>'+metric+': %{z}<extra></extra>',
+            visible=(i==0)
+        ))
+        buttons.append(dict(
+            label=metric,
+            method='update',
+            args=[
+                {'visible':[j==i for j in range(len(metrics))]},
+                {'title':f'Heatmap of {metric} by sector and yr_qtr'}
+            ]
+        ))
+    fig=go.Figure(data=traces)
+    fig.update_layout(
+        title=f'Heatmap of {metrics[0]} by sector and yr_qtr',
+        xaxis_title='yr_qtr',
+        yaxis_title='sector',
+        height=max(500,35*len(sector_order)),
+        updatemenus=[dict(
+            buttons=buttons,
+            direction='down',
+            showactive=True,
+            x=1.02,
+            xanchor='left',
+            y=1.12,
+            yanchor='top'
+        )],
+        margin=dict(l=120,r=120,t=90,b=80)
+    )
+    fig.update_xaxes(type='category')
+    fig.update_yaxes(type='category',autorange='reversed')
+    if html_path:
+        fig.write_html(html_path)
+    fig.show()
+    return fig
+
+fig=wage_sector_heatmap(df,html_path='wage_sector_heatmap.html')
