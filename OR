@@ -1,9 +1,9 @@
-
+import pandas as pd
 import plotly.graph_objects as go
 import ipywidgets as widgets
 from IPython.display import display
 
-def wage_sector_state_heatmap(df,metrics=None,html_path=None):
+def wage_sector_state_heatmap(data,metrics=None,html_path=None):
     data['yr_qtr']=data['yr_qtr'].astype(str)
     data['sector']=data['sector'].astype(str)
     data['state']=data['state'].astype(str)
@@ -23,30 +23,29 @@ def wage_sector_state_heatmap(df,metrics=None,html_path=None):
         with out:
             out.clear_output(wait=True)
             d=data[data['state']==state]
-            pivot=d.pivot_table(index='sector',columns='yr_qtr',values=metric,aggfunc='mean')
-            pivot=pivot.reindex(index=sector_order,columns=yr_order)
+            pivot=d.pivot_table(index='yr_qtr',columns='sector',values=metric,aggfunc='mean')
+            pivot=pivot.reindex(index=yr_order,columns=sector_order)
             fig=go.Figure(data=go.Heatmap(
                 z=pivot.values,
                 x=pivot.columns,
                 y=pivot.index,
                 colorscale='Viridis',
-                hovertemplate='state: '+state+'<br>yr_qtr: %{x}<br>sector: %{y}<br>'+metric+': %{z}<extra></extra>'
+                hovertemplate='state: '+state+'<br>sector: %{x}<br>yr_qtr: %{y}<br>'+metric+': %{z}<extra></extra>'
             ))
             fig.update_layout(
-                title=f'{metric} heatmap by sector and yr_qtr for state {state}',
-                xaxis_title='yr_qtr',
-                yaxis_title='sector',
-                height=max(500,35*len(sector_order)),
-                margin=dict(l=120,r=80,t=90,b=80)
+                title=f'{metric} heatmap by yr_qtr and sector for state {state}',
+                xaxis_title='sector',
+                yaxis_title='yr_qtr',
+                height=max(500,35*len(yr_order)),
+                margin=dict(l=120,r=80,t=90,b=120)
             )
             fig.update_xaxes(type='category')
             fig.update_yaxes(type='category',autorange='reversed')
             if html_path:
                 fig.write_html(html_path)
             fig.show()
-    ui=widgets.HBox([state_dd,metric_dd])
     widgets.interactive_output(draw,{'state':state_dd,'metric':metric_dd})
-    display(ui,out)
+    display(widgets.HBox([state_dd,metric_dd]),out)
     draw(state_dd.value,metric_dd.value)
 
 wage_sector_state_heatmap(df,html_path='wage_sector_state_heatmap.html')
