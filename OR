@@ -1,6 +1,51 @@
-def supermerge(A,B,fips):
-    if fips in ('53','27','41'):
-        out=pd.merge(A,B,on=['UI','RUN'],how='left',indicator=True)
-    else:
-        out=pd.merge(A,B,on='UI',how='left',indicator=True)
-    return out
+def getdominant(df0, yr,qtr, fipslists= None, naicslevels = [2,3,4,5,6]):
+    np.random.seed(17)
+    df0.sort_values(['fips','ui_acct', 'run',],inplace=True)
+    df0['randomly_generated_number'] = np.random.rand(len(df0))
+    if fipslists==None:fipslists = [df0['fips'].unique().tolist(), []]
+    dff = []
+    for fipslist in fipslists:
+        df = df0[df0['fips'].isin(fipslist)]
+        if len(df)>0:
+            empcols = [c for c in df if c.endswith('_EMPL')]
+            df.loc[:, 'aaemp'] = df[empcols].mean(axis=1)
+            df.loc[:, 'year'] = yr
+            df.loc[:, 'qtr'] = qtr
+            gv1 = ['fips', 'ui_acct', 'year', 'qtr', ]
+            for naicslevel in naicslevels:df.loc[:, f'naics{naicslevel}'] = df['naics_code'].astype('str').str[:naicslevel]
+            sectordict = {k : k for k in df[f'naics2'].unique()}
+            for n in [31,32,33]:sectordict[f'{n}'] = '31-33'
+            for n in [44,45]:sectordict[f'{n}'] = '44-45'
+            for n in [48,49]:sectordict[f'{n}'] = '48-49'
+            df.loc[:, f'naics2'] = df[f'naics2'].map(sectordict)
+            aggstats = {'aaemp' : 'sum','meei' : 'max'}
+            dfg = df.groupby(gv1, as_index=False).agg(aggstats)
+            finaldict = {}
+            for naicslevel in naicslevels:
+                c = f'naics{naicslevel}'
+                agg2 = {c : 'last','aaemp' : 'last','wages' : 'count'}
+                rdict2 = {'wages' : f'number_unique_{c}'}
+                dft = df.groupby(
+                    gv1 + [c], as_index=False).agg({'aaemp':'sum','wages':'sum','randomly_generated_number':'mean'}).sort_values(
+                    gv1 + ['aaemp', 'wages', 'randomly_generated_number'], ascending=[True for i in gv1] + [True,True,True]).groupby(
+                    gv1, as_index=False).agg(agg2).rename(columns = rdict2)
+                finaldict[c] = dft
+            naicslevel = naicslevels[0]
+            rdict = {'aaemp' : f'aaemp_naics{naicslevel}'}
+            dft = finaldict[f'naics{naicslevel}'].rename(columns = rdict)
+            for naicslevel in naicslevels[1:]:
+                rdict = {'aaemp': f'aaemp_naics{naicslevel}'}
+                dft1 = finaldict[f'naics{naicslevel}'][gv1 + ['aaemp', f'naics{naicslevel}', f'number_unique_naics{naicslevel}']].rename(columns = rdict)
+                dft = dft.merge(dft1, on = gv1, how = 'outer')
+            rdict = {'aaemp' : 'aaemp_ui'}
+            dft = dft.merge(dfg.rename(columns=rdict), on = gv1, how = 'inner')
+            dft['Dmulti'] = 1*(dft['meei'].isin([3, 4, 5, 6]))
+            
+            for naicslevel in naicslevels[:]:
+                    cond1 = (dft[f'number_unique_naics{naicslevel}'] == 1)
+                    cond2 = (dft['aaemp_ui'] == 0)
+                    dft[f'prop_emp_dom_naics{naicslevel}'] = np.where(cond1, 1, np.where(cond2, 0, dft[f'aaemp_naics{naicslevel}'] / dft['aaemp_ui']))
+            kcols = gv1 + [f'prop_emp_dom_naics{naicslevel}' for naicslevel in naicslevels[:]] + [f'naics{naicslevel}' for naicslevel in naicslevels[:]] + ['Dmulti', 'Dui_level']
+            dft['Dui_level'] = True
+            dff.append(dft[kcols])
+    return(pd.concat(dff, ignore_index=True))
