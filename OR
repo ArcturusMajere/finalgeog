@@ -1,12 +1,6 @@
-
-
-def supermerge(A,B,special_fips=('53','41','27'),how='left'):
-    special=set(special_fips)
-    A_ui=A[~A['fips'].isin(special)]
-    A_uirun=A[A['fips'].isin(special)]
-    B_ui=B[~B['fips'].isin(special)]
-    B_uirun=B[B['fips'].isin(special)]
-    merged_ui=A_ui.merge(B_ui,on='UI',how=how)
-    merged_uirun=A_uirun.merge(B_uirun,on=['UI','run'],how=how)
-    out=pd.concat([merged_ui,merged_uirun],ignore_index=True)
+def supermerge(A,B,fips):
+    if fips in ('53','27','41'):
+        out=pd.merge(A,B,on=['UI','RUN'],how='left',indicator=True)
+    else:
+        out=pd.merge(A,B,on='UI',how='left',indicator=True)
     return out
