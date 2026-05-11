@@ -5,14 +5,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from IPython.display import display, HTML
 
-def wage_sector_state_heatmap_html(data, html_path="wage_sector_state_heatmap.html"):
-    d = data.copy()
-
-    required = ["yr_qtr", "sector", "state"]
-    missing = [c for c in required if c not in d.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
+def wage_sector_state_heatmap_html(d, html_path="wage_sector_state_heatmap.html"):
     d["yr_qtr"] = d["yr_qtr"].astype(str)
     d["sector"] = d["sector"].astype(str)
     d["state"] = d["state"].astype(str)
