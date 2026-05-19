@@ -1,25 +1,11 @@
-
-from pathlib import Path
-import json
-import pandas as pd
-import plotly.graph_objects as go
-import plotly.io as pio
-from IPython.display import display,HTML
+# simple
 
 def wage_sector_state_heatmap_html(data,html_path='wage_sector_state_heatmap.html',html_body=None):
-    data=data.copy()
     data['yr_qtr']=data['yr_qtr'].map(lambda x:str(x))
     data['sector']=data['sector'].map(lambda x:str(x))
     data['state']=data['state'].map(lambda x:str(x))
-
-    metrics=[c for c in ['counts','mean_wage','median_wage','percentile75','percentile25','max_wage'] if c in data.columns]
-
-    if not metrics:
-        raise ValueError("No metric columns found.")
-
-    for c in metrics:
-        data[c]=pd.to_numeric(data[c],errors='coerce')
-
+    metrics=[c for c in ['counts','mean_wage','median_wage','percentile75','percentile25','max_wage'] if c in data.columns])
+    for c in metrics:data[c]=pd.to_numeric(data[c],errors='coerce')
     yr_order=list(data['yr_qtr'].drop_duplicates())
     sector_order=list(data['sector'].drop_duplicates())
     has_all=(data['state']=='ALL').any()
@@ -191,22 +177,18 @@ metricSelect.addEventListener('change',updatePlot);
     return html_path
 
 
-
+# with color add
 #*****************************************************************************************************************************************
 
 def wage_sector_state_heatmap_html(data,html_path='wage_sector_state_heatmap.html',html_body=None):
-    data=data.copy()
+
     data['yr_qtr']=data['yr_qtr'].map(lambda x:str(x))
     data['sector']=data['sector'].map(lambda x:str(x))
     data['state']=data['state'].map(lambda x:str(x))
-
     metrics=[c for c in ['counts','mean_wage','median_wage','percentile75','percentile25','max_wage'] if c in data.columns]
 
-    if not metrics:
-        raise ValueError("No metric columns found.")
 
-    for c in metrics:
-        data[c]=pd.to_numeric(data[c],errors='coerce')
+    for c in metrics:data[c]=pd.to_numeric(data[c],errors='coerce')
 
     yr_order=list(data['yr_qtr'].drop_duplicates())
     sector_order=list(data['sector'].drop_duplicates())
