@@ -1,1 +1,191 @@
 
+from pathlib import Path
+import json
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.io as pio
+from IPython.display import display,HTML
+
+def wage_sector_state_heatmap_html(data,html_path='wage_sector_state_heatmap.html',html_body=None):
+    data=data.copy()
+    data['yr_qtr']=data['yr_qtr'].map(lambda x:str(x))
+    data['sector']=data['sector'].map(lambda x:str(x))
+    data['state']=data['state'].map(lambda x:str(x))
+
+    metrics=[c for c in ['counts','mean_wage','median_wage','percentile75','percentile25','max_wage'] if c in data.columns]
+
+    if not metrics:
+        raise ValueError("No metric columns found.")
+
+    for c in metrics:
+        data[c]=pd.to_numeric(data[c],errors='coerce')
+
+    yr_order=list(data['yr_qtr'].drop_duplicates())
+    sector_order=list(data['sector'].drop_duplicates())
+    has_all=(data['state']=='ALL').any()
+    base_states=sorted([s for s in data['state'].dropna().unique() if s!='ALL'])
+    state_order=['ALL']+base_states
+
+    heatmaps={}
+
+    for state in state_order:
+        heatmaps[state]={}
+
+        if state=='ALL' and not has_all:
+            d=data[data['state']!='ALL']
+
+            for metric in metrics:
+                if metric=='counts':
+                    pivot=d.pivot_table(index='yr_qtr',columns='sector',values=metric,aggfunc='sum')
+                elif metric=='max_wage':
+                    pivot=d.pivot_table(index='yr_qtr',columns='sector',values=metric,aggfunc='max')
+                elif 'counts' in d.columns:
+                    temp=d[['yr_qtr','sector',metric,'counts']].dropna(subset=[metric])
+                    temp['weighted_value']=temp[metric]*temp['counts']
+                    grouped=temp.groupby(['yr_qtr','sector'],as_index=False).agg(weighted_sum=('weighted_value','sum'),count_sum=('counts','sum'))
+                    grouped[metric]=grouped['weighted_sum']/grouped['count_sum']
+                    pivot=grouped.pivot(index='yr_qtr',columns='sector',values=metric)
+                else:
+                    pivot=d.pivot_table(index='yr_qtr',columns='sector',values=metric,aggfunc='mean')
+
+                pivot=pivot.reindex(index=yr_order,columns=sector_order)
+                heatmaps[state][metric]=pivot.where(pd.notnull(pivot),None).values.tolist()
+        else:
+            d=data[data['state']==state]
+
+            if d.duplicated(['yr_qtr','sector']).any():
+                raise ValueError(f"Duplicate yr_qtr/sector rows found for state {state}. Cannot report actual values without aggregation.")
+
+            for metric in metrics:
+                pivot=d.pivot(index='yr_qtr',columns='sector',values=metric)
+                pivot=pivot.reindex(index=yr_order,columns=sector_order)
+                heatmaps[state][metric]=pivot.where(pd.notnull(pivot),None).values.tolist()
+
+    first_state=state_order[0]
+    first_metric=metrics[0]
+
+    fig=go.Figure(data=go.Heatmap(
+        z=heatmaps[first_state][first_metric],
+        x=sector_order,
+        y=yr_order,
+        colorscale='plasma',
+        hovertemplate='state: '+first_state+'<br>sector: %{x}<br>yr_qtr: %{y}<br>value: %{z}<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title=f'{first_metric} heatmap by yr_qtr and sector for state {first_state}',
+        xaxis_title='sector',
+        yaxis_title='yr_qtr',
+        height=max(500,35*len(yr_order)),
+        margin=dict(l=120,r=80,t=90,b=120)
+    )
+
+    fig.update_xaxes(type='category',categoryorder='array',categoryarray=sector_order)
+    fig.update_yaxes(type='category',categoryorder='array',categoryarray=yr_order,autorange='reversed')
+
+    fig_json=pio.to_json(fig)
+
+    controls_html="""
+<div class="controls">
+<label>State: <select id="stateSelect"></select></label>
+<label>Metric: <select id="metricSelect"></select></label>
+</div>
+"""
+
+    plot_html='<div id="plot"></div>'
+
+    if html_body is None:
+        html_body="""
+{controls}
+{plot}
+"""
+    else:
+        if '{controls}' not in html_body:
+            html_body='{controls}\n'+html_body
+        if '{plot}' not in html_body:
+            html_body=html_body+'\n{plot}'
+
+    body=html_body.replace('{controls}',controls_html).replace('{plot}',plot_html)
+
+    html=f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+body{{font-family:Arial,sans-serif;margin:20px;}}
+.controls{{display:flex;gap:20px;align-items:center;margin-bottom:15px;}}
+select{{padding:6px 10px;font-size:14px;}}
+label{{font-weight:600;}}
+</style>
+</head>
+<body>
+{body}
+<script>
+const fig={fig_json};
+const heatmaps={json.dumps(heatmaps)};
+const states={json.dumps(state_order)};
+const metrics={json.dumps(metrics)};
+const yrOrder={json.dumps(yr_order)};
+const sectorOrder={json.dumps(sector_order)};
+const stateSelect=document.getElementById('stateSelect');
+const metricSelect=document.getElementById('metricSelect');
+
+states.forEach(v=>stateSelect.add(new Option(v,v)));
+metrics.forEach(v=>metricSelect.add(new Option(v,v)));
+
+stateSelect.value=states[0];
+metricSelect.value=metrics[0];
+
+fig.layout.yaxis={{
+...fig.layout.yaxis,
+type:'category',
+categoryorder:'array',
+categoryarray:yrOrder,
+autorange:'reversed'
+}};
+
+fig.layout.xaxis={{
+...fig.layout.xaxis,
+type:'category',
+categoryorder:'array',
+categoryarray:sectorOrder
+}};
+
+Plotly.newPlot('plot',fig.data,fig.layout,{{
+responsive:true,
+displaylogo:false
+}});
+
+function updatePlot(){{
+const state=stateSelect.value;
+const metric=metricSelect.value;
+
+Plotly.restyle('plot',{{
+z:[heatmaps[state][metric]],
+hovertemplate:['state: '+state+'<br>sector: %{{x}}<br>yr_qtr: %{{y}}<br>value: %{{z}}<extra></extra>']
+}},[0]);
+
+Plotly.relayout('plot',{{
+title:metric+' heatmap by yr_qtr and sector for state '+state,
+'yaxis.type':'category',
+'yaxis.categoryorder':'array',
+'yaxis.categoryarray':yrOrder,
+'yaxis.autorange':'reversed',
+'xaxis.type':'category',
+'xaxis.categoryorder':'array',
+'xaxis.categoryarray':sectorOrder
+}});
+}}
+
+stateSelect.addEventListener('change',updatePlot);
+metricSelect.addEventListener('change',updatePlot);
+</script>
+</body>
+</html>
+"""
+
+    Path(html_path).write_text(html,encoding='utf-8')
+    display(HTML(f'<a href="{html_path}" target="_blank">Open heatmap HTML</a>'))
+    return html_path
