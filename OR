@@ -1,4 +1,3 @@
-
 from pathlib import Path
 import json
 import pandas as pd
@@ -73,6 +72,7 @@ def wage_sector_state_heatmap_html(data,html_path='wage_sector_state_heatmap.htm
         x=sector_order,
         y=yr_order,
         colorscale=first_colorscale,
+        zauto=True,
         hovertemplate='state: '+first_state+'<br>sector: %{x}<br>yr_qtr: %{y}<br>value: %{z}<extra></extra>'
     ))
 
@@ -241,6 +241,9 @@ const colorscale=colorscaleSelect.value;
 Plotly.restyle('plot',{{
 z:[heatmaps[state][metric]],
 colorscale:[colorscale],
+zauto:[true],
+zmin:[null],
+zmax:[null],
 hovertemplate:['state: '+state+'<br>sector: %{{x}}<br>yr_qtr: %{{y}}<br>value: %{{z}}<extra></extra>']
 }},[0]);
 
