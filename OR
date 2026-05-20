@@ -1,1 +1,12 @@
 
+def move_leading_zeros(value, year, qtr):
+    s = str(value)
+
+    if (
+        len(s) == 10
+        and s.startswith("000")
+        and (int(year) < 2022 or (int(year) == 2022 and int(qtr) == 1))
+    ):
+        return s[3:] + "000"
+
+    return s
