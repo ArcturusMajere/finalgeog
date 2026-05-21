@@ -1,12 +1,110 @@
+install.packages(c("seasonal","x13binary","dplyr","readr","tidyr","purrr"))
 
-def move_leading_zeros(value, year, qtr):
-    s = str(value)
+library(seasonal)
+library(x13binary)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(purrr)
 
-    if (
-        len(s) == 10
-        and s.startswith("000")
-        and (int(year) < 2022 or (int(year) == 2022 and int(qtr) == 1))
-    ):
-        return s[3:] + "000"
+load_sid_list<-function(path){
+ if(is.null(path)||!file.exists(path))return(NULL)
+ x<-readLines(path,warn=FALSE)
+ x<-trimws(x)
+ x<-x[nzchar(x)]
+ y<-regmatches(x,gregexpr("%data\\(([^)]+)\\)",x,ignore.case=TRUE))
+ y<-unlist(y)
+ if(length(y)>0){
+  y<-sub("^%data\\(","",y,ignore.case=TRUE)
+  y<-sub("\\)$","",y)
+  return(trimws(y))
+ }
+ trimws(gsub("[;'\"]","",x))
+}
 
-    return s
+read_parms<-function(parms_path){
+ read_csv(parms_path,col_names=c("sid","log","model","outs","outs2"),show_col_types=FALSE,trim_ws=TRUE)%>%
+  mutate(across(everything(),~ifelse(is.na(.x),"",as.character(.x))))
+}
+
+make_quarter_ts<-function(df,byr,eyr,eqtr){
+ end_index<-(eyr-byr)*4+eqtr
+ out<-expand_grid(year=byr:eyr,q=1:4)%>%
+  mutate(index=(year-byr)*4+q)%>%
+  filter(index<=end_index)%>%
+  left_join(df%>%select(year,q,n),by=c("year","q"))%>%
+  arrange(year,q)
+ ts(out$n,start=c(byr,1),frequency=4)
+}
+
+quarter_df_from_series<-function(x,sid,name){
+ z<-as.numeric(x)
+ tt<-time(x)
+ tibble(
+  sid=sid,
+  year=floor(tt),
+  q=round((tt-floor(tt))*4+1),
+  value=round(z,6)
+ )%>%
+  rename(!!name:=value)
+}
+
+run_one_sid<-function(sid,input_df,parms,byr,eyr,eqtr){
+ raw<-input_df%>%
+  mutate(year=as.integer(year),q=as.integer(q),n=as.numeric(n),sid=as.character(sid))%>%
+  filter(.data$sid==!!sid,year>=byr,year<eyr|(year==eyr&q<=eqtr))%>%
+  arrange(year,q)
+ if(nrow(raw)==0)return(tibble())
+ p<-parms%>%filter(.data$sid==!!sid)%>%slice(1)
+ if(nrow(p)==0)stop(paste("Missing parms row for sid:",sid))
+ x<-make_quarter_ts(raw,byr,eyr,eqtr)
+ reg_vars<-c(unlist(strsplit(p$outs,"\\s+")),unlist(strsplit(p$outs2,"\\s+")))
+ reg_vars<-reg_vars[nzchar(reg_vars)]
+ args<-list(x=x,transform.function=p$log,arima.model=p$model,estimate.exact="arma",estimate.maxiter=10000,forecast.maxlead=20,check.print="none",seats.noadmiss="yes",seats.save=c("s10","s11"))
+ if(length(reg_vars)>0)args$regression.variables<-reg_vars
+ fit<-do.call(seas,args)
+ sf<-quarter_df_from_series(series(fit,"s10"),sid,"sf")
+ sa<-quarter_df_from_series(series(fit,"s11"),sid,"sa")
+ if(eqtr>=2){
+  sf<-sf%>%filter(year==eyr,q==eqtr)
+  sa<-sa%>%filter(year==eyr,q==eqtr)
+  raw_keep<-raw%>%filter(year==eyr,q==eqtr)%>%select(sid,year,q,n)
+ }else{
+  sf<-sf%>%filter(year>=(eyr-5),!(year==(eyr-5)&q==1))
+  sa<-sa%>%filter(year>=(eyr-5),!(year==(eyr-5)&q==1))
+  raw_keep<-raw%>%filter(year>=eyr-4|(year==eyr-5&q>1))%>%select(sid,year,q,n)
+ }
+ out<-sf%>%
+  full_join(sa,by=c("sid","year","q"))%>%
+  left_join(raw_keep,by=c("sid","year","q"))%>%
+  arrange(sid,year,q)
+ if(tolower(p$log)=="none"){
+  out<-out%>%mutate(sf=round(n/sa,6))
+ }
+ out%>%select(sid,year,q,sf,sa)
+}
+
+run_bed_seasonal<-function(input_df,path,byr=2003,eyr,eqtr,input_ds_name="sizecalss_nsa",sid_file=file.path(path,"sid.txt"),parms_file=file.path(path,"parms.txt"),output_dir=file.path(path,"output")){
+ sysyear<-as.integer(format(Sys.Date(),"%Y"))
+ if(!(eyr%in%c(sysyear,sysyear-1,sysyear-2)))stop("Invalid end year.")
+ if(!(eqtr%in%1:4))stop("Invalid end quarter.")
+ dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
+ parms<-read_parms(parms_file)
+ sid_list<-load_sid_list(sid_file)
+ if(is.null(sid_list)||length(sid_list)==0)sid_list<-unique(as.character(input_df$sid))
+ all<-map_dfr(sid_list,~run_one_sid(.x,input_df,parms,byr,eyr,eqtr))
+ if(eqtr>=2){
+  out_path<-file.path(output_dir,paste0("seas_concurrent_",eyr,"_",eqtr,".csv"))
+ }else{
+  out_path<-file.path(output_dir,paste0("seas_5yr_revisions_",eyr,".csv"))
+ }
+ write_csv(all,out_path)
+ all
+}
+
+
+
+
+path<-"/cpslaus/D6/BED"
+input_df<-read_csv(file.path(path,"data","sizecalss_nsa.csv"),show_col_types=FALSE)
+result<-run_bed_seasonal(input_df=input_df,path=path,byr=2003,eyr=2025,eqtr=4)
