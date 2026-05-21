@@ -109,7 +109,16 @@ path<-"/cpslaus/D6/BED"
 input_df<-read_csv(file.path(path,"data","sizecalss_nsa.csv"),show_col_types=FALSE)
 result<-run_bed_seasonal(input_df=input_df,path=path,byr=2003,eyr=2025,eqtr=4)
 
+#***expecr
+Required:
+1. input data with sid/year/q/n
+2. parms data with sid/log/model/outs/outs2
+3. X-13 binary available through seasonal/x13binary
 
+Optional:
+sid.txt, if you want to control exactly which series are run
+output folder, but R can create it
+x13_files folder, only needed if you choose to write/debug raw X-13 files
 
 #  pythno ***********************************************************
 
