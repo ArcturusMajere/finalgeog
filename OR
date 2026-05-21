@@ -103,8 +103,199 @@ run_bed_seasonal<-function(input_df,path,byr=2003,eyr,eqtr,input_ds_name="sizeca
 }
 
 
-
+#********************************************************
 
 path<-"/cpslaus/D6/BED"
 input_df<-read_csv(file.path(path,"data","sizecalss_nsa.csv"),show_col_types=FALSE)
 result<-run_bed_seasonal(input_df=input_df,path=path,byr=2003,eyr=2025,eqtr=4)
+
+
+
+#  pythno ***********************************************************
+
+
+from pathlib import Path
+import subprocess
+import pandas as pd
+import numpy as np
+from datetime import date
+
+def load_sid_list(sid_file):
+    sid_file=Path(sid_file)
+    if not sid_file.exists():
+        return None
+    lines=[x.strip() for x in sid_file.read_text().splitlines() if x.strip()]
+    out=[]
+    for x in lines:
+        y=x.replace(";","").replace("'","").replace('"',"").strip()
+        if y.lower().startswith("%data(") and y.endswith(")"):
+            y=y[y.find("(")+1:-1]
+        if y:
+            out.append(y)
+    return out or None
+
+def read_parms(parms_file):
+    df=pd.read_csv(parms_file,names=["sid","log","model","outs","outs2"],dtype=str).fillna("")
+    for c in df.columns:
+        df[c]=df[c].astype(str).str.strip()
+    return df
+
+def write_dat(input_df,sid,byr,eyr,eqtr,x13_dir):
+    df=input_df.copy()
+    df["sid"]=df["sid"].astype(str)
+    df["year"]=pd.to_numeric(df["year"],errors="coerce").astype("Int64")
+    df["q"]=pd.to_numeric(df["q"],errors="coerce").astype("Int64")
+    df["n"]=pd.to_numeric(df["n"],errors="coerce")
+    df=df[(df["sid"]==sid)&(df["year"]>=byr)]
+    df=df[(df["year"]<eyr)|((df["year"]==eyr)&(df["q"]<=eqtr))]
+    df=df.sort_values(["year","q"])
+    dat_path=Path(x13_dir)/f"{sid}.dat"
+    df[["year","q","n"]].to_csv(dat_path,sep=" ",index=False,header=False)
+    return df,dat_path
+
+def write_spc(sid,path,byr,parms_row,x13_dir):
+    log=parms_row["log"]
+    model=parms_row["model"]
+    outs=parms_row["outs"]
+    outs2=parms_row["outs2"]
+    x13_dir=Path(x13_dir)
+    dat_path=x13_dir/f"{sid}.dat"
+    spc_path=x13_dir/f"{sid}.spc"
+    spec=f"""series{{
+ title          = {sid}
+ span           = ({byr}.1,)
+ file           = '{dat_path}'
+ format         = 'datevalue'
+ period         = 4
+ precision      = 5
+ decimals       = 2
+}}
+transform{{
+ function       = {log}
+}}
+regression{{
+ variables      = ({outs}
+                 {outs2})
+}}
+arima{{
+ model          = {model}
+}}
+estimate{{
+ exact          = arma
+ maxiter        = 10000
+ print          = (default)
+}}
+forecast{{
+ maxlead        = 20
+}}
+check{{
+ print          = (none)
+}}
+seats{{
+ noadmiss       = yes
+ save           = (s10 s11)
+ out            = 2
+ tabtables      = 'none'
+}}
+"""
+    spc_path.write_text(spec)
+    return spc_path
+
+def run_x13(sid,x13_dir,x13_bin="x13as"):
+    base=str(Path(x13_dir)/sid)
+    p=subprocess.run([x13_bin,base,"-q"],capture_output=True,text=True)
+    if p.returncode!=0:
+        raise RuntimeError(f"X-13 failed for {sid}\nSTDOUT:\n{p.stdout}\nSTDERR:\n{p.stderr}")
+    return p
+
+def read_x13_table(path,sid,value_name):
+    path=Path(path)
+    if not path.exists():
+        return pd.DataFrame(columns=["sid","year","q",value_name])
+    df=pd.read_csv(path,sep=r"\s+",skiprows=2,names=["date",value_name],engine="python")
+    df["date"]=df["date"].astype(str)
+    df["year"]=df["date"].str.slice(0,4).astype(int)
+    df["q"]=df["date"].str.slice(4,6).astype(int)
+    df["sid"]=sid
+    df[value_name]=pd.to_numeric(df[value_name],errors="coerce").round(6)
+    return df[["sid","year","q",value_name]]
+
+def filter_output(df,eyr,eqtr):
+    if eqtr>=2:
+        return df[(df["year"]==eyr)&(df["q"]==eqtr)]
+    return df[(df["year"]>=eyr-5)&~((df["year"]==eyr-5)&(df["q"]==1))]
+
+def raw_keep(unadjusted,eyr,eqtr):
+    if eqtr>=2:
+        return unadjusted[(unadjusted["year"]==eyr)&(unadjusted["q"]==eqtr)][["sid","year","q","n"]]
+    return unadjusted[(unadjusted["year"]>=eyr-4)|((unadjusted["year"]==eyr-5)&(unadjusted["q"]>1))][["sid","year","q","n"]]
+
+def run_one_sid(sid,input_df,parms,byr,eyr,eqtr,path,x13_bin):
+    x13_dir=Path(path)/"x13_files"
+    x13_dir.mkdir(parents=True,exist_ok=True)
+    p=parms[parms["sid"]==sid]
+    if p.empty:
+        raise ValueError(f"Missing parms.txt row for sid {sid}")
+    p=p.iloc[0]
+    unadjusted,dat_path=write_dat(input_df,sid,byr,eyr,eqtr,x13_dir)
+    if unadjusted.empty:
+        return pd.DataFrame(columns=["sid","year","q","sf","sa"])
+    write_spc(sid,path,byr,p,x13_dir)
+    run_x13(sid,x13_dir,x13_bin=x13_bin)
+    sf=read_x13_table(x13_dir/f"{sid}.s10",sid,"sf")
+    sa=read_x13_table(x13_dir/f"{sid}.s11",sid,"sa")
+    sf=filter_output(sf,eyr,eqtr)
+    sa=filter_output(sa,eyr,eqtr)
+    out=sf.merge(sa,on=["sid","year","q"],how="outer")
+    rk=raw_keep(unadjusted,eyr,eqtr)
+    out=out.merge(rk,on=["sid","year","q"],how="left")
+    if str(p["log"]).lower()=="none":
+        out["sf"]=(out["n"]/out["sa"]).round(6)
+    return out[["sid","year","q","sf","sa"]].sort_values(["sid","year","q"])
+
+def run_bed_seasonal(input_df,path,byr,eyr,eqtr,input_ds_name="sizecalss_nsa",sid_file=None,parms_file=None,output_dir=None,x13_bin="x13as"):
+    path=Path(path)
+    sysyear=date.today().year
+    if eyr not in [sysyear,sysyear-1,sysyear-2]:
+        raise ValueError("Invalid end year.")
+    if eqtr not in [1,2,3,4]:
+        raise ValueError("Invalid end quarter.")
+    sid_file=Path(sid_file) if sid_file else path/"sid.txt"
+    parms_file=Path(parms_file) if parms_file else path/"parms.txt"
+    output_dir=Path(output_dir) if output_dir else path/"output"
+    output_dir.mkdir(parents=True,exist_ok=True)
+    input_df=input_df.rename(columns={"qtr":"q","YEAR":"year","Q":"q","N":"n","SID":"sid"})
+    parms=read_parms(parms_file)
+    sid_list=load_sid_list(sid_file)
+    if not sid_list:
+        sid_list=sorted(input_df["sid"].astype(str).unique())
+    all_out=[]
+    for sid in sid_list:
+        one=run_one_sid(sid,input_df,parms,byr,eyr,eqtr,path,x13_bin)
+        if not one.empty:
+            all_out.append(one)
+    result=pd.concat(all_out,ignore_index=True) if all_out else pd.DataFrame(columns=["sid","year","q","sf","sa"])
+    if eqtr>=2:
+        out_path=output_dir/f"seas_concurrent_{eyr}_{eqtr}.csv"
+    else:
+        out_path=output_dir/f"seas_5yr_revisions_{eyr}.csv"
+    result.to_csv(out_path,index=False)
+    return result,out_path
+
+
+#************************************
+
+path="/cpslaus/D6/BED"
+input_df=pd.read_csv(f"{path}/data/sizecalss_nsa.csv")
+
+result,out_path=run_bed_seasonal(
+    input_df=input_df,
+    path=path,
+    byr=2003,
+    eyr=2025,
+    eqtr=4,
+    x13_bin="x13as"
+)
+
+print(out_path)
+print(result.head())
