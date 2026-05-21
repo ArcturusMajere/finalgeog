@@ -299,3 +299,12 @@ result,out_path=run_bed_seasonal(
 
 print(out_path)
 print(result.head())
+
+
+
+
+#********** expect
+/cpslaus/D6/BED/parms.txt
+/cpslaus/D6/BED/sid.txt
+/cpslaus/D6/BED/x13_files/
+/cpslaus/D6/BED/output/
