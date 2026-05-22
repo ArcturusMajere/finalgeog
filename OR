@@ -1,1 +1,174 @@
 
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+def wage_viz_integrity_dashboard(df,html_path='wage_viz_integrity_dashboard.html'):
+    d=df.copy()
+    required=['yr_qtr','state','sector','counts','max_wage','mean_wage','median_wage','percentile75','percentile25']
+    missing=[c for c in required if c not in d.columns]
+    if missing:
+        raise ValueError(f'Missing columns: {missing}')
+    d['yr_qtr']=d['yr_qtr'].astype(str)
+    d['state']=d['state'].astype(str)
+    d['sector']=d['sector'].astype(str)
+    metrics=['counts','max_wage','mean_wage','median_wage','percentile75','percentile25']
+    for c in metrics:
+        d[c]=pd.to_numeric(d[c],errors='coerce')
+    def wavg(g,col):
+        ok=g[col].notna()&g['counts'].notna()&(g['counts']>0)
+        return np.average(g.loc[ok,col],weights=g.loc[ok,'counts']) if ok.any() else np.nan
+    def agg(g):
+        return pd.Series({
+            'counts':g['counts'].sum(),
+            'max_wage':g['max_wage'].max(),
+            'mean_wage':wavg(g,'mean_wage'),
+            'median_wage':wavg(g,'median_wage'),
+            'percentile75':wavg(g,'percentile75'),
+            'percentile25':wavg(g,'percentile25')
+        })
+    base=d.groupby(['yr_qtr','state','sector'],as_index=False).agg({
+        'counts':'sum',
+        'max_wage':'max',
+        'mean_wage':'mean',
+        'median_wage':'mean',
+        'percentile75':'mean',
+        'percentile25':'mean'
+    })
+    allstates=d.groupby(['yr_qtr','sector']).apply(agg,include_groups=False).reset_index()
+    allstates['state']='Allstates'
+    allsectors=d.groupby(['yr_qtr','state']).apply(agg,include_groups=False).reset_index()
+    allsectors['sector']='Allsector'
+    allboth=d.groupby(['yr_qtr']).apply(agg,include_groups=False).reset_index()
+    allboth['state']='Allstates'
+    allboth['sector']='Allsector'
+    full=pd.concat([base,allstates,allsectors,allboth],ignore_index=True)
+    full=full.sort_values(['yr_qtr','state','sector'])
+    full['bad_percentile_order']=((full['percentile25']>full['median_wage'])|(full['median_wage']>full['percentile75'])|(full['percentile75']>full['max_wage'])).astype(int)
+    full['missing_metrics']=full[metrics].isna().any(axis=1).astype(int)
+    full['bad_counts']=((full['counts'].isna())|(full['counts']<=0)).astype(int)
+    full['iqr']=full['percentile75']-full['percentile25']
+    full['mean_median_gap']=full['mean_wage']-full['median_wage']
+    full['count_pct_change']=full.groupby(['state','sector'])['counts'].pct_change()*100
+    full['median_pct_change']=full.groupby(['state','sector'])['median_wage'].pct_change()*100
+    states=sorted(full['state'].dropna().unique(),key=lambda x:(x!='Allstates',x))
+    sectors=sorted(full['sector'].dropna().unique(),key=lambda x:(x!='Allsector',x))
+    fig=make_subplots(
+        rows=4,
+        cols=2,
+        subplot_titles=[
+            'Counts over time',
+            'Wage distribution band',
+            'Maximum wage over time',
+            'Mean minus median wage',
+            'Interquartile range',
+            'Quarter-to-quarter percent change',
+            'Integrity flags',
+            'Selected data table'
+        ],
+        specs=[
+            [{'type':'scatter'},{'type':'scatter'}],
+            [{'type':'scatter'},{'type':'scatter'}],
+            [{'type':'scatter'},{'type':'scatter'}],
+            [{'type':'bar'},{'type':'table'}]
+        ],
+        vertical_spacing=.08
+    )
+    traces=[]
+    buttons=[]
+    visible=[]
+    trace_count=0
+    for st in states:
+        for sec in sectors:
+            s=full[(full['state']==st)&(full['sector']==sec)].sort_values('yr_qtr')
+            if s.empty:
+                continue
+            is_first=trace_count==0
+            idxs=[]
+            x=s['yr_qtr']
+            fig.add_trace(go.Scatter(x=x,y=s['counts'],mode='lines+markers',name=f'{st} | {sec} counts',visible=is_first),row=1,col=1)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['percentile75'],mode='lines',name='75th percentile',visible=is_first,line=dict(width=0),showlegend=False),row=1,col=2)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['percentile25'],mode='lines',name='25th-75th band',visible=is_first,fill='tonexty',line=dict(width=0)),row=1,col=2)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['median_wage'],mode='lines+markers',name='median wage',visible=is_first),row=1,col=2)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['mean_wage'],mode='lines+markers',name='mean wage',visible=is_first),row=1,col=2)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['max_wage'],mode='lines+markers',name='max wage',visible=is_first),row=2,col=1)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['mean_median_gap'],mode='lines+markers',name='mean - median',visible=is_first),row=2,col=2)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['iqr'],mode='lines+markers',name='IQR',visible=is_first),row=3,col=1)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['count_pct_change'],mode='lines+markers',name='count % change',visible=is_first),row=3,col=2)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Scatter(x=x,y=s['median_pct_change'],mode='lines+markers',name='median wage % change',visible=is_first),row=3,col=2)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Bar(x=x,y=s['bad_percentile_order'],name='bad percentile order',visible=is_first),row=4,col=1)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Bar(x=x,y=s['missing_metrics'],name='missing metrics',visible=is_first),row=4,col=1)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Bar(x=x,y=s['bad_counts'],name='bad counts',visible=is_first),row=4,col=1)
+            idxs.append(trace_count); trace_count+=1
+            fig.add_trace(go.Table(
+                header=dict(values=['yr_qtr','state','sector','counts','max_wage','mean_wage','median_wage','p75','p25']),
+                cells=dict(values=[
+                    s['yr_qtr'],
+                    s['state'],
+                    s['sector'],
+                    s['counts'].round(2),
+                    s['max_wage'].round(2),
+                    s['mean_wage'].round(2),
+                    s['median_wage'].round(2),
+                    s['percentile75'].round(2),
+                    s['percentile25'].round(2)
+                ]),
+                visible=is_first
+            ),row=4,col=2)
+            idxs.append(trace_count); trace_count+=1
+            mask=[False]*trace_count
+            for i in idxs:
+                mask[i]=True
+            buttons.append(dict(
+                label=f'{st} | {sec}',
+                method='update',
+                args=[
+                    {'visible':mask},
+                    {'title':f'Wage dashboard: {st} | {sec}'}
+                ]
+            ))
+    final_buttons=[]
+    total_traces=len(fig.data)
+    for b in buttons:
+        v=b['args'][0]['visible']
+        if len(v)<total_traces:
+            v=v+[False]*(total_traces-len(v))
+            b['args'][0]['visible']=v
+        final_buttons.append(b)
+    fig.update_layout(
+        title='Wage dashboard: Allstates | Allsector',
+        height=1500,
+        width=1400,
+        updatemenus=[dict(
+            buttons=final_buttons,
+            direction='down',
+            x=0,
+            y=1.12,
+            xanchor='left',
+            yanchor='top'
+        )],
+        barmode='group',
+        hovermode='x unified'
+    )
+    fig.update_yaxes(title_text='count',row=1,col=1)
+    fig.update_yaxes(title_text='wage',row=1,col=2)
+    fig.update_yaxes(title_text='max wage',row=2,col=1)
+    fig.update_yaxes(title_text='mean - median',row=2,col=2)
+    fig.update_yaxes(title_text='p75 - p25',row=3,col=1)
+    fig.update_yaxes(title_text='percent change',row=3,col=2)
+    fig.update_yaxes(title_text='flag count',row=4,col=1)
+    fig.write_html(html_path,include_plotlyjs='cdn')
+    return html_path,full
