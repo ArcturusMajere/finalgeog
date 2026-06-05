@@ -1,36 +1,19 @@
-conn = psycopg2.connect(**AWS_CONFIG)
+conn=psycopg2.connect(**AWS_CONFIG)
 
-q1 = """
+schema_name='wagerecusr'
+table_name='wage_data'
+
+q1="""
 select
-    c.table_schema,
-    c.table_name,
-    c.column_name,
-    c.data_type,
-    s.null_frac,
-    cls.reltuples::bigint as sample_size,
-    round((coalesce(s.null_frac,0) * cls.reltuples)::numeric,0)::bigint as num_nulls
-from information_schema.columns c
-join pg_namespace n
-    on n.nspname = c.table_schema
-join pg_class cls
-    on cls.relnamespace = n.oid
-    and cls.relname = c.table_name
-left join pg_stats s
-    on s.schemaname = c.table_schema
-    and s.tablename = c.table_name
-    and s.attname = c.column_name
-where c.table_schema = %s
-    and c.table_name = %s
-order by c.ordinal_position
+    column_name
+from information_schema.columns
+where table_schema=%s
+    and table_name=%s
+order by ordinal_position
 """
 
-column_info = pd.read_sql(q1, con=conn, params=("wagerecusr","wage_data"))
+column_info=pd.read_sql(q1,con=conn,params=(schema_name,table_name))
 
-kdict = dict(zip(column_info["column_name"], column_info["data_type"]))
+kcols=column_info['column_name'].tolist()
 
-totobs = column_info.query('column_name == "bls_id"')["sample_size"].values[0]
-totobs2 = column_info.query('column_name == "jobtitle"')["num_nulls"].values[0]
-
-assert totobs == totobs2
-
-kcols = column_info.query("num_nulls < @totobs")["column_name"].unique().tolist()
+kcols
