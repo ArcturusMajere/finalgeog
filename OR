@@ -1,19 +1,1 @@
-conn=psycopg2.connect(**AWS_CONFIG)
 
-schema_name='wagerecusr'
-table_name='wage_data'
-
-q1="""
-select
-    column_name
-from information_schema.columns
-where table_schema=%s
-    and table_name=%s
-order by ordinal_position
-"""
-
-column_info=pd.read_sql(q1,con=conn,params=(schema_name,table_name))
-
-kcols=column_info['column_name'].tolist()
-
-kcols
