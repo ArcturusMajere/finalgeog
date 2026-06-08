@@ -1,105 +1,81 @@
-def getdominant(yr,qtr, fipslists= fipslists, naicslevels = naicslevels):
-    df0 = openLDB (yr,qtr,list(set(fipslists[0] + fipslists[1])))
-    dff = []
-    for userun, fipslist in enumerate(fipslists):
-        df = df0[df0['fips'].isin(fipslist)]
+def getdominant(yr,qtr,fipslists=fipslists,naicslevels=naicslevels):
+    df0=openLDB(yr,qtr,list(set(fipslists[0]+fipslists[1])))
+    dff=[]
+    for userun,fipslist in enumerate(fipslists):
+        df=df0.loc[df0['fips'].isin(fipslist)].copy()
         if len(df)>0:
-            empcols = [c for c in df if c.endswith('_EMPL')]
-            df.loc[:, 'aaemp'] = df[empcols].mean(axis=1)
-            df.loc[:, 'year'] = yr
-            df.loc[:, 'qtr'] = qtr
-            if userun == 1:
-                # establishment-level
-                gv1 = ['fips', 'ui_acct', 'run', 'year', 'qtr', ]
-            elif userun == 0:
-                #ui-account level
-                gv1 = ['fips', 'ui_acct', 'year', 'qtr', ]
+            empcols=[c for c in df if c.endswith('_EMPL')]
+            df.loc[:,'aaemp']=df[empcols].mean(axis=1)
+            df.loc[:,'year']=yr
+            df.loc[:,'qtr']=qtr
+            if userun==1:
+                gv1=['fips','ui_acct','run','year','qtr']
+            elif userun==0:
+                gv1=['fips','ui_acct','year','qtr']
             for naicslevel in naicslevels:
-                df.loc[:, f'naics{naicslevel}'] = df['naics_code'].astype('str').str[:naicslevel]
-            ######################################
-            ######2-digit edits
-            #3 sectors are represented by range of 2-digit codes
-            sectordict = {k : k for k in df[f'naics2'].unique()}
-            #31-33 manufacturing
+                df.loc[:,f'naics{naicslevel}']=df['naics_code'].astype('str').str[:naicslevel]
+            sectordict={k:k for k in df['naics2'].unique()}
             for n in [31,32,33]:
-                sectordict[f'{n}'] = '31-33'
-            #44-45 retail trade
+                sectordict[f'{n}']='31-33'
             for n in [44,45]:
-                sectordict[f'{n}'] = '44-45'
-            #48-49 transportation and warehousing
+                sectordict[f'{n}']='44-45'
             for n in [48,49]:
-                sectordict[f'{n}'] = '48-49'
-            #use dictionary to map 2-digit naics for sectors with range of codes
-            df.loc[:, f'naics2'] = df[f'naics2'].map(sectordict)
-            ######################################
-            ## if not using RUN
-            if userun == 0:
-                aggstats = {
-                    'aaemp' : 'sum',
-                    'meei' : 'max'
-                }
-                dfg = df.groupby(
-                    gv1, as_index=False).agg(aggstats)
-                #this is the dictionary that will store the dominant values by colum
-                finaldict = {}
+                sectordict[f'{n}']='48-49'
+            df.loc[:,'naics2']=df['naics2'].map(sectordict)
+            if userun==0:
+                aggstats={'aaemp':'sum','meei':'max'}
+                dfg=df.groupby(gv1,as_index=False).agg(aggstats)
+                finaldict={}
                 for naicslevel in naicslevels:
-                    #naics column to find dominant value for
-                    c = f'naics{naicslevel}'
-                    #1) get employment by ui account and naics code
-                    #2) sort by ui and primary: total employment and secondary: total wages
-                    #3) keep last (largest value) within ui account. if there is a tie between employment, defaults to highest wage. Also gives number of unique NAICS codes - this will be used later.
-                    #4) creates dataframe with dominant NAICS, the employment for that dominant NAICS and the total employment for that UI account
-                    agg2 = {c : 'last','aaemp' : 'last','wages' : 'count'}
-                    rdict2 = {'wages' : f'number_unique_{c}'}
-                    dft = df.groupby(
-                        gv1 + [c], as_index=False).agg({'aaemp':'sum','wages':'sum','randomly_generated_number':'mean'}).sort_values(
-                        gv1 + ['aaemp', 'wages', 'randomly_generated_number'], ascending=[True for i in gv1] + [True,True,True]).groupby(
-                        gv1, as_index=False).agg(agg2).rename(columns = rdict2)
-                    finaldict[c] = dft
+                    c=f'naics{naicslevel}'
+                    agg2={c:'last','aaemp':'last','wages':'count'}
+                    rdict2={'wages':f'number_unique_{c}'}
+                    dft=df.groupby(gv1+[c],as_index=False).agg({'aaemp':'sum','wages':'sum','randomly_generated_number':'mean'}).sort_values(gv1+['aaemp','wages','randomly_generated_number'],ascending=[True for i in gv1]+[True,True,True]).groupby(gv1,as_index=False).agg(agg2).rename(columns=rdict2)
+                    finaldict[c]=dft
+                    del dft
                 gc.collect()
                 checkmem()
-                ######################################
-                ##merge all to create single dataframe
-                naicslevel = naicslevels[0]
-                rdict = {'aaemp' : f'aaemp_naics{naicslevel}'}
-                dft = finaldict[f'naics{naicslevel}'].rename(columns = rdict)
+                naicslevel=naicslevels[0]
+                rdict={'aaemp':f'aaemp_naics{naicslevel}'}
+                dft=finaldict[f'naics{naicslevel}'].rename(columns=rdict)
                 for naicslevel in naicslevels[1:]:
-                    rdict = {'aaemp': f'aaemp_naics{naicslevel}'}
-                    dft1 = finaldict[f'naics{naicslevel}'][gv1 + ['aaemp', f'naics{naicslevel}', f'number_unique_naics{naicslevel}']].rename(columns = rdict)
-                    dft = dft.merge(dft1, on = gv1, how = 'outer')
-                ##merge in total UI emp and meei info
-                rdict = {'aaemp' : 'aaemp_ui'}
-                dft = dft.merge(dfg.rename(columns=rdict), on = gv1, how = 'inner')
-                # creates new column for if UI account has multiple estabs
-                dft['Dmulti'] = 1*(dft['meei'].isin([3, 4, 5, 6]))
+                    rdict={'aaemp':f'aaemp_naics{naicslevel}'}
+                    dft1=finaldict[f'naics{naicslevel}'][gv1+['aaemp',f'naics{naicslevel}',f'number_unique_naics{naicslevel}']].rename(columns=rdict)
+                    dft=dft.merge(dft1,on=gv1,how='outer')
+                    del dft1
+                rdict={'aaemp':'aaemp_ui'}
+                dft=dft.merge(dfg.rename(columns=rdict),on=gv1,how='inner')
+                dft['Dmulti']=1*(dft['meei'].isin([3,4,5,6]))
+                del dfg
+                del finaldict
                 gc.collect()
                 checkmem()
-                ######################################
-                ##get proportion of employment in each level
                 for naicslevel in naicslevels[:]:
-                    #if only 1 unique NAICS, then give 1
-                    cond1 = (dft[f'number_unique_naics{naicslevel}'] == 1)
-                    #if 0 employment, then give 0
-                    cond2 = (dft['aaemp_ui'] == 0)
-                    dft[f'prop_emp_dom_naics{naicslevel}'] = np.where(cond1, 1, np.where(cond2, 0, dft[f'aaemp_naics{naicslevel}'] / dft['aaemp_ui']))
-                kcols = gv1 + [f'prop_emp_dom_naics{naicslevel}' for naicslevel in
-                               naicslevels[:]] + [f'naics{naicslevel}' for naicslevel in
-                                                  naicslevels[:]] + ['Dmulti', 'Dui_level']
-                dft['Dui_level'] = True
-                dff.append(dft[kcols])
+                    cond1=dft[f'number_unique_naics{naicslevel}']==1
+                    cond2=dft['aaemp_ui']==0
+                    dft[f'prop_emp_dom_naics{naicslevel}']=np.where(cond1,1,np.where(cond2,0,dft[f'aaemp_naics{naicslevel}']/dft['aaemp_ui']))
+                dft['Dui_level']=True
+                kcols=gv1+[f'prop_emp_dom_naics{naicslevel}' for naicslevel in naicslevels[:]]+[f'naics{naicslevel}' for naicslevel in naicslevels[:]]+['Dmulti','Dui_level']
+                dff.append(dft[kcols].copy())
+                del dft
                 gc.collect()
                 checkmem()
-            #### if RUN, then just taking row's info since each row is unique
             elif userun==1:
                 for naicslevel in naicslevels[:]:
-                    df[f'prop_emp_dom_naics{naicslevel}'] = 1
-                df['Dmulti'] = 1 * (df['meei'].isin([3, 4, 5, 6]))
-                kcols = gv1 + [f'prop_emp_dom_naics{naicslevel}' for naicslevel in
-                               naicslevels[:]] + [f'naics{naicslevel}' for naicslevel in
-                                                  naicslevels[:]] + ['Dmulti', 'Dui_level']
-                df['Dui_level'] = False
-                dff.append(df[kcols])
+                    df.loc[:,f'prop_emp_dom_naics{naicslevel}']=1
+                df.loc[:,'Dmulti']=1*(df['meei'].isin([3,4,5,6]))
+                df.loc[:,'Dui_level']=False
+                kcols=gv1+[f'prop_emp_dom_naics{naicslevel}' for naicslevel in naicslevels[:]]+[f'naics{naicslevel}' for naicslevel in naicslevels[:]]+['Dmulti','Dui_level']
+                dff.append(df[kcols].copy())
                 gc.collect()
                 checkmem()
-    return(pd.concat(dff, ignore_index=True))
-
+        del df
+        gc.collect()
+    del df0
+    gc.collect()
+    if len(dff)==0:
+        return pd.DataFrame()
+    out=pd.concat(dff,ignore_index=True)
+    del dff
+    gc.collect()
+    return out
