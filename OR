@@ -1,3 +1,41 @@
+
+import os
+import tempfile
+import paramiko
+import pandas as pd
+
+def read_remote_sas(host, username, password, remote_path, port=22, encoding="latin1"):
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    local_path = None
+
+    try:
+        client.connect(
+            hostname=host,
+            port=port,
+            username=username,
+            password=password
+        )
+
+        sftp = client.open_sftp()
+
+        suffix = os.path.splitext(remote_path)[1] or ".sas7bdat"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            local_path = tmp.name
+
+        sftp.get(remote_path, local_path)
+        sftp.close()
+
+        df = pd.read_sas(local_path, format="sas7bdat", encoding=encoding)
+        return df
+
+    finally:
+        client.close()
+        if local_path and os.path.exists(local_path):
+            os.remove(local_path)
+#############################################
 import os
 import sys
 import time
