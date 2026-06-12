@@ -1,12 +1,10 @@
-yr=2025
-qtr=4
-
 sql="""
-select *
-from public.db_a
-where left(yr_qtr,4)=%s
-and right(yr_qtr,1)=%s
-limit 100
+select table_schema,table_name
+from information_schema.tables
+where table_type='BASE TABLE'
+and table_schema not in ('pg_catalog','information_schema')
+order by table_schema,table_name
 """
 
-df=pd.read_sql(sql,conn,params=(str(yr),str(qtr)))
+tables=pd.read_sql(sql,conn)
+print(tables)
