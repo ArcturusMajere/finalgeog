@@ -1,3 +1,12 @@
-sql="select * from public.db_a limit 1"
-df=pd.read_sql(sql,conn)
-print(df)
+yr=2025
+qtr=4
+
+sql="""
+select *
+from public.db_a
+where left(yr_qtr,4)=%s
+and right(yr_qtr,1)=%s
+limit 100
+"""
+
+df=pd.read_sql(sql,conn,params=(str(yr),str(qtr)))
