@@ -5,3 +5,5 @@ where table_schema=%s
 and table_name=%s
 order by ordinal_position
 """
+df=pd.read_sql(sql,conn,params=(schema,table))
+print(df)
