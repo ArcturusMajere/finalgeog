@@ -1,7 +1,25 @@
-Count Above $7k
-Count Less than or equal to $7K NE $0
-Count zero wage 
-Total: Should be the sum of all three categories, right?
+import pandas as pd
 
-Sum of wages for those above $7K
-Sum total wages  LT or equal to $7K
+def get_wage_summary_by_year_quarter(conn):
+    query="""
+        SELECT
+            yr,
+            qtr,
+            SUM(CASE WHEN wage > 7000 THEN 1 ELSE 0 END) AS count_above_7k,
+            SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN 1 ELSE 0 END) AS count_lte_7k_ne_0,
+            SUM(CASE WHEN wage = 0 THEN 1 ELSE 0 END) AS count_zero_wage,
+            SUM(CASE WHEN wage > 7000 THEN 1 ELSE 0 END)
+            + SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN 1 ELSE 0 END)
+            + SUM(CASE WHEN wage = 0 THEN 1 ELSE 0 END) AS total_count,
+            SUM(CASE WHEN wage > 7000 THEN wage ELSE 0 END) AS sum_wages_above_7k,
+            SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN wage ELSE 0 END) AS sum_wages_lte_7k_ne_0
+        FROM EMPLOYEE_WAGES
+        WHERE fips = 6
+        AND yr BETWEEN 2020 AND 2025
+        AND qtr BETWEEN 1 AND 4
+        GROUP BY yr,qtr
+        ORDER BY yr,qtr
+    """
+    df=pd.read_sql(query,conn)
+    df.columns=df.columns.str.lower()
+    return df
