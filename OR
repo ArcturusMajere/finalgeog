@@ -6,34 +6,11 @@ def get_wage_percent_by_year_quarter(conn):
             yr,
             qtr,
             COUNT(*) AS total_count,
-            SUM(CASE WHEN wage < 7000 THEN 1 ELSE 0 END) AS under_7000_count,
+            SUM(CASE WHEN wage < 700 AND wage <> 0 THEN 1 ELSE 0 END) AS under_700_count,
             ROUND(
-                100 * SUM(CASE WHEN wage < 7000 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0),
+                100 * SUM(CASE WHEN wage < 700 AND wage <> 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0),
                 2
-            ) AS percent_under_7000
-        FROM EMPLOYEE_WAGES
-        WHERE fips = 6
-        AND yr BETWEEN 2020 AND 2025
-        AND qtr BETWEEN 1 AND 4
-        GROUP BY yr,qtr
-        ORDER BY yr,qtr
-    """
-    return pd.read_sql(query,conn)
-
-
-import pandas as pd
-
-def get_wage_percent_by_year_quarter(conn):
-    query="""
-        SELECT
-            yr,
-            qtr,
-            COUNT(*) AS total_count,
-            SUM(CASE WHEN wage < 7000 THEN 1 ELSE 0 END) AS under_7000_count,
-            ROUND(
-                100 * SUM(CASE WHEN wage < 7000 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0),
-                2
-            ) AS percent_under_7000
+            ) AS percent_under_700
         FROM EMPLOYEE_WAGES
         WHERE fips = 6
         AND wage <> 0
