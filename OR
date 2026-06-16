@@ -1,21 +1,125 @@
-query="""
-    SELECT
-        yr,
-        qtr,
-        SUM(CASE WHEN wage > 7000 THEN 1 ELSE 0 END) AS count_above_7k,
-        SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN 1 ELSE 0 END) AS count_lte_7k_ne_0,
-        SUM(CASE WHEN wage = 0 THEN 1 ELSE 0 END) AS count_zero_wage,
-        SUM(CASE WHEN wage IS NULL THEN 1 ELSE 0 END) AS count_null_wage,
-        SUM(CASE WHEN wage > 7000 THEN 1 ELSE 0 END)
-        + SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN 1 ELSE 0 END)
-        + SUM(CASE WHEN wage = 0 THEN 1 ELSE 0 END) AS total_three_categories,
-        COUNT(*) AS total_records,
-        SUM(CASE WHEN wage > 7000 THEN wage ELSE 0 END) AS sum_wages_above_7k,
-        SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN wage ELSE 0 END) AS sum_wages_lte_7k_ne_0
-    FROM EMPLOYEE_WAGES
-    WHERE fips = 6
-    AND yr BETWEEN 2020 AND 2025
-    AND qtr BETWEEN 1 AND 4
-    GROUP BY yr,qtr
-    ORDER BY yr,qtr
-"""
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+def make_wage_dashboard(df,output_file="wage_dashboard.html"):
+    data=df.copy()
+    data.columns=data.columns.str.lower()
+    data=data.sort_values(["yr","qtr"]).reset_index(drop=True)
+    data["period"]=data["yr"].astype(str)+" Q"+data["qtr"].astype(str)
+    data["total_wages"]=data["sum_wages_above_7k"]+data["sum_wages_lte_7k_ne_0"]
+    data["pct_above_7k"]=100*data["count_above_7k"]/data["total_records"].replace(0,pd.NA)
+    data["pct_lte_7k_ne_0"]=100*data["count_lte_7k_ne_0"]/data["total_records"].replace(0,pd.NA)
+    data["pct_zero_wage"]=100*data["count_zero_wage"]/data["total_records"].replace(0,pd.NA)
+    data["record_gap"]=data["total_records"]-data["total_three_categories"]
+
+    fig=make_subplots(
+        rows=4,
+        cols=2,
+        specs=[
+            [{"type":"indicator"},{"type":"indicator"}],
+            [{"type":"scatter"},{"type":"bar"}],
+            [{"type":"scatter"},{"type":"scatter"}],
+            [{"type":"bar"},{"type":"table"}]
+        ],
+        subplot_titles=(
+            "Total Records",
+            "Total Wages",
+            "Record Counts Over Time",
+            "Record Category Mix",
+            "Wage Sums Over Time",
+            "Percent of Total Records",
+            "Uncategorized / Null Wage Check",
+            "Summary Table"
+        ),
+        vertical_spacing=0.09
+    )
+
+    fig.add_trace(
+        go.Indicator(
+            mode="number",
+            value=int(data["total_records"].sum()),
+            number={"valueformat":","},
+            title={"text":"Total records"}
+        ),
+        row=1,
+        col=1
+    )
+
+    fig.add_trace(
+        go.Indicator(
+            mode="number",
+            value=float(data["total_wages"].sum()),
+            number={"prefix":"$","valueformat":",.0f"},
+            title={"text":"Total wages"}
+        ),
+        row=1,
+        col=2
+    )
+
+    fig.add_trace(go.Scatter(x=data["period"],y=data["count_above_7k"],mode="lines+markers",name="Count above $7k"),row=2,col=1)
+    fig.add_trace(go.Scatter(x=data["period"],y=data["count_lte_7k_ne_0"],mode="lines+markers",name="Count <= $7k nonzero"),row=2,col=1)
+    fig.add_trace(go.Scatter(x=data["period"],y=data["count_zero_wage"],mode="lines+markers",name="Count zero wage"),row=2,col=1)
+    fig.add_trace(go.Scatter(x=data["period"],y=data["total_records"],mode="lines+markers",name="Total records"),row=2,col=1)
+
+    fig.add_trace(go.Bar(x=data["period"],y=data["count_above_7k"],name="Above $7k"),row=2,col=2)
+    fig.add_trace(go.Bar(x=data["period"],y=data["count_lte_7k_ne_0"],name="<= $7k nonzero"),row=2,col=2)
+    fig.add_trace(go.Bar(x=data["period"],y=data["count_zero_wage"],name="Zero wage"),row=2,col=2)
+
+    fig.add_trace(go.Scatter(x=data["period"],y=data["sum_wages_above_7k"],mode="lines+markers",name="Sum wages above $7k"),row=3,col=1)
+    fig.add_trace(go.Scatter(x=data["period"],y=data["sum_wages_lte_7k_ne_0"],mode="lines+markers",name="Sum wages <= $7k nonzero"),row=3,col=1)
+    fig.add_trace(go.Scatter(x=data["period"],y=data["total_wages"],mode="lines+markers",name="Total wages"),row=3,col=1)
+
+    fig.add_trace(go.Scatter(x=data["period"],y=data["pct_above_7k"],mode="lines+markers",name="% above $7k"),row=3,col=2)
+    fig.add_trace(go.Scatter(x=data["period"],y=data["pct_lte_7k_ne_0"],mode="lines+markers",name="% <= $7k nonzero"),row=3,col=2)
+    fig.add_trace(go.Scatter(x=data["period"],y=data["pct_zero_wage"],mode="lines+markers",name="% zero wage"),row=3,col=2)
+
+    fig.add_trace(go.Bar(x=data["period"],y=data["record_gap"],name="Total records - categorized total"),row=4,col=1)
+
+    table_cols=[
+        "yr",
+        "qtr",
+        "count_above_7k",
+        "count_lte_7k_ne_0",
+        "count_zero_wage",
+        "total_three_categories",
+        "total_records",
+        "record_gap",
+        "sum_wages_above_7k",
+        "sum_wages_lte_7k_ne_0",
+        "total_wages"
+    ]
+
+    fig.add_trace(
+        go.Table(
+            header={"values":[col.upper() for col in table_cols]},
+            cells={"values":[data[col] for col in table_cols]}
+        ),
+        row=4,
+        col=2
+    )
+
+    fig.update_layout(
+        title="FIPS 6 Wage Dashboard, 2020–2025",
+        height=1500,
+        width=1600,
+        barmode="stack",
+        template="plotly_white",
+        legend={"orientation":"h","yanchor":"bottom","y":-0.08,"xanchor":"center","x":0.5},
+        margin={"l":50,"r":50,"t":90,"b":120}
+    )
+
+    fig.update_xaxes(tickangle=45)
+    fig.update_yaxes(title_text="Records",row=2,col=1)
+    fig.update_yaxes(title_text="Records",row=2,col=2)
+    fig.update_yaxes(title_text="Wages",row=3,col=1)
+    fig.update_yaxes(title_text="Percent",row=3,col=2)
+    fig.update_yaxes(title_text="Records",row=4,col=1)
+
+    fig.write_html(output_file,include_plotlyjs=True,full_html=True)
+    return output_file
+
+
+df=pd.read_sql(query,conn)
+dashboard_file=make_wage_dashboard(df)
+print(dashboard_file)
