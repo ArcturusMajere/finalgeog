@@ -1,25 +1,7 @@
-import pandas as pd
+ for yr in range(2020,2026):
+        df=pd.read_sql(query,conn,params={"yr":yr})
+        results.append(df)
 
-def get_wage_summary_by_year_quarter(conn):
-    query="""
-        SELECT
-            yr,
-            qtr,
-            SUM(CASE WHEN wage > 7000 THEN 1 ELSE 0 END) AS count_above_7k,
-            SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN 1 ELSE 0 END) AS count_lte_7k_ne_0,
-            SUM(CASE WHEN wage = 0 THEN 1 ELSE 0 END) AS count_zero_wage,
-            SUM(CASE WHEN wage > 7000 THEN 1 ELSE 0 END)
-            + SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN 1 ELSE 0 END)
-            + SUM(CASE WHEN wage = 0 THEN 1 ELSE 0 END) AS total_count,
-            SUM(CASE WHEN wage > 7000 THEN wage ELSE 0 END) AS sum_wages_above_7k,
-            SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN wage ELSE 0 END) AS sum_wages_lte_7k_ne_0
-        FROM EMPLOYEE_WAGES
-        WHERE fips = 6
-        AND yr BETWEEN 2020 AND 2025
-        AND qtr BETWEEN 1 AND 4
-        GROUP BY yr,qtr
-        ORDER BY yr,qtr
-    """
-    df=pd.read_sql(query,conn)
-    df.columns=df.columns.str.lower()
-    return df
+    final_df=pd.concat(results,ignore_index=True)
+    final_df.columns=final_df.columns.str.lower()
+    return final_df
