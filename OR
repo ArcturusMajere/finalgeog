@@ -2,22 +2,24 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-def make_under_7k_timeseries(df,rolling_window=4,output_file="under_7k_timeseries.html"):
+def make_under_7k_share_graphs(df,rolling_window=4,output_file="under_7k_share_graphs.html"):
     data=df.copy()
     data.columns=data.columns.str.lower()
     data=data.sort_values(["yr","qtr"]).reset_index(drop=True)
     data["period"]=pd.PeriodIndex(year=data["yr"],quarter=data["qtr"],freq="Q")
     data["period_label"]=data["period"].astype(str)
-    data["share_lte_7k_ne_0_pct"]=100*data["count_lte_7k_ne_0"]/data["total_records"].replace(0,pd.NA)
-    data["share_lte_7k_ne_0_rolling"]=data["share_lte_7k_ne_0_pct"].rolling(rolling_window,min_periods=1).mean()
-    data["count_lte_7k_ne_0_rolling"]=data["count_lte_7k_ne_0"].rolling(rolling_window,min_periods=1).mean()
+    data["nonzero_records"]=data["total_records"]-data["count_zero_wage"]
+    data["share_under_7k_total_pct"]=100*data["count_lte_7k_ne_0"]/data["total_records"].replace(0,pd.NA)
+    data["share_under_7k_nonzero_pct"]=100*data["count_lte_7k_ne_0"]/data["nonzero_records"].replace(0,pd.NA)
+    data["share_under_7k_total_roll"]=data["share_under_7k_total_pct"].rolling(rolling_window,min_periods=1).mean()
+    data["share_under_7k_nonzero_roll"]=data["share_under_7k_nonzero_pct"].rolling(rolling_window,min_periods=1).mean()
 
     fig=make_subplots(
         rows=2,
         cols=1,
         subplot_titles=(
-            "Share of Total Records <= $7k and Nonzero",
-            "Count of Records <= $7k and Nonzero"
+            "Share <= $7k and nonzero over total records",
+            "Share <= $7k and nonzero over nonzero records"
         ),
         vertical_spacing=0.15
     )
@@ -25,9 +27,9 @@ def make_under_7k_timeseries(df,rolling_window=4,output_file="under_7k_timeserie
     fig.add_trace(
         go.Scatter(
             x=data["period_label"],
-            y=data["share_lte_7k_ne_0_pct"],
+            y=data["share_under_7k_total_pct"],
             mode="lines+markers",
-            name="Share <= $7k nonzero"
+            name="Share over total records"
         ),
         row=1,
         col=1
@@ -36,9 +38,9 @@ def make_under_7k_timeseries(df,rolling_window=4,output_file="under_7k_timeserie
     fig.add_trace(
         go.Scatter(
             x=data["period_label"],
-            y=data["share_lte_7k_ne_0_rolling"],
+            y=data["share_under_7k_total_roll"],
             mode="lines",
-            name=f"{rolling_window}-quarter rolling avg share"
+            name=f"{rolling_window}-quarter rolling avg, total denominator"
         ),
         row=1,
         col=1
@@ -47,9 +49,9 @@ def make_under_7k_timeseries(df,rolling_window=4,output_file="under_7k_timeserie
     fig.add_trace(
         go.Scatter(
             x=data["period_label"],
-            y=data["count_lte_7k_ne_0"],
+            y=data["share_under_7k_nonzero_pct"],
             mode="lines+markers",
-            name="Count <= $7k nonzero"
+            name="Share over nonzero records"
         ),
         row=2,
         col=1
@@ -58,16 +60,16 @@ def make_under_7k_timeseries(df,rolling_window=4,output_file="under_7k_timeserie
     fig.add_trace(
         go.Scatter(
             x=data["period_label"],
-            y=data["count_lte_7k_ne_0_rolling"],
+            y=data["share_under_7k_nonzero_roll"],
             mode="lines",
-            name=f"{rolling_window}-quarter rolling avg count"
+            name=f"{rolling_window}-quarter rolling avg, nonzero denominator"
         ),
         row=2,
         col=1
     )
 
     fig.update_layout(
-        title="FIPS 6 Wage Records <= $7,000 and Nonzero",
+        title="FIPS 6 Share of Wage Records <= $7,000",
         height=850,
         width=1300,
         template="plotly_white",
@@ -78,7 +80,7 @@ def make_under_7k_timeseries(df,rolling_window=4,output_file="under_7k_timeserie
     fig.update_xaxes(title_text="Quarter",tickangle=45,row=1,col=1)
     fig.update_xaxes(title_text="Quarter",tickangle=45,row=2,col=1)
     fig.update_yaxes(title_text="Share (%)",row=1,col=1)
-    fig.update_yaxes(title_text="Count",row=2,col=1)
+    fig.update_yaxes(title_text="Share (%)",row=2,col=1)
 
     fig.write_html(output_file,include_plotlyjs=True,full_html=True)
     return fig,output_file,data
