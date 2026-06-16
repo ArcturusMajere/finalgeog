@@ -1,20 +1,21 @@
-query="""
-    SELECT
-        yr,
-        qtr,
-        COUNT(DISTINCT CASE WHEN wage > 7000 THEN bls_id END) AS count_above_7k,
-        COUNT(DISTINCT CASE WHEN wage <= 7000 AND wage <> 0 THEN bls_id END) AS count_lte_7k_ne_0,
-        COUNT(DISTINCT CASE WHEN wage = 0 THEN bls_id END) AS count_zero_wage,
-        COUNT(DISTINCT CASE WHEN wage > 7000 THEN bls_id END)
-        + COUNT(DISTINCT CASE WHEN wage <= 7000 AND wage <> 0 THEN bls_id END)
-        + COUNT(DISTINCT CASE WHEN wage = 0 THEN bls_id END) AS total_three_categories,
-        COUNT(DISTINCT bls_id) AS total_unique_records,
-        SUM(CASE WHEN wage > 7000 THEN wage ELSE 0 END) AS sum_wages_above_7k,
-        SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN wage ELSE 0 END) AS sum_wages_lte_7k_ne_0
-    FROM EMPLOYEE_WAGES
-    WHERE fips = 6
-    AND yr BETWEEN 2020 AND 2025
-    AND qtr BETWEEN 1 AND 4
-    GROUP BY yr,qtr
-    ORDER BY yr,qtr
-"""
+
+def add_rolling_values_non_unique(df,rolling_window=4):
+    data=df.copy()
+    data.columns=data.columns.str.lower()
+    data=data.sort_values(["yr","qtr"]).reset_index(drop=True)
+
+    data["period"]=pd.PeriodIndex(year=data["yr"],quarter=data["qtr"],freq="Q")
+    data["period_label"]=data["period"].astype(str)
+
+    data["count_lte_7k_with_zeros"]=data["count_lte_7k_ne_0"]+data["count_zero_wage"]
+    data["count_lte_7k_without_zeros"]=data["count_lte_7k_ne_0"]
+
+    data["share_lte_7k_with_zeros_pct"]=100*data["count_lte_7k_with_zeros"]/data["total_records"].replace(0,pd.NA)
+    data["share_lte_7k_without_zeros_pct"]=100*data["count_lte_7k_without_zeros"]/data["total_records"].replace(0,pd.NA)
+
+    data["count_lte_7k_with_zeros_roll"]=data["count_lte_7k_with_zeros"].rolling(rolling_window,min_periods=1).mean()
+    data["count_lte_7k_without_zeros_roll"]=data["count_lte_7k_without_zeros"].rolling(rolling_window,min_periods=1).mean()
+    data["share_lte_7k_with_zeros_roll"]=data["share_lte_7k_with_zeros_pct"].rolling(rolling_window,min_periods=1).mean()
+    data["share_lte_7k_without_zeros_roll"]=data["share_lte_7k_without_zeros_pct"].rolling(rolling_window,min_periods=1).mean()
+
+    return data
