@@ -1,74 +1,20 @@
-import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-def make_le_7000_four_graph_dashboard(df,rolling_window=4,output_file="le_7000_four_graph_dashboard.html"):
-    data=df.copy()
-    data.columns=data.columns.str.lower()
-    data=data.sort_values(["yr","qtr"]).reset_index(drop=True)
-    data["period"]=pd.PeriodIndex(year=data["yr"],quarter=data["qtr"],freq="Q")
-    data["period_label"]=data["period"].astype(str)
-
-    data["count_lte_7k_with_zeros"]=data["count_lte_7k_ne_0"]+data["count_zero_wage"]
-    data["count_lte_7k_without_zeros"]=data["count_lte_7k_ne_0"]
-
-    data["share_lte_7k_with_zeros_pct"]=100*data["count_lte_7k_with_zeros"]/data["total_records"].replace(0,pd.NA)
-    data["share_lte_7k_without_zeros_pct"]=100*data["count_lte_7k_without_zeros"]/data["total_records"].replace(0,pd.NA)
-
-    data["count_lte_7k_with_zeros_roll"]=data["count_lte_7k_with_zeros"].rolling(rolling_window,min_periods=1).mean()
-    data["count_lte_7k_without_zeros_roll"]=data["count_lte_7k_without_zeros"].rolling(rolling_window,min_periods=1).mean()
-    data["share_lte_7k_with_zeros_roll"]=data["share_lte_7k_with_zeros_pct"].rolling(rolling_window,min_periods=1).mean()
-    data["share_lte_7k_without_zeros_roll"]=data["share_lte_7k_without_zeros_pct"].rolling(rolling_window,min_periods=1).mean()
-
-    fig=make_subplots(
-        rows=2,
-        cols=2,
-        subplot_titles=(
-            "Count <= $7,000 including zero wages",
-            "Share <= $7,000 including zero wages over total records",
-            "Count <= $7,000 excluding zero wages",
-            "Share <= $7,000 excluding zero wages over total records"
-        ),
-        vertical_spacing=0.15,
-        horizontal_spacing=0.08
-    )
-
-    fig.add_trace(go.Scatter(x=data["period_label"],y=data["count_lte_7k_with_zeros"],mode="lines+markers",name="Count <= $7k with zeros"),row=1,col=1)
-    fig.add_trace(go.Scatter(x=data["period_label"],y=data["count_lte_7k_with_zeros_roll"],mode="lines",name=f"{rolling_window}-quarter rolling avg count with zeros"),row=1,col=1)
-
-    fig.add_trace(go.Scatter(x=data["period_label"],y=data["share_lte_7k_with_zeros_pct"],mode="lines+markers",name="Share <= $7k with zeros"),row=1,col=2)
-    fig.add_trace(go.Scatter(x=data["period_label"],y=data["share_lte_7k_with_zeros_roll"],mode="lines",name=f"{rolling_window}-quarter rolling avg share with zeros"),row=1,col=2)
-
-    fig.add_trace(go.Scatter(x=data["period_label"],y=data["count_lte_7k_without_zeros"],mode="lines+markers",name="Count <= $7k without zeros"),row=2,col=1)
-    fig.add_trace(go.Scatter(x=data["period_label"],y=data["count_lte_7k_without_zeros_roll"],mode="lines",name=f"{rolling_window}-quarter rolling avg count without zeros"),row=2,col=1)
-
-    fig.add_trace(go.Scatter(x=data["period_label"],y=data["share_lte_7k_without_zeros_pct"],mode="lines+markers",name="Share <= $7k without zeros"),row=2,col=2)
-    fig.add_trace(go.Scatter(x=data["period_label"],y=data["share_lte_7k_without_zeros_roll"],mode="lines",name=f"{rolling_window}-quarter rolling avg share without zeros"),row=2,col=2)
-
-    fig.update_layout(
-        title="FIPS 6 Wage Records <= $7,000, With and Without Zero Wages",
-        height=950,
-        width=1500,
-        template="plotly_white",
-        legend={"orientation":"h","yanchor":"bottom","y":-0.16,"xanchor":"center","x":0.5},
-        margin={"l":60,"r":40,"t":90,"b":150}
-    )
-
-    fig.update_xaxes(title_text="Quarter",tickangle=45,row=1,col=1)
-    fig.update_xaxes(title_text="Quarter",tickangle=45,row=1,col=2)
-    fig.update_xaxes(title_text="Quarter",tickangle=45,row=2,col=1)
-    fig.update_xaxes(title_text="Quarter",tickangle=45,row=2,col=2)
-
-    fig.update_yaxes(title_text="Count",row=1,col=1)
-    fig.update_yaxes(title_text="Share (%)",row=1,col=2)
-    fig.update_yaxes(title_text="Count",row=2,col=1)
-    fig.update_yaxes(title_text="Share (%)",row=2,col=2)
-
-    fig.write_html(output_file,include_plotlyjs=True,full_html=True)
-    return fig,output_file,data
-
-
-
-fig,output_file,df_viz=make_le_7000_four_graph_dashboard(df,rolling_window=4)
-fig.show()
-print(output_file)
+query="""
+    SELECT
+        yr,
+        qtr,
+        COUNT(DISTINCT CASE WHEN wage > 7000 THEN bls_id END) AS count_above_7k,
+        COUNT(DISTINCT CASE WHEN wage <= 7000 AND wage <> 0 THEN bls_id END) AS count_lte_7k_ne_0,
+        COUNT(DISTINCT CASE WHEN wage = 0 THEN bls_id END) AS count_zero_wage,
+        COUNT(DISTINCT CASE WHEN wage > 7000 THEN bls_id END)
+        + COUNT(DISTINCT CASE WHEN wage <= 7000 AND wage <> 0 THEN bls_id END)
+        + COUNT(DISTINCT CASE WHEN wage = 0 THEN bls_id END) AS total_three_categories,
+        COUNT(DISTINCT bls_id) AS total_unique_records,
+        SUM(CASE WHEN wage > 7000 THEN wage ELSE 0 END) AS sum_wages_above_7k,
+        SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN wage ELSE 0 END) AS sum_wages_lte_7k_ne_0
+    FROM EMPLOYEE_WAGES
+    WHERE fips = 6
+    AND yr BETWEEN 2020 AND 2025
+    AND qtr BETWEEN 1 AND 4
+    GROUP BY yr,qtr
+    ORDER BY yr,qtr
+"""
