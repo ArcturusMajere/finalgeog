@@ -1,50 +1,16 @@
-import oracledb
 import pandas as pd
 
-def calipoor(username,password,dsn,table_name):
-    query=f"""
-        SELECT *
-        FROM {table_name}
-        WHERE wage < :max_wage
-        AND fips = :fips
-    """
-    with oracledb.connect(user=username,password=password,dsn=dsn) as conn:
-        df=pd.read_sql(
-            query,
-            conn,
-            params={"max_wage":7000,"fips":6}
-        )
-    return df
+query="""
+    SELECT
+        COUNT(*) AS total_count,
+        SUM(CASE WHEN wage < 7000 THEN 1 ELSE 0 END) AS under_7000_count,
+        ROUND(
+            100 * SUM(CASE WHEN wage < 7000 THEN 1 ELSE 0 END) / COUNT(*),
+            2
+        ) AS percent_under_7000
+    FROM EMPLOYEE_WAGES
+    WHERE fips = 6
+"""
 
-import os
-import oracledb
-import pandas as pd
-
-def get_wages_by_year_quarter(year,quarter):
-    username=os.getenv("ORACLE_USER")
-    password=os.getenv("ORACLE_PASSWORD")
-    dsn=os.getenv("ORACLE_DSN")
-    table_name="EMPLOYEE_WAGES"
-
-    query=f"""
-        SELECT *
-        FROM {table_name}
-        WHERE wage < :max_wage
-        AND fips = :fips
-        AND yr = :year
-        AND qtr = :quarter
-    """
-
-    with oracledb.connect(user=username,password=password,dsn=dsn) as conn:
-        df=pd.read_sql(
-            query,
-            conn,
-            params={
-                "max_wage":7000,
-                "fips":6,
-                "year":year,
-                "quarter":quarter
-            }
-        )
-
-    return df
+df=pd.read_sql(query,conn)
+print(df)
