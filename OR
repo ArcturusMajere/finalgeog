@@ -1,1 +1,51 @@
 
+
+def get_annual_pct_fips_lte_7k(conn,fips,yr):
+    query="""
+    WITH quarterly AS (
+        SELECT
+            yr,
+            qtr,
+            fips,
+            BLS_ID,
+            SUM(wage) AS quarterly_wage
+        FROM your_table
+        WHERE fips = :fips
+          AND yr = :yr
+        GROUP BY
+            yr,
+            qtr,
+            fips,
+            BLS_ID
+    ),
+    annual AS (
+        SELECT
+            yr,
+            fips,
+            BLS_ID,
+            SUM(quarterly_wage) AS annual_wage
+        FROM quarterly
+        GROUP BY
+            yr,
+            fips,
+            BLS_ID
+    )
+    SELECT
+        yr,
+        fips,
+        COUNT(*) AS total_unique_people,
+        SUM(CASE WHEN annual_wage <= 10000 THEN 1 ELSE 0 END) AS people_lte_10k,
+        ROUND(
+            SUM(CASE WHEN annual_wage <= 10000 THEN 1 ELSE 0 END)
+            / NULLIF(COUNT(*),0) * 100,
+            2
+        ) AS pct_people_lte_10k
+    FROM annual
+    GROUP BY
+        yr,
+        fips
+    ORDER BY
+        yr,
+        fips
+    """
+    return pd.read_sql(query,conn,params={"fips":fips,"yr":yr})
