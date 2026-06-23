@@ -14,6 +14,12 @@ def get_oracle_connection(dsn):
         return None
 
 
+    if conn is None:
+        print("Stopping program.")
+        return
+
+    print("Connected. Continuing main function.")
+
 import pandas as pd
 import plotly.graph_objects as go
 import us
