@@ -1,3 +1,19 @@
+def get_oracle_connection(dsn):
+    username=input("Oracle username: ").strip()
+    password=getpass.getpass("Oracle password: ")
+
+    try:
+        conn=oracledb.connect(user=username,password=password,dsn=dsn)
+        with conn.cursor() as cur:
+            cur.execute("select 1 from dual")
+            cur.fetchone()
+        return conn
+    except oracledb.Error as e:
+        print("Oracle login failed.")
+        print(e)
+        return None
+
+
 import pandas as pd
 import plotly.graph_objects as go
 import us
