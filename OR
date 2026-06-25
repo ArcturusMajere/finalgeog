@@ -1,82 +1,59 @@
 import pandas as pd
-import oracledb
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-def get_7k_wage_stats(fipslist,start_yr=None,end_yr=None):
-    conn=oracledb.connect(**ORA_CONFIG)
-    fips_params=",".join([f":fips{i}" for i in range(len(fipslist))])
-    query=f"""
-    SELECT
-        state_code,
-        yr,
-        qtr,
-        COUNT(*) AS total_count,
-        SUM(CASE WHEN wage<=7000 AND wage<>0 THEN 1 ELSE 0 END) AS wage_7k_or_less_count,
-        ROUND(
-            100*SUM(CASE WHEN wage<=7000 AND wage<>0 THEN 1 ELSE 0 END)/COUNT(*),
-            2
-        ) AS wage_7k_or_less_pct
-    FROM wagerecusr.wage_data
-    WHERE state_code IN ({fips_params})
-      AND (:start_yr IS NULL OR yr>=:start_yr)
-      AND (:end_yr IS NULL OR yr<=:end_yr)
-    GROUP BY state_code,yr,qtr
-    ORDER BY state_code,yr,qtr
-    """
-    params={f"fips{i}":fips for i,fips in enumerate(fipslist)}
-    params["start_yr"]=start_yr
-    params["end_yr"]=end_yr
-    df=pd.read_sql(query,conn,params=params)
-    conn.close()
-    df.columns=df.columns.str.lower()
-    df["state"]=df["state_code"].apply(fips_to_state_name)
-    return df
+def save_4_state_rolling_plot(data,metric="count",outfile="four_state_rolling_average.html"):
+    if isinstance(data,str):
+        df=pd.read_csv(data)
+    else:
+        df=data.copy()
 
-def prep_7k_wage_dataset(df,window=4):
-    df=df.copy()
     df.columns=df.columns.str.lower()
     df=df.sort_values(["state","yr","qtr"])
-    df["period"]=df["yr"].astype(str)+" Q"+df["qtr"].astype(str)
-    df["wage_7k_count_roll"]=df.groupby("state")["wage_7k_or_less_count"].transform(lambda x:x.rolling(window,min_periods=1).mean())
-    df["wage_7k_pct_roll"]=df.groupby("state")["wage_7k_or_less_pct"].transform(lambda x:x.rolling(window,min_periods=1).mean())
-    df["wage_7k_count_roll"]=df["wage_7k_count_roll"].round(2)
-    df["wage_7k_pct_roll"]=df["wage_7k_pct_roll"].round(2)
-    return df
 
-def save_7k_wage_outputs(df,window=4,html_file="wage_7k_rolling.html",csv_file="wage_7k_dataset.csv"):
-    df=prep_7k_wage_dataset(df,window)
-    df.to_csv(csv_file,index=False)
-    states=list(df["state"].dropna().unique())
-    titles=[]
-    for state in states:
-        titles.append(f"{state}: <= $7,000 count")
-        titles.append(f"{state}: <= $7,000 share of total records")
-    fig=make_subplots(rows=len(states),cols=2,subplot_titles=titles,vertical_spacing=0.08)
-    for i,state in enumerate(states,start=1):
-        g=df[df["state"]==state]
-        fig.add_trace(go.Scatter(x=g["period"],y=g["wage_7k_or_less_count"],mode="lines+markers",name=f"{state} raw count"),row=i,col=1)
-        fig.add_trace(go.Scatter(x=g["period"],y=g["wage_7k_count_roll"],mode="lines",name=f"{state} {window}-qtr rolling count",line=dict(width=4)),row=i,col=1)
-        fig.add_trace(go.Scatter(x=g["period"],y=g["wage_7k_or_less_pct"],mode="lines+markers",name=f"{state} raw pct"),row=i,col=2)
-        fig.add_trace(go.Scatter(x=g["period"],y=g["wage_7k_pct_roll"],mode="lines",name=f"{state} {window}-qtr rolling pct",line=dict(width=4)),row=i,col=2)
-        fig.update_yaxes(title_text="Count",row=i,col=1)
-        fig.update_yaxes(title_text="Percent",row=i,col=2)
-        fig.update_xaxes(title_text="Quarter",tickangle=45,row=i,col=1)
-        fig.update_xaxes(title_text="Quarter",tickangle=45,row=i,col=2)
+    if "period" not in df.columns:
+        df["period"]=df["yr"].astype(str)+" Q"+df["qtr"].astype(str)
+
+    if metric=="count":
+        ycol="wage_7k_count_roll"
+        rawcol="wage_7k_or_less_count"
+        title="4-state rolling average count of wages <= $7,000 and not zero"
+        ylabel="Rolling average count"
+    elif metric=="pct":
+        ycol="wage_7k_pct_roll"
+        rawcol="wage_7k_or_less_pct"
+        title="4-state rolling average percent of wages <= $7,000 and not zero"
+        ylabel="Rolling average percent"
+    else:
+        raise ValueError("metric must be 'count' or 'pct'")
+
+    if ycol not in df.columns:
+        df[ycol]=df.groupby("state")[rawcol].transform(lambda x:x.rolling(4,min_periods=1).mean())
+
+    fig=go.Figure()
+
+    for state,g in df.groupby("state"):
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g[ycol],
+                mode="lines+markers",
+                name=state
+            )
+        )
+
     fig.update_layout(
-        title=f"Wages <= $7,000 and not zero with {window}-quarter rolling averages",
-        height=max(450*len(states),700),
-        width=1500,
-        legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="left",x=0)
+        title=title,
+        xaxis_title="Quarter",
+        yaxis_title=ylabel,
+        width=1300,
+        height=700,
+        legend_title="State"
     )
-    fig.write_html(html_file)
-    return df,html_file,csv_file
+
+    fig.update_xaxes(tickangle=45)
+    fig.write_html(outfile)
+    return outfile
 
 
-
-fipslist=["06","53","48","12"]
-df_raw=get_7k_wage_stats(fipslist,start_yr=2018,end_yr=2024)
-df_dataset,html_file,csv_file=save_7k_wage_outputs(df_raw,window=4,html_file="wage_7k_rolling.html",csv_file="wage_7k_dataset.csv")
+html_file=save_4_state_rolling_plot("wage_7k_dataset.csv",metric="count",outfile="four_state_count_rolling.html")
 print(html_file)
-print(csv_file)
-df_dataset.head()
