@@ -175,3 +175,11 @@ def viz_4state_raw_vs_rolling_state_selector(finaldf,window=4,outfile=None,defau
 
     fig.show()
     return fig
+
+
+
+viz_4state_raw_vs_rolling_state_selector(
+    finaldf,
+    window=4,
+    outfile="four_state_raw_vs_rolling_selector.html"
+)
