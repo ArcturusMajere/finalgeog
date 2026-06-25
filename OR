@@ -33,13 +33,20 @@ def get_7k_wage_stats(fipslist,start_yr=None,end_yr=None):
     df["state"]=df["state_code"].apply(fips_to_state_name)
     return df
 
-def save_7k_wage_html(df,window=4,outfile="wage_7k_rolling.html"):
+def prep_7k_wage_dataset(df,window=4):
     df=df.copy()
     df.columns=df.columns.str.lower()
     df=df.sort_values(["state","yr","qtr"])
     df["period"]=df["yr"].astype(str)+" Q"+df["qtr"].astype(str)
-    df["count_roll"]=df.groupby("state")["wage_7k_or_less_count"].transform(lambda x:x.rolling(window,min_periods=1).mean())
-    df["pct_roll"]=df.groupby("state")["wage_7k_or_less_pct"].transform(lambda x:x.rolling(window,min_periods=1).mean())
+    df["wage_7k_count_roll"]=df.groupby("state")["wage_7k_or_less_count"].transform(lambda x:x.rolling(window,min_periods=1).mean())
+    df["wage_7k_pct_roll"]=df.groupby("state")["wage_7k_or_less_pct"].transform(lambda x:x.rolling(window,min_periods=1).mean())
+    df["wage_7k_count_roll"]=df["wage_7k_count_roll"].round(2)
+    df["wage_7k_pct_roll"]=df["wage_7k_pct_roll"].round(2)
+    return df
+
+def save_7k_wage_outputs(df,window=4,html_file="wage_7k_rolling.html",csv_file="wage_7k_dataset.csv"):
+    df=prep_7k_wage_dataset(df,window)
+    df.to_csv(csv_file,index=False)
     states=list(df["state"].dropna().unique())
     titles=[]
     for state in states:
@@ -48,42 +55,10 @@ def save_7k_wage_html(df,window=4,outfile="wage_7k_rolling.html"):
     fig=make_subplots(rows=len(states),cols=2,subplot_titles=titles,vertical_spacing=0.08)
     for i,state in enumerate(states,start=1):
         g=df[df["state"]==state]
-        fig.add_trace(
-            go.Scatter(
-                x=g["period"],
-                y=g["wage_7k_or_less_count"],
-                mode="lines+markers",
-                name=f"{state} raw count"
-            ),
-            row=i,col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=g["period"],
-                y=g["count_roll"],
-                mode="lines",
-                name=f"{state} {window}-qtr rolling count"
-            ),
-            row=i,col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=g["period"],
-                y=g["wage_7k_or_less_pct"],
-                mode="lines+markers",
-                name=f"{state} raw pct"
-            ),
-            row=i,col=2
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=g["period"],
-                y=g["pct_roll"],
-                mode="lines",
-                name=f"{state} {window}-qtr rolling pct"
-            ),
-            row=i,col=2
-        )
+        fig.add_trace(go.Scatter(x=g["period"],y=g["wage_7k_or_less_count"],mode="lines+markers",name=f"{state} raw count"),row=i,col=1)
+        fig.add_trace(go.Scatter(x=g["period"],y=g["wage_7k_count_roll"],mode="lines",name=f"{state} {window}-qtr rolling count",line=dict(width=4)),row=i,col=1)
+        fig.add_trace(go.Scatter(x=g["period"],y=g["wage_7k_or_less_pct"],mode="lines+markers",name=f"{state} raw pct"),row=i,col=2)
+        fig.add_trace(go.Scatter(x=g["period"],y=g["wage_7k_pct_roll"],mode="lines",name=f"{state} {window}-qtr rolling pct",line=dict(width=4)),row=i,col=2)
         fig.update_yaxes(title_text="Count",row=i,col=1)
         fig.update_yaxes(title_text="Percent",row=i,col=2)
         fig.update_xaxes(title_text="Quarter",tickangle=45,row=i,col=1)
@@ -94,5 +69,5 @@ def save_7k_wage_html(df,window=4,outfile="wage_7k_rolling.html"):
         width=1500,
         legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="left",x=0)
     )
-    fig.write_html(outfile)
-    return outfile
+    fig.write_html(html_file)
+    return df,html_file,csv_file
