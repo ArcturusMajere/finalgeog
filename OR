@@ -1,31 +1,84 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import oracledb
 
+def get_7k_wage_stats(fipslist, start_yr=None, end_yr=None):
+    conn = oracledb.connect(**ORA_CONFIG)
 
-def viz_wr7000(final_df,window=4,value_col="avg_wage"):
-    df=final_df.copy()
-    df.columns=df.columns.str.lower()
-    df=df.sort_values(["state","yr","qtr"])
-    df["period"]=pd.PeriodIndex(year=df["yr"],quarter=df["qtr"],freq="Q").astype(str)
-    df["rolling_avg"]=df.groupby("state")[value_col].transform(lambda x:x.rolling(window,min_periods=1).mean())
+    query = """
+    SELECT
+        state_code,
+        yr,
+        qtr,
+        COUNT(*) AS total_count,
+        SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN 1 ELSE 0 END) AS wage_7k_or_less_count,
+        ROUND(
+            100 * SUM(CASE WHEN wage <= 7000 AND wage <> 0 THEN 1 ELSE 0 END) / COUNT(*),
+            2
+        ) AS wage_7k_or_less_pct
+    FROM wagerecusr.wage_data
+    WHERE state_code IN ({fips_params})
+      AND (:start_yr IS NULL OR yr >= :start_yr)
+      AND (:end_yr IS NULL OR yr <= :end_yr)
+    GROUP BY state_code, yr, qtr
+    ORDER BY state_code, yr, qtr
+    """
 
-    states=df["state"].dropna().unique()
+    params = {f"fips{i}": fips for i, fips in enumerate(fipslist)}
+    params["start_yr"] = start_yr
+    params["end_yr"] = end_yr
 
-    fig,axes=plt.subplots(2,2,figsize=(14,9),sharex=False)
-    axes=axes.flatten()
+    fips_params = ",".join([f":fips{i}" for i in range(len(fipslist))])
+    df = pd.read_sql(query.format(fips_params=fips_params), conn, params=params)
+    conn.close()
 
-    for ax,state in zip(axes,states):
-        d=df[df["state"]==state].copy()
-        ax.plot(d["period"],d[value_col],marker="o",label=value_col)
-        ax.plot(d["period"],d["rolling_avg"],marker="o",label=f"{window}-qtr rolling avg")
-        ax.set_title(state)
-        ax.set_xlabel("Quarter")
-        ax.set_ylabel(value_col)
-        ax.tick_params(axis="x",rotation=45)
-        ax.legend()
-
-    for ax in axes[len(states):]:
-        ax.set_visible(False)
-
-    plt.tight_layout()
-    plt.show()
-
+    df.columns = df.columns.str.lower()
+    df["state"] = df["state_code"].apply(fips_to_state_name)
     return df
+
+
+def viz_7k_wage_stats(df, window=4):
+    df = df.copy()
+    df.columns = df.columns.str.lower()
+    df = df.sort_values(["state", "yr", "qtr"])
+
+    df["period"] = pd.PeriodIndex(year=df["yr"], quarter=df["qtr"], freq="Q").astype(str)
+
+    df["wage_7k_count_roll"] = (
+        df.groupby("state")["wage_7k_or_less_count"]
+        .transform(lambda x: x.rolling(window, min_periods=1).mean())
+    )
+
+    df["wage_7k_pct_roll"] = (
+        df.groupby("state")["wage_7k_or_less_pct"]
+        .transform(lambda x: x.rolling(window, min_periods=1).mean())
+    )
+
+    for state, g in df.groupby("state"):
+        fig, ax = plt.subplots(2, 1, figsize=(13, 8), sharex=True)
+
+        ax[0].plot(g["period"], g["wage_7k_count_roll"], marker="o")
+        ax[0].set_title(f"{state}: {window}-quarter rolling average count of wages <= 7000 and not zero")
+        ax[0].set_ylabel("Count")
+        ax[0].grid(True)
+
+        ax[1].plot(g["period"], g["wage_7k_pct_roll"], marker="o")
+        ax[1].set_title(f"{state}: {window}-quarter rolling average percent of wages <= 7000 and not zero")
+        ax[1].set_ylabel("Percent")
+        ax[1].set_xlabel("Quarter")
+        ax[1].grid(True)
+
+        step = max(len(g) // 12, 1)
+        ax[1].set_xticks(range(0, len(g), step))
+        ax[1].set_xticklabels(g["period"].iloc[::step], rotation=45)
+
+        plt.tight_layout()
+        plt.show()
+
+
+
+fipslist = ["06", "53", "48", "12"]
+
+df_7k = get_7k_wage_stats(fipslist, start_yr=2018, end_yr=2024)
+
+viz_7k_wage_stats(df_7k, window=4)
