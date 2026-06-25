@@ -16,6 +16,13 @@ def viz_4state_raw_vs_rolling(finaldf,window=4,outfile=None):
     if "wage_7k_pct_roll" not in df.columns:
         df["wage_7k_pct_roll"]=df.groupby("state")["wage_7k_or_less_pct"].transform(lambda x:x.rolling(window,min_periods=1).mean()).round(2)
 
+    color_map={
+        "California":"red",
+        "Washington":"royalblue",
+        "Texas":"seagreen",
+        "Florida":"darkorange"
+    }
+
     fig=make_subplots(
         rows=1,
         cols=2,
@@ -26,59 +33,90 @@ def viz_4state_raw_vs_rolling(finaldf,window=4,outfile=None):
     )
 
     for state,g in df.groupby("state"):
+        color=color_map.get(state,None)
+        raw_width=2 if state=="California" else 1.5
+        roll_width=5 if state=="California" else 3
+
         fig.add_trace(
             go.Scatter(
                 x=g["period"],
                 y=g["wage_7k_or_less_count"],
                 mode="lines+markers",
-                name=f"{state} raw count",
-                legendgroup=state
+                name=f"{state} raw",
+                legend="legend",
+                legendgroup=f"{state}_count",
+                line=dict(color=color,dash="dot",width=raw_width),
+                marker=dict(color=color,size=7)
             ),
             row=1,
             col=1
         )
+
         fig.add_trace(
             go.Scatter(
                 x=g["period"],
                 y=g["wage_7k_count_roll"],
                 mode="lines",
-                name=f"{state} rolling count",
-                legendgroup=state
+                name=f"{state} rolling",
+                legend="legend",
+                legendgroup=f"{state}_count_roll",
+                line=dict(color=color,width=roll_width)
             ),
             row=1,
             col=1
         )
+
         fig.add_trace(
             go.Scatter(
                 x=g["period"],
                 y=g["wage_7k_or_less_pct"],
                 mode="lines+markers",
-                name=f"{state} raw pct",
-                legendgroup=state,
-                showlegend=False
+                name=f"{state} raw",
+                legend="legend2",
+                legendgroup=f"{state}_pct",
+                line=dict(color=color,dash="dot",width=raw_width),
+                marker=dict(color=color,size=7)
             ),
             row=1,
             col=2
         )
+
         fig.add_trace(
             go.Scatter(
                 x=g["period"],
                 y=g["wage_7k_pct_roll"],
                 mode="lines",
-                name=f"{state} rolling pct",
-                legendgroup=state,
-                showlegend=False
+                name=f"{state} rolling",
+                legend="legend2",
+                legendgroup=f"{state}_pct_roll",
+                line=dict(color=color,width=roll_width)
             ),
             row=1,
             col=2
         )
 
     fig.update_layout(
-        title=f"4-state comparison of wages <= $7,000 and not zero",
-        width=1600,
-        height=700,
-        legend_title="Series"
+        title="4-state comparison of wages <= $7,000 and not zero",
+        width=1700,
+        height=750,
+        legend=dict(
+            title="Count panel",
+            x=0.01,
+            y=0.99,
+            xanchor="left",
+            yanchor="top",
+            bgcolor="rgba(255,255,255,0.8)"
+        ),
+        legend2=dict(
+            title="Percent panel",
+            x=0.99,
+            y=0.99,
+            xanchor="right",
+            yanchor="top",
+            bgcolor="rgba(255,255,255,0.8)"
+        )
     )
+
     fig.update_xaxes(title_text="Quarter",tickangle=45,row=1,col=1)
     fig.update_xaxes(title_text="Quarter",tickangle=45,row=1,col=2)
     fig.update_yaxes(title_text="Count",row=1,col=1)
@@ -89,5 +127,3 @@ def viz_4state_raw_vs_rolling(finaldf,window=4,outfile=None):
 
     fig.show()
     return fig
-
-viz_4state_raw_vs_rolling(finaldf,window=4,outfile="four_state_raw_vs_rolling.html")
