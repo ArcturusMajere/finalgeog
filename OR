@@ -1,11 +1,14 @@
 import pandas as pd
-import matplotlib.pyplot as plt
 import oracledb
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 def get_7k_wage_stats(fipslist, start_yr=None, end_yr=None):
     conn = oracledb.connect(**ORA_CONFIG)
 
-    query = """
+    fips_params = ",".join([f":fips{i}" for i in range(len(fipslist))])
+
+    query = f"""
     SELECT
         state_code,
         yr,
@@ -28,8 +31,7 @@ def get_7k_wage_stats(fipslist, start_yr=None, end_yr=None):
     params["start_yr"] = start_yr
     params["end_yr"] = end_yr
 
-    fips_params = ",".join([f":fips{i}" for i in range(len(fipslist))])
-    df = pd.read_sql(query.format(fips_params=fips_params), conn, params=params)
+    df = pd.read_sql(query, conn, params=params)
     conn.close()
 
     df.columns = df.columns.str.lower()
@@ -37,12 +39,12 @@ def get_7k_wage_stats(fipslist, start_yr=None, end_yr=None):
     return df
 
 
-def viz_7k_wage_stats(df, window=4):
+def save_7k_wage_html(df, window=4, outfile="wage_7k_rolling.html"):
     df = df.copy()
     df.columns = df.columns.str.lower()
     df = df.sort_values(["state", "yr", "qtr"])
 
-    df["period"] = pd.PeriodIndex(year=df["yr"], quarter=df["qtr"], freq="Q").astype(str)
+    df["period"] = df["yr"].astype(str) + " Q" + df["qtr"].astype(str)
 
     df["wage_7k_count_roll"] = (
         df.groupby("state")["wage_7k_or_less_count"]
@@ -54,31 +56,63 @@ def viz_7k_wage_stats(df, window=4):
         .transform(lambda x: x.rolling(window, min_periods=1).mean())
     )
 
-    for state, g in df.groupby("state"):
-        fig, ax = plt.subplots(2, 1, figsize=(13, 8), sharex=True)
+    states = list(df["state"].dropna().unique())
+    fig = make_subplots(
+        rows=len(states),
+        cols=2,
+        subplot_titles=[
+            title
+            for state in states
+            for title in (
+                f"{state}: {window}-quarter rolling count",
+                f"{state}: {window}-quarter rolling percent"
+            )
+        ]
+    )
 
-        ax[0].plot(g["period"], g["wage_7k_count_roll"], marker="o")
-        ax[0].set_title(f"{state}: {window}-quarter rolling average count of wages <= 7000 and not zero")
-        ax[0].set_ylabel("Count")
-        ax[0].grid(True)
+    for i, state in enumerate(states, start=1):
+        g = df[df["state"] == state]
 
-        ax[1].plot(g["period"], g["wage_7k_pct_roll"], marker="o")
-        ax[1].set_title(f"{state}: {window}-quarter rolling average percent of wages <= 7000 and not zero")
-        ax[1].set_ylabel("Percent")
-        ax[1].set_xlabel("Quarter")
-        ax[1].grid(True)
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["wage_7k_count_roll"],
+                mode="lines+markers",
+                name=f"{state} count"
+            ),
+            row=i,
+            col=1
+        )
 
-        step = max(len(g) // 12, 1)
-        ax[1].set_xticks(range(0, len(g), step))
-        ax[1].set_xticklabels(g["period"].iloc[::step], rotation=45)
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["wage_7k_pct_roll"],
+                mode="lines+markers",
+                name=f"{state} percent"
+            ),
+            row=i,
+            col=2
+        )
 
-        plt.tight_layout()
-        plt.show()
+        fig.update_yaxes(title_text="Count", row=i, col=1)
+        fig.update_yaxes(title_text="Percent", row=i, col=2)
 
+    fig.update_layout(
+        title=f"Wages <= 7000 and not zero, {window}-quarter rolling averages",
+        height=max(450 * len(states), 700),
+        width=1400,
+        showlegend=False
+    )
+
+    fig.write_html(outfile)
+    return outfile
 
 
 fipslist = ["06", "53", "48", "12"]
 
 df_7k = get_7k_wage_stats(fipslist, start_yr=2018, end_yr=2024)
 
-viz_7k_wage_stats(df_7k, window=4)
+html_file = save_7k_wage_html(df_7k, window=4, outfile="wage_7k_rolling.html")
+
+print(html_file)
