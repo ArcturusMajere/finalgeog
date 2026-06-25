@@ -1,116 +1,33 @@
-def get_oracle_connection(dsn):
-    username=input("Oracle username: ").strip()
-    password=getpass.getpass("Oracle password: ")
-
-    try:
-        conn=oracledb.connect(user=username,password=password,dsn=dsn)
-        with conn.cursor() as cur:
-            cur.execute("select 1 from dual")
-            cur.fetchone()
-        return conn
-    except oracledb.Error as e:
-        print("Oracle login failed.")
-        print(e)
-        return None
-
-
-    if conn is None:
-        print("Stopping program.")
-        return
-
-    print("Connected. Continuing main function.")
-
-import pandas as pd
-import plotly.graph_objects as go
-import us
-
-def fips_to_state_name(fips):
-    state=us.states.lookup(str(fips).zfill(2))
-    return state.name if state else None
-
-def get_one_year_qtr(conn,yr,qtr,fips):
+def wr7000(fips,yr,qtr):
+    conn = oracledb.connect(**ORA_CONFIG)
     query="""
-        SELECT
-            :yr AS yr,
-            :qtr AS qtr,
-            :fips AS fips,
-            COUNT(*) AS record_count,
-            SUM(wage) AS total_wages,
-            AVG(wage) AS avg_wage
-        FROM EMPLOYEE_WAGES
-        WHERE state_code = '06'
-        AND fips = :fips
+    SELECT
+        yr,
+        qtr,
+        COUNT(*) AS record_count,
+        SUM(wage) AS total_wages,
+        AVG(wage) AS avg_wage
+        FROM  wagerecusr.wage_data
+        WHERE STATE_CODE = :fips
         AND wage <= 7000
         AND wage <> 0
         AND yr = :yr
         AND qtr = :qtr
-    """
-    df=pd.read_sql(query,conn,params={"yr":yr,"qtr":qtr,"fips":fips})
+        GROUP BY yr,qtr
+        ORDER BY yr,qtr """
+
+    df=pd.read_sql(query,conn,params={"fips":fips,"yr":yr,"qtr":qtr})
     df.columns=df.columns.str.lower()
-    df["state_name"]=fips_to_state_name(fips)
+    df["state"]=fips_to_state_name(fips)
     return df
 
-def get_all_year_qtr(conn,fips,start_year=2020,end_year=2025):
-    frames=[]
-    for yr in range(start_year,end_year+1):
+fipslist = ['06','53','48','12']
+results=[]
+for fips in fipslist:
+    for yr in range(2020,2026):
         for qtr in range(1,5):
-            frames.append(get_one_year_qtr(conn,yr,qtr,fips))
-    df=pd.concat(frames,ignore_index=True)
-    df=df.sort_values(["fips","yr","qtr"]).reset_index(drop=True)
-    return df
-
-def add_rolling_table(df,rolling_window=4):
-    data=df.copy()
-    data.columns=data.columns.str.lower()
-    data=data.sort_values(["fips","yr","qtr"]).reset_index(drop=True)
-    data["period"]=pd.PeriodIndex(year=data["yr"],quarter=data["qtr"],freq="Q")
-    data["period_label"]=data["period"].astype(str)
-    data["record_count_roll"]=data.groupby("fips")["record_count"].transform(lambda s:s.rolling(rolling_window,min_periods=1).mean())
-    data["total_wages_roll"]=data.groupby("fips")["total_wages"].transform(lambda s:s.rolling(rolling_window,min_periods=1).mean())
-    data["avg_wage_roll"]=data.groupby("fips")["avg_wage"].transform(lambda s:s.rolling(rolling_window,min_periods=1).mean())
-    return data
-
-def make_html_viz(df,output_html="wage_under_7000_rolling.html",rolling_window=4):
-    data=add_rolling_table(df,rolling_window)
-    fips_value=str(data["fips"].iloc[0])
-    state_name=str(data["state_name"].iloc[0])
-
-    fig=go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=data["period_label"],
-        y=data["record_count"],
-        mode="lines+markers",
-        name=f"{state_name} record count",
-        customdata=data[["state_name","fips","yr","qtr","total_wages","avg_wage"]],
-        hovertemplate="State: %{customdata[0]}<br>FIPS: %{customdata[1]}<br>Year: %{customdata[2]}<br>Quarter: %{customdata[3]}<br>Record count: %{y:,}<br>Total wages: $%{customdata[4]:,.0f}<br>Average wage: $%{customdata[5]:,.2f}<extra></extra>"
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=data["period_label"],
-        y=data["record_count_roll"],
-        mode="lines",
-        name=f"{state_name} {rolling_window}-quarter rolling avg",
-        customdata=data[["state_name","fips","yr","qtr"]],
-        hovertemplate="State: %{customdata[0]}<br>FIPS: %{customdata[1]}<br>Year: %{customdata[2]}<br>Quarter: %{customdata[3]}<br>Rolling avg count: %{y:,.2f}<extra></extra>"
-    ))
-
-    fig.update_layout(
-        title=f"{state_name} Wages <= $7,000 and Nonzero, 2020Q1–2025Q4",
-        xaxis_title="Quarter",
-        yaxis_title="Record count",
-        template="plotly_white",
-        height=650,
-        width=1200,
-        legend={"orientation":"h","yanchor":"bottom","y":-0.25,"xanchor":"center","x":0.5},
-        margin={"l":70,"r":40,"t":80,"b":140}
-    )
-
-    fig.update_xaxes(tickangle=45)
-    fig.write_html(output_html,include_plotlyjs=True,full_html=True)
-    return output_html,data
-
-def run_wage_pipeline(conn,fips):
-    raw_df=get_all_year_qtr(conn,fips,2020,2025)
-    html_file,complete_table=make_html_viz(raw_df)
-    return complete_table,html_file
+            df=wr7000(fips,yr,qtr)
+            results.append(df)
+            print(qtr)
+final_df=pd.concat(results,ignore_index=True)
+#final_df.to_csv('calipoor.csv')
