@@ -1,33 +1,31 @@
-def wr7000(fips,yr,qtr):
-    conn = oracledb.connect(**ORA_CONFIG)
-    query="""
-    SELECT
-        yr,
-        qtr,
-        COUNT(*) AS record_count,
-        SUM(wage) AS total_wages,
-        AVG(wage) AS avg_wage
-        FROM  wagerecusr.wage_data
-        WHERE STATE_CODE = :fips
-        AND wage <= 7000
-        AND wage <> 0
-        AND yr = :yr
-        AND qtr = :qtr
-        GROUP BY yr,qtr
-        ORDER BY yr,qtr """
 
-    df=pd.read_sql(query,conn,params={"fips":fips,"yr":yr,"qtr":qtr})
+
+def viz_wr7000(final_df,window=4,value_col="avg_wage"):
+    df=final_df.copy()
     df.columns=df.columns.str.lower()
-    df["state"]=fips_to_state_name(fips)
-    return df
+    df=df.sort_values(["state","yr","qtr"])
+    df["period"]=pd.PeriodIndex(year=df["yr"],quarter=df["qtr"],freq="Q").astype(str)
+    df["rolling_avg"]=df.groupby("state")[value_col].transform(lambda x:x.rolling(window,min_periods=1).mean())
 
-fipslist = ['06','53','48','12']
-results=[]
-for fips in fipslist:
-    for yr in range(2020,2026):
-        for qtr in range(1,5):
-            df=wr7000(fips,yr,qtr)
-            results.append(df)
-            print(qtr)
-final_df=pd.concat(results,ignore_index=True)
-#final_df.to_csv('calipoor.csv')
+    states=df["state"].dropna().unique()
+
+    fig,axes=plt.subplots(2,2,figsize=(14,9),sharex=False)
+    axes=axes.flatten()
+
+    for ax,state in zip(axes,states):
+        d=df[df["state"]==state].copy()
+        ax.plot(d["period"],d[value_col],marker="o",label=value_col)
+        ax.plot(d["period"],d["rolling_avg"],marker="o",label=f"{window}-qtr rolling avg")
+        ax.set_title(state)
+        ax.set_xlabel("Quarter")
+        ax.set_ylabel(value_col)
+        ax.tick_params(axis="x",rotation=45)
+        ax.legend()
+
+    for ax in axes[len(states):]:
+        ax.set_visible(False)
+
+    plt.tight_layout()
+    plt.show()
+
+    return df
