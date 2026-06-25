@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-def viz_4state_raw_vs_rolling(finaldf,window=4,outfile=None):
+def viz_4state_raw_vs_rolling_state_selector(finaldf,window=4,outfile=None,default_state="All states"):
     df=finaldf.copy()
     df.columns=df.columns.str.lower()
     df=df.sort_values(["state","yr","qtr"])
@@ -15,6 +15,8 @@ def viz_4state_raw_vs_rolling(finaldf,window=4,outfile=None):
 
     if "wage_7k_pct_roll" not in df.columns:
         df["wage_7k_pct_roll"]=df.groupby("state")["wage_7k_or_less_pct"].transform(lambda x:x.rolling(window,min_periods=1).mean()).round(2)
+
+    states=list(df["state"].dropna().unique())
 
     color_map={
         "California":"red",
@@ -32,39 +34,45 @@ def viz_4state_raw_vs_rolling(finaldf,window=4,outfile=None):
         )
     )
 
-    for state,g in df.groupby("state"):
+    trace_states=[]
+
+    for state in states:
+        g=df[df["state"]==state]
         color=color_map.get(state,None)
-        raw_width=2 if state=="California" else 1.5
+        raw_width=2.5 if state=="California" else 1.5
         roll_width=5 if state=="California" else 3
+        marker_size=8 if state=="California" else 6
 
         fig.add_trace(
             go.Scatter(
                 x=g["period"],
                 y=g["wage_7k_or_less_count"],
                 mode="lines+markers",
-                name=f"{state} raw",
-                legend="legend",
-                legendgroup=f"{state}_count",
+                name=f"{state} raw count",
+                legendgroup=state,
+                showlegend=False,
                 line=dict(color=color,dash="dot",width=raw_width),
-                marker=dict(color=color,size=7)
+                marker=dict(color=color,size=marker_size)
             ),
             row=1,
             col=1
         )
+        trace_states.append(state)
 
         fig.add_trace(
             go.Scatter(
                 x=g["period"],
                 y=g["wage_7k_count_roll"],
                 mode="lines",
-                name=f"{state} rolling",
-                legend="legend",
-                legendgroup=f"{state}_count_roll",
+                name=f"{state} rolling count",
+                legendgroup=state,
+                showlegend=False,
                 line=dict(color=color,width=roll_width)
             ),
             row=1,
             col=1
         )
+        trace_states.append(state)
 
         fig.add_trace(
             go.Scatter(
@@ -72,14 +80,15 @@ def viz_4state_raw_vs_rolling(finaldf,window=4,outfile=None):
                 y=g["wage_7k_or_less_pct"],
                 mode="lines+markers",
                 name=f"{state} raw",
-                legend="legend2",
-                legendgroup=f"{state}_pct",
+                legendgroup=state,
+                showlegend=True,
                 line=dict(color=color,dash="dot",width=raw_width),
-                marker=dict(color=color,size=7)
+                marker=dict(color=color,size=marker_size)
             ),
             row=1,
             col=2
         )
+        trace_states.append(state)
 
         fig.add_trace(
             go.Scatter(
@@ -87,33 +96,72 @@ def viz_4state_raw_vs_rolling(finaldf,window=4,outfile=None):
                 y=g["wage_7k_pct_roll"],
                 mode="lines",
                 name=f"{state} rolling",
-                legend="legend2",
-                legendgroup=f"{state}_pct_roll",
+                legendgroup=state,
+                showlegend=True,
                 line=dict(color=color,width=roll_width)
             ),
             row=1,
             col=2
         )
+        trace_states.append(state)
+
+    buttons=[
+        dict(
+            label="All states",
+            method="update",
+            args=[
+                {"visible":[True]*len(trace_states)},
+                {"title":"4-state comparison of wages <= $7,000 and not zero"}
+            ]
+        )
+    ]
+
+    for state in states:
+        visible=[s==state for s in trace_states]
+        buttons.append(
+            dict(
+                label=state,
+                method="update",
+                args=[
+                    {"visible":visible},
+                    {"title":f"{state}: wages <= $7,000 and not zero"}
+                ]
+            )
+        )
+
+    if default_state!="All states" and default_state in states:
+        start_visible=[s==default_state for s in trace_states]
+        title=f"{default_state}: wages <= $7,000 and not zero"
+    else:
+        start_visible=[True]*len(trace_states)
+        title="4-state comparison of wages <= $7,000 and not zero"
+
+    for trace,visible in zip(fig.data,start_visible):
+        trace.visible=visible
 
     fig.update_layout(
-        title="4-state comparison of wages <= $7,000 and not zero",
-        width=1700,
-        height=750,
+        title=title,
+        width=1750,
+        height=800,
+        updatemenus=[
+            dict(
+                type="buttons",
+                direction="right",
+                buttons=buttons,
+                x=0.5,
+                y=1.13,
+                xanchor="center",
+                yanchor="top",
+                showactive=True
+            )
+        ],
         legend=dict(
-            title="Count panel",
-            x=0.01,
-            y=0.99,
-            xanchor="left",
-            yanchor="top",
-            bgcolor="rgba(255,255,255,0.8)"
-        ),
-        legend2=dict(
-            title="Percent panel",
+            title="Right panel legend",
             x=0.99,
             y=0.99,
             xanchor="right",
             yanchor="top",
-            bgcolor="rgba(255,255,255,0.8)"
+            bgcolor="rgba(255,255,255,0.85)"
         )
     )
 
