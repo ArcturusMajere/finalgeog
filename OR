@@ -71,3 +71,12 @@ def save_7k_wage_outputs(df,window=4,html_file="wage_7k_rolling.html",csv_file="
     )
     fig.write_html(html_file)
     return df,html_file,csv_file
+
+
+
+fipslist=["06","53","48","12"]
+df_raw=get_7k_wage_stats(fipslist,start_yr=2018,end_yr=2024)
+df_dataset,html_file,csv_file=save_7k_wage_outputs(df_raw,window=4,html_file="wage_7k_rolling.html",csv_file="wage_7k_dataset.csv")
+print(html_file)
+print(csv_file)
+df_dataset.head()
