@@ -1,1 +1,186 @@
 
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+def viz_7k_derivatives(finaldf,window=4,outfile=None):
+    df=finaldf.copy()
+    df.columns=df.columns.str.lower()
+    df=df.sort_values(["state","yr","qtr"])
+
+    if "period" not in df.columns:
+        df["period"]=df["yr"].astype(str)+" Q"+df["qtr"].astype(str)
+
+    if "wage_7k_count_roll" not in df.columns:
+        df["wage_7k_count_roll"]=df.groupby("state")["wage_7k_or_less_count"].transform(lambda x:x.rolling(window,min_periods=1).mean()).round(2)
+
+    if "wage_7k_pct_roll" not in df.columns:
+        df["wage_7k_pct_roll"]=df.groupby("state")["wage_7k_or_less_pct"].transform(lambda x:x.rolling(window,min_periods=1).mean()).round(2)
+
+    if "raw_count_deriv" not in df.columns:
+        df["raw_count_deriv"]=df.groupby("state")["wage_7k_or_less_count"].diff().round(2)
+    if "rolling_count_deriv" not in df.columns:
+        df["rolling_count_deriv"]=df.groupby("state")["wage_7k_count_roll"].diff().round(2)
+    if "raw_pct_deriv" not in df.columns:
+        df["raw_pct_deriv"]=df.groupby("state")["wage_7k_or_less_pct"].diff().round(2)
+    if "rolling_pct_deriv" not in df.columns:
+        df["rolling_pct_deriv"]=df.groupby("state")["wage_7k_pct_roll"].diff().round(2)
+
+    df["raw_count_second_deriv"]=df.groupby("state")["raw_count_deriv"].diff().round(2)
+    df["rolling_count_second_deriv"]=df.groupby("state")["rolling_count_deriv"].diff().round(2)
+    df["raw_pct_second_deriv"]=df.groupby("state")["raw_pct_deriv"].diff().round(2)
+    df["rolling_pct_second_deriv"]=df.groupby("state")["rolling_pct_deriv"].diff().round(2)
+
+    color_map={
+        "California":"red",
+        "Washington":"royalblue",
+        "Texas":"seagreen",
+        "Florida":"darkorange"
+    }
+
+    fig=make_subplots(
+        rows=2,
+        cols=2,
+        subplot_titles=(
+            "Count: 1st derivative",
+            "Count: 2nd derivative",
+            "Percent: 1st derivative",
+            "Percent: 2nd derivative"
+        )
+    )
+
+    for state,g in df.groupby("state"):
+        color=color_map.get(state,None)
+        raw_width=2.5 if state=="California" else 1.5
+        roll_width=5 if state=="California" else 3
+        marker_size=8 if state=="California" else 6
+
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["raw_count_deriv"],
+                mode="lines+markers",
+                name=f"{state} raw",
+                legendgroup=f"{state}_raw",
+                line=dict(color=color,dash="dot",width=raw_width),
+                marker=dict(color=color,size=marker_size)
+            ),
+            row=1,col=1
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["rolling_count_deriv"],
+                mode="lines",
+                name=f"{state} rolling",
+                legendgroup=f"{state}_rolling",
+                line=dict(color=color,width=roll_width),
+                showlegend=False
+            ),
+            row=1,col=1
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["raw_count_second_deriv"],
+                mode="lines+markers",
+                name=f"{state} raw",
+                legendgroup=f"{state}_raw2",
+                line=dict(color=color,dash="dot",width=raw_width),
+                marker=dict(color=color,size=marker_size),
+                showlegend=False
+            ),
+            row=1,col=2
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["rolling_count_second_deriv"],
+                mode="lines",
+                name=f"{state} rolling",
+                legendgroup=f"{state}_rolling2",
+                line=dict(color=color,width=roll_width),
+                showlegend=False
+            ),
+            row=1,col=2
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["raw_pct_deriv"],
+                mode="lines+markers",
+                name=f"{state} raw",
+                legendgroup=f"{state}_raw3",
+                line=dict(color=color,dash="dot",width=raw_width),
+                marker=dict(color=color,size=marker_size),
+                showlegend=False
+            ),
+            row=2,col=1
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["rolling_pct_deriv"],
+                mode="lines",
+                name=f"{state} rolling",
+                legendgroup=f"{state}_rolling3",
+                line=dict(color=color,width=roll_width),
+                showlegend=False
+            ),
+            row=2,col=1
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["raw_pct_second_deriv"],
+                mode="lines+markers",
+                name=f"{state} raw",
+                legendgroup=f"{state}_raw4",
+                line=dict(color=color,dash="dot",width=raw_width),
+                marker=dict(color=color,size=marker_size),
+                showlegend=False
+            ),
+            row=2,col=2
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=g["period"],
+                y=g["rolling_pct_second_deriv"],
+                mode="lines",
+                name=f"{state} rolling",
+                legendgroup=f"{state}_rolling4",
+                line=dict(color=color,width=roll_width),
+                showlegend=False
+            ),
+            row=2,col=2
+        )
+
+    fig.update_layout(
+        title="1st and 2nd derivatives for <= $7,000 wages",
+        width=1700,
+        height=950,
+        legend=dict(
+            x=1.02,
+            y=1,
+            xanchor="left",
+            yanchor="top"
+        )
+    )
+
+    fig.update_xaxes(title_text="Quarter",tickangle=45,row=1,col=1)
+    fig.update_xaxes(title_text="Quarter",tickangle=45,row=1,col=2)
+    fig.update_xaxes(title_text="Quarter",tickangle=45,row=2,col=1)
+    fig.update_xaxes(title_text="Quarter",tickangle=45,row=2,col=2)
+    fig.update_yaxes(title_text="Change in count",row=1,col=1)
+    fig.update_yaxes(title_text="Acceleration in count",row=1,col=2)
+    fig.update_yaxes(title_text="Change in percent",row=2,col=1)
+    fig.update_yaxes(title_text="Acceleration in percent",row=2,col=2)
+
+    if outfile is not None:
+        fig.write_html(outfile)
+
+    fig.show()
+    return fig,df
+
+
+fig,derivdf=viz_7k_derivatives(finaldf,window=4,outfile="sevenk_derivatives.html")
