@@ -1,43 +1,30 @@
+import pandas as pd
+import oracledb
 
-import paramiko
-from pathlib import Path
-from getpass import getpass
+def query_ui_list(conn,ui_list,table_name="wagerecusr.wage_data"):
+    if not ui_list:
+        raise ValueError("ui_list cannot be empty")
 
-def ssh_get_file(host,username,remote_path,local_path=None,port=22,password=None,key_filename=None):
-    if local_path is None:
-        local_path=Path(remote_path).name
-    local_path=str(local_path)
+    binds={f"ui{i}":v for i,v in enumerate(ui_list)}
+    placeholders=",".join(f":ui{i}" for i in range(len(ui_list)))
 
-    client=paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    sql=f"""
+        SELECT
+            COUNT(*) AS row_count,
+            COUNT(DISTINCT id) AS id_count,
+            AVG(wage) AS mean_wage
+        FROM {table_name}
+        WHERE ui IN ({placeholders})
+    """
 
-    try:
-        if password is None and key_filename is None:
-            password=getpass(f"Password for {username}@{host}: ")
-
-        client.connect(
-            hostname=host,
-            port=port,
-            username=username,
-            password=password,
-            key_filename=key_filename
-        )
-
-        sftp=client.open_sftp()
-        sftp.get(remote_path,local_path)
-        sftp.close()
-
-        return local_path
-
-    finally:
-        client.close()
+    return pd.read_sql(sql,conn,params=binds)
 
 
 
-file_path=ssh_get_file(
-    host="my.server.edu",
-    username="myuser",
-    remote_path="/data/parquet_files/part-00001.parquet",
-    local_path="./part-00001.parquet"
-)
+conn=oracledb.connect(**ORA_CONFIG)
 
+ui_list=["A123","B456","C789"]
+
+df=query_ui_list(conn,ui_list)
+
+print(df)
