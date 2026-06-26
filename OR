@@ -1,1 +1,43 @@
 
+import paramiko
+from pathlib import Path
+from getpass import getpass
+
+def ssh_get_file(host,username,remote_path,local_path=None,port=22,password=None,key_filename=None):
+    if local_path is None:
+        local_path=Path(remote_path).name
+    local_path=str(local_path)
+
+    client=paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        if password is None and key_filename is None:
+            password=getpass(f"Password for {username}@{host}: ")
+
+        client.connect(
+            hostname=host,
+            port=port,
+            username=username,
+            password=password,
+            key_filename=key_filename
+        )
+
+        sftp=client.open_sftp()
+        sftp.get(remote_path,local_path)
+        sftp.close()
+
+        return local_path
+
+    finally:
+        client.close()
+
+
+
+file_path=ssh_get_file(
+    host="my.server.edu",
+    username="myuser",
+    remote_path="/data/parquet_files/part-00001.parquet",
+    local_path="./part-00001.parquet"
+)
+
