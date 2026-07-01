@@ -1,8 +1,8 @@
+import oracledb
 import pandas as pd
-from sqlalchemy import text, bindparam
 
 def query_oracle_ids_by_period(
-    engine,
+    conn,
     ids,
     yr,
     qtr,
@@ -12,8 +12,8 @@ def query_oracle_ids_by_period(
     yr_col="yr",
     qtr_col="qtr",
     fips_col="fips",
-    batch_size=900,
-    columns="*"
+    columns="*",
+    batch_size=900
 ):
     ids = [str(x) for x in ids if x is not None]
     ids = list(dict.fromkeys(ids))
@@ -23,29 +23,33 @@ def query_oracle_ids_by_period(
 
     dfs = []
 
-    sql = text(f"""
-        SELECT {columns}
-        FROM {table_name}
-        WHERE {id_col} IN :ids
-          AND {yr_col} = :yr
-          AND {qtr_col} = :qtr
-          AND {fips_col} = :fips
-    """).bindparams(bindparam("ids", expanding=True))
-
-    with engine.connect() as conn:
+    with conn.cursor() as cur:
         for i in range(0, len(ids), batch_size):
             batch = ids[i:i + batch_size]
-            df = pd.read_sql(
-                sql,
-                conn,
-                params={
-                    "ids": batch,
-                    "yr": yr,
-                    "qtr": qtr,
-                    "fips": fips
-                }
-            )
-            dfs.append(df)
+            bind_names = [f":id{j}" for j in range(len(batch))]
+
+            sql = f"""
+                SELECT {columns}
+                FROM {table_name}
+                WHERE {id_col} IN ({",".join(bind_names)})
+                  AND {yr_col} = :yr
+                  AND {qtr_col} = :qtr
+                  AND {fips_col} = :fips
+            """
+
+            params = {f"id{j}": batch[j] for j in range(len(batch))}
+            params.update({
+                "yr": yr,
+                "qtr": qtr,
+                "fips": fips
+            })
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            col_names = [d[0].lower() for d in cur.description]
+
+            if rows:
+                dfs.append(pd.DataFrame(rows, columns=col_names))
 
     if not dfs:
         return pd.DataFrame()
@@ -54,8 +58,20 @@ def query_oracle_ids_by_period(
 
 
 
+conn = oracledb.connect(
+    user="USERNAME",
+    password="PASSWORD",
+    dsn="HOST:1521/SERVICE_NAME"
+)
+
+cohort = [
+    "A123456789",
+    "B123456789",
+    "C123456789"
+]
+
 df = query_oracle_ids_by_period(
-    engine=engine,
+    conn=conn,
     ids=cohort,
     yr=2024,
     qtr=1,
@@ -69,3 +85,4 @@ df = query_oracle_ids_by_period(
 )
 
 print(df)
+conn.close()
