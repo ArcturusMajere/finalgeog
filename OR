@@ -1,92 +1,71 @@
-
-import re
 import pandas as pd
-from sqlalchemy import create_engine,text
+from sqlalchemy import text, bindparam
 
-def _quote_ident(name):
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*",name):
-        raise ValueError(f"Bad identifier: {name}")
-    return f'"{name}"'
+def query_oracle_ids_by_period(
+    engine,
+    ids,
+    yr,
+    qtr,
+    fips,
+    table_name,
+    id_col="id",
+    yr_col="yr",
+    qtr_col="qtr",
+    fips_col="fips",
+    batch_size=900,
+    columns="*"
+):
+    ids = [str(x) for x in ids if x is not None]
+    ids = list(dict.fromkeys(ids))
 
-def _quote_table(table_name):
-    return ".".join(_quote_ident(x) for x in table_name.split("."))
-
-def get_cohort_matches(engine,cohort,table_name,id_col,batch_size=5000,where_sql=None,where_params=None):
-    cohort=[str(x) for x in dict.fromkeys(cohort) if x is not None]
-    if not cohort:
+    if not ids:
         return pd.DataFrame()
 
-    table_sql=_quote_table(table_name)
-    id_col_sql=_quote_ident(id_col)
-    where_params=where_params or {}
-    where_clause=f"WHERE {where_sql}" if where_sql else ""
+    dfs = []
 
-    df_ids=pd.DataFrame({"id":cohort})
+    sql = text(f"""
+        SELECT {columns}
+        FROM {table_name}
+        WHERE {id_col} IN :ids
+          AND {yr_col} = :yr
+          AND {qtr_col} = :qtr
+          AND {fips_col} = :fips
+    """).bindparams(bindparam("ids", expanding=True))
 
-    sql=f"""
-        SELECT a.*
-        FROM {table_sql} a
-        JOIN tmp_cohort_ids c
-          ON a.{id_col_sql}=c.id
-        {where_clause}
-    """
+    with engine.connect() as conn:
+        for i in range(0, len(ids), batch_size):
+            batch = ids[i:i + batch_size]
+            df = pd.read_sql(
+                sql,
+                conn,
+                params={
+                    "ids": batch,
+                    "yr": yr,
+                    "qtr": qtr,
+                    "fips": fips
+                }
+            )
+            dfs.append(df)
 
-    with engine.begin() as conn:
-        conn.execute(text("""
-            CREATE TEMP TABLE tmp_cohort_ids (
-                id TEXT PRIMARY KEY
-            ) ON COMMIT DROP
-        """))
+    if not dfs:
+        return pd.DataFrame()
 
-        df_ids.to_sql(
-            "tmp_cohort_ids",
-            con=conn,
-            if_exists="append",
-            index=False,
-            method="multi",
-            chunksize=batch_size
-        )
-
-        df=pd.read_sql_query(text(sql),conn,params=where_params)
-
-    return df
+    return pd.concat(dfs, ignore_index=True)
 
 
 
-
-#********************************
-
-
-engine=create_engine("postgresql+psycopg2://username:password@host:5432/dbA")
-
-COHORT=[
-    "0012345678",
-    "0098765432",
-    "1234567890",
-    "5555555555"
-]
-
-df=get_cohort_matches(
+df = query_oracle_ids_by_period(
     engine=engine,
-    cohort=COHORT,
-    table_name="public.wage_data",
-    id_col="person_id"
+    ids=cohort,
+    yr=2024,
+    qtr=1,
+    fips="16",
+    table_name="WAGERECUSR.WAGE_DATA",
+    id_col="ID",
+    yr_col="YR",
+    qtr_col="QTR",
+    fips_col="STATE_CODE",
+    columns="ID, YR, QTR, STATE_CODE, WAGE"
 )
 
-print(df.head())
-print(df.shape)
-
-
-#****************************
-
-df=get_cohort_matches(
-    engine=engine,
-    cohort=COHORT,
-    table_name="public.wage_data",
-    id_col="person_id",
-    where_sql="a.yr=:yr AND a.qtr=:qtr AND a.state_code=:fips",
-    where_params={"yr":2024,"qtr":1,"fips":"06"}
-)
-
-print(df.head())
-print(df.shape)
+print(df)
