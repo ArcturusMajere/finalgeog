@@ -1,30 +1,129 @@
-The output is a quarter-by-quarter summary for one state.
+import pandas as pd
+from sqlalchemy import text
 
-Each row is one quarter, starting at 2020 Q3 and ending at 2025 Q3. So the table should have 21 rows.
+def bls_7k_continuity_summary(engine,state_code):
+    query=text("""
+        WITH base AS (
+            SELECT
+                bls_id,
+                state_code,
+                yr,
+                qtr,
+                wage,
+                (yr * 4 + qtr) AS qidx
+            FROM wagerecusr.wage_data
+            WHERE state_code = :state_code
+              AND bls_id IS NOT NULL
+              AND wage IS NOT NULL
+              AND wage <> 0
+              AND (yr * 4 + qtr) BETWEEN (2020 * 4 + 1) AND (2025 * 4 + 4)
+        ),
+        qtr_ids AS (
+            SELECT DISTINCT
+                bls_id,
+                state_code,
+                yr,
+                qtr,
+                qidx
+            FROM base
+        ),
+        target_ids AS (
+            SELECT
+                q.bls_id,
+                q.state_code,
+                q.yr,
+                q.qtr,
+                q.qidx
+            FROM qtr_ids q
+            WHERE q.qidx BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
+              AND EXISTS (
+                SELECT 1
+                FROM qtr_ids p
+                WHERE p.bls_id = q.bls_id
+                  AND p.state_code = q.state_code
+                  AND p.qidx = q.qidx - 2
+            )
+              AND EXISTS (
+                SELECT 1
+                FROM qtr_ids p
+                WHERE p.bls_id = q.bls_id
+                  AND p.state_code = q.state_code
+                  AND p.qidx = q.qidx - 1
+            )
+              AND EXISTS (
+                SELECT 1
+                FROM qtr_ids p
+                WHERE p.bls_id = q.bls_id
+                  AND p.state_code = q.state_code
+                  AND p.qidx = q.qidx + 1
+            )
+        ),
+        four_qtr_mean AS (
+            SELECT
+                t.state_code,
+                t.yr,
+                t.qtr,
+                t.qidx,
+                t.bls_id,
+                AVG(b.wage) AS mean_wage_4qtr
+            FROM target_ids t
+            JOIN base b
+              ON b.bls_id = t.bls_id
+             AND b.state_code = t.state_code
+             AND b.qidx IN (t.qidx - 2,t.qidx - 1,t.qidx,t.qidx + 1)
+            GROUP BY
+                t.state_code,
+                t.yr,
+                t.qtr,
+                t.qidx,
+                t.bls_id
+            HAVING COUNT(DISTINCT b.qidx) = 4
+        ),
+        total_counts AS (
+            SELECT
+                state_code,
+                yr,
+                qtr,
+                qidx,
+                COUNT(DISTINCT bls_id) AS total_count
+            FROM qtr_ids
+            WHERE qidx BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
+            GROUP BY state_code,yr,qtr,qidx
+        ),
+        sevenk_counts AS (
+            SELECT
+                state_code,
+                yr,
+                qtr,
+                qidx,
+                COUNT(DISTINCT bls_id) AS sevenk_or_less_count
+            FROM four_qtr_mean
+            WHERE mean_wage_4qtr <= 7000
+            GROUP BY state_code,yr,qtr,qidx
+        )
+        SELECT
+            t.state_code,
+            t.yr,
+            t.qtr,
+            t.total_count,
+            COALESCE(s.sevenk_or_less_count,0) AS sevenk_or_less_count,
+            ROUND(
+                100.0 * COALESCE(s.sevenk_or_less_count,0) / NULLIF(t.total_count,0),
+                4
+            ) AS sevenk_or_less_pct
+        FROM total_counts t
+        LEFT JOIN sevenk_counts s
+          ON t.state_code = s.state_code
+         AND t.yr = s.yr
+         AND t.qtr = s.qtr
+         AND t.qidx = s.qidx
+        ORDER BY t.yr,t.qtr
+    """)
+    df=pd.read_sql(query,engine,params={"state_code":state_code})
+    df.columns=df.columns.str.lower()
+    return df
 
-The columns mean this:
+df=bls_7k_continuity_summary(engine,"06")
+print(df)
 
-state_code is the two-digit state code you searched for. For example, "06" is California.
-
-yr is the year.
-
-qtr is the quarter of the year. Quarter 1 is January–March, quarter 2 is April–June, quarter 3 is July–September, and quarter 4 is October–December.
-
-total_count is the total number of unique bls_ids in that state and quarter after removing zero wages.
-
-sevenk_or_less_count is the number of unique bls_ids that meet both rules. First, the ID appears in the target quarter and also appears in q-2, q-1, and q+1. Second, that ID has a wage greater than zero and less than or equal to $7,000 in the target quarter.
-
-sevenk_or_less_pct is the percentage of all IDs in that quarter that meet those rules.
-
-A plain-English explanation would be:
-
-“This table shows, for each quarter, how many workers or records were active in the state, how many of those had wages of $7,000 or less while also appearing in the surrounding required quarters, and what percentage of the quarter’s total they represent.”
-
-For example, if one row says:
-
-state_code   yr    qtr   total_count   sevenk_or_less_count   sevenk_or_less_pct
-06           2022  1     100000        8500                   8.5
-
-That means:
-
-“In California during 2022 quarter 1, there were 100,000 unique nonzero-wage BLS IDs. Of those, 8,500 appeared in the required nearby quarters and had wages of $7,000 or less in 2022 quarter 1. That equals 8.5% of the total.”
+If the ID appears in all four quarters, has nonzero wages in all four quarters, and its average wage across those four quarters is <= 7000, it is counted in sevenk_or_less_count.
