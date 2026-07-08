@@ -1,7 +1,7 @@
 import pandas as pd
 from sqlalchemy import text
 
-def bls_7k_continuity_summary(engine,state_code):
+def bls_7k_sum_summary(engine,state_code):
     query=text("""
         WITH base AS (
             SELECT
@@ -18,66 +18,14 @@ def bls_7k_continuity_summary(engine,state_code):
               AND wage <> 0
               AND (yr * 4 + qtr) BETWEEN (2020 * 4 + 1) AND (2025 * 4 + 4)
         ),
-        qtr_ids AS (
+        target_qtrs AS (
             SELECT DISTINCT
-                bls_id,
                 state_code,
                 yr,
                 qtr,
                 qidx
             FROM base
-        ),
-        target_ids AS (
-            SELECT
-                q.bls_id,
-                q.state_code,
-                q.yr,
-                q.qtr,
-                q.qidx
-            FROM qtr_ids q
-            WHERE q.qidx BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
-              AND EXISTS (
-                SELECT 1
-                FROM qtr_ids p
-                WHERE p.bls_id = q.bls_id
-                  AND p.state_code = q.state_code
-                  AND p.qidx = q.qidx - 2
-            )
-              AND EXISTS (
-                SELECT 1
-                FROM qtr_ids p
-                WHERE p.bls_id = q.bls_id
-                  AND p.state_code = q.state_code
-                  AND p.qidx = q.qidx - 1
-            )
-              AND EXISTS (
-                SELECT 1
-                FROM qtr_ids p
-                WHERE p.bls_id = q.bls_id
-                  AND p.state_code = q.state_code
-                  AND p.qidx = q.qidx + 1
-            )
-        ),
-        four_qtr_sum AS (
-            SELECT
-                t.state_code,
-                t.yr,
-                t.qtr,
-                t.qidx,
-                t.bls_id,
-                SUM(b.wage) AS sum_wage_4qtr
-            FROM target_ids t
-            JOIN base b
-              ON b.bls_id = t.bls_id
-             AND b.state_code = t.state_code
-             AND b.qidx IN (t.qidx - 2,t.qidx - 1,t.qidx,t.qidx + 1)
-            GROUP BY
-                t.state_code,
-                t.yr,
-                t.qtr,
-                t.qidx,
-                t.bls_id
-            HAVING COUNT(DISTINCT b.qidx) = 4
+            WHERE qidx BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
         ),
         total_counts AS (
             SELECT
@@ -86,9 +34,28 @@ def bls_7k_continuity_summary(engine,state_code):
                 qtr,
                 qidx,
                 COUNT(DISTINCT bls_id) AS total_count
-            FROM qtr_ids
+            FROM base
             WHERE qidx BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
             GROUP BY state_code,yr,qtr,qidx
+        ),
+        four_qtr_sums AS (
+            SELECT
+                t.state_code,
+                t.yr,
+                t.qtr,
+                t.qidx,
+                b.bls_id,
+                SUM(b.wage) AS sum_wage_4qtr
+            FROM target_qtrs t
+            JOIN base b
+              ON b.state_code = t.state_code
+             AND b.qidx IN (t.qidx - 2,t.qidx - 1,t.qidx,t.qidx + 1)
+            GROUP BY
+                t.state_code,
+                t.yr,
+                t.qtr,
+                t.qidx,
+                b.bls_id
         ),
         sevenk_counts AS (
             SELECT
@@ -97,7 +64,7 @@ def bls_7k_continuity_summary(engine,state_code):
                 qtr,
                 qidx,
                 COUNT(DISTINCT bls_id) AS sevenk_or_less_count
-            FROM four_qtr_sum
+            FROM four_qtr_sums
             WHERE sum_wage_4qtr <= 7000
             GROUP BY state_code,yr,qtr,qidx
         )
@@ -123,10 +90,7 @@ def bls_7k_continuity_summary(engine,state_code):
     df.columns=df.columns.str.lower()
     return df
 
-df=bls_7k_continuity_summary(engine,"06")
+df=bls_7k_sum_summary(engine,"06")
 print(df)
 
-
-#7k_or_less_count means:
-
-#The number of unique ids that appear in q-2, q-1, q, and q+1, have nonzero wages in all 4 quarters, and whose total wage across those four quarters is <= 7000.
+#sevenk_or_less_count is the number of unique bls_ids whose total wages across q-2, q-1, q, and q+1 are less than or equal to $7,000.
