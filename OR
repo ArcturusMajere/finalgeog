@@ -1,1 +1,96 @@
 
+import pandas as pd
+from sqlalchemy import text
+
+def bls_7k_sum_summary(engine,state_code):
+    query=text("""
+        WITH base AS (
+            SELECT
+                bls_id,
+                state_code,
+                yr,
+                qtr,
+                wage,
+                (yr * 4 + qtr) AS qidx
+            FROM wagerecusr.wage_data
+            WHERE state_code = :state_code
+              AND bls_id IS NOT NULL
+              AND wage IS NOT NULL
+              AND wage <> 0
+              AND (yr * 4 + qtr) BETWEEN (2020 * 4 + 1) AND (2025 * 4 + 4)
+        ),
+        target_ids AS (
+            SELECT DISTINCT
+                bls_id,
+                state_code,
+                yr,
+                qtr,
+                qidx
+            FROM base
+            WHERE qidx BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
+        ),
+        total_counts AS (
+            SELECT
+                state_code,
+                yr,
+                qtr,
+                qidx,
+                COUNT(DISTINCT bls_id) AS total_count
+            FROM target_ids
+            GROUP BY state_code,yr,qtr,qidx
+        ),
+        four_qtr_sums AS (
+            SELECT
+                t.state_code,
+                t.yr,
+                t.qtr,
+                t.qidx,
+                t.bls_id,
+                SUM(b.wage) AS sum_wage_4qtr
+            FROM target_ids t
+            JOIN base b
+              ON b.bls_id = t.bls_id
+             AND b.state_code = t.state_code
+             AND b.qidx IN (t.qidx - 2,t.qidx - 1,t.qidx,t.qidx + 1)
+            GROUP BY
+                t.state_code,
+                t.yr,
+                t.qtr,
+                t.qidx,
+                t.bls_id
+        ),
+        sevenk_counts AS (
+            SELECT
+                state_code,
+                yr,
+                qtr,
+                qidx,
+                COUNT(DISTINCT bls_id) AS sevenk_or_less_count
+            FROM four_qtr_sums
+            WHERE sum_wage_4qtr <= 7000
+            GROUP BY state_code,yr,qtr,qidx
+        )
+        SELECT
+            t.state_code,
+            t.yr,
+            t.qtr,
+            t.total_count,
+            COALESCE(s.sevenk_or_less_count,0) AS sevenk_or_less_count,
+            ROUND(
+                100.0 * COALESCE(s.sevenk_or_less_count,0) / NULLIF(t.total_count,0),
+                4
+            ) AS sevenk_or_less_pct
+        FROM total_counts t
+        LEFT JOIN sevenk_counts s
+          ON t.state_code = s.state_code
+         AND t.yr = s.yr
+         AND t.qtr = s.qtr
+         AND t.qidx = s.qidx
+        ORDER BY t.yr,t.qtr
+    """)
+    df=pd.read_sql(query,engine,params={"state_code":state_code})
+    df.columns=df.columns.str.lower()
+    return df
+
+df=bls_7k_sum_summary(engine,"06")
+print(df)
