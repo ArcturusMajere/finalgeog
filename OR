@@ -1,8 +1,7 @@
-
 import pandas as pd
 from sqlalchemy import text
 
-def bls_id_qtr_continuity_summary(engine,state_code):
+def bls_7k_continuity_summary(engine,state_code):
     query=text("""
         WITH base AS (
             SELECT
@@ -15,19 +14,23 @@ def bls_id_qtr_continuity_summary(engine,state_code):
             FROM wagerecusr.wage_data
             WHERE state_code = :state_code
               AND bls_id IS NOT NULL
+              AND wage IS NOT NULL
+              AND wage <> 0
               AND (yr * 4 + qtr) BETWEEN (2020 * 4 + 1) AND (2025 * 4 + 4)
         ),
         qtr_ids AS (
             SELECT DISTINCT
                 bls_id,
+                state_code,
                 yr,
                 qtr,
                 qidx
             FROM base
         ),
-        eligible_ids AS (
+        continuous_ids AS (
             SELECT
                 q.bls_id,
+                q.state_code,
                 q.yr,
                 q.qtr,
                 q.qidx
@@ -49,60 +52,53 @@ def bls_id_qtr_continuity_summary(engine,state_code):
                   AND p.qidx = q.qidx + 1
             )
         ),
-        all_counts AS (
+        total_counts AS (
             SELECT
+                state_code,
                 yr,
                 qtr,
                 qidx,
-                COUNT(DISTINCT bls_id) AS total_ids_in_qtr
+                COUNT(DISTINCT bls_id) AS total_count
             FROM qtr_ids
             WHERE qidx BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
-            GROUP BY yr,qtr,qidx
+            GROUP BY state_code,yr,qtr,qidx
         ),
-        eligible_wages AS (
+        sevenk_counts AS (
             SELECT
+                b.state_code,
                 b.yr,
                 b.qtr,
                 b.qidx,
-                b.bls_id,
-                AVG(b.wage) AS id_mean_wage
+                COUNT(DISTINCT b.bls_id) AS sevenk_or_less_count
             FROM base b
-            JOIN eligible_ids e
-              ON b.bls_id = e.bls_id
-             AND b.qidx = e.qidx
-            WHERE b.wage IS NOT NULL
-            GROUP BY b.yr,b.qtr,b.qidx,b.bls_id
-        ),
-        eligible_summary AS (
-            SELECT
-                yr,
-                qtr,
-                qidx,
-                COUNT(DISTINCT bls_id) AS eligible_ids,
-                AVG(id_mean_wage) AS mean_wage_eligible_ids
-            FROM eligible_wages
-            GROUP BY yr,qtr,qidx
+            JOIN continuous_ids c
+              ON b.bls_id = c.bls_id
+             AND b.state_code = c.state_code
+             AND b.qidx = c.qidx
+            WHERE b.wage <= 7000
+            GROUP BY b.state_code,b.yr,b.qtr,b.qidx
         )
         SELECT
-            a.yr,
-            a.qtr,
-            a.total_ids_in_qtr,
-            COALESCE(e.eligible_ids,0) AS eligible_ids,
-            e.mean_wage_eligible_ids,
+            t.state_code,
+            t.yr,
+            t.qtr,
+            t.total_count,
+            COALESCE(s.sevenk_or_less_count,0) AS sevenk_or_less_count,
             ROUND(
-                100.0 * COALESCE(e.eligible_ids,0) / NULLIF(a.total_ids_in_qtr,0),
+                100.0 * COALESCE(s.sevenk_or_less_count,0) / NULLIF(t.total_count,0),
                 4
-            ) AS eligible_pct
-        FROM all_counts a
-        LEFT JOIN eligible_summary e
-          ON a.yr = e.yr
-         AND a.qtr = e.qtr
-         AND a.qidx = e.qidx
-        ORDER BY a.yr,a.qtr
+            ) AS sevenk_or_less_pct
+        FROM total_counts t
+        LEFT JOIN sevenk_counts s
+          ON t.state_code = s.state_code
+         AND t.yr = s.yr
+         AND t.qtr = s.qtr
+         AND t.qidx = s.qidx
+        ORDER BY t.yr,t.qtr
     """)
     df=pd.read_sql(query,engine,params={"state_code":state_code})
     df.columns=df.columns.str.lower()
     return df
 
 
-df=bls_id_qtr_continuity_summary(engine,"06")
+df=bls_7k_continuity_summary(engine,"06")
