@@ -58,14 +58,14 @@ def bls_7k_continuity_summary(engine,state_code):
                   AND p.qidx = q.qidx + 1
             )
         ),
-        four_qtr_mean AS (
+        four_qtr_sum AS (
             SELECT
                 t.state_code,
                 t.yr,
                 t.qtr,
                 t.qidx,
                 t.bls_id,
-                AVG(b.wage) AS mean_wage_4qtr
+                SUM(b.wage) AS sum_wage_4qtr
             FROM target_ids t
             JOIN base b
               ON b.bls_id = t.bls_id
@@ -97,8 +97,8 @@ def bls_7k_continuity_summary(engine,state_code):
                 qtr,
                 qidx,
                 COUNT(DISTINCT bls_id) AS sevenk_or_less_count
-            FROM four_qtr_mean
-            WHERE mean_wage_4qtr <= 7000
+            FROM four_qtr_sum
+            WHERE sum_wage_4qtr <= 7000
             GROUP BY state_code,yr,qtr,qidx
         )
         SELECT
@@ -126,4 +126,7 @@ def bls_7k_continuity_summary(engine,state_code):
 df=bls_7k_continuity_summary(engine,"06")
 print(df)
 
-If the ID appears in all four quarters, has nonzero wages in all four quarters, and its average wage across those four quarters is <= 7000, it is counted in sevenk_or_less_count.
+
+#7k_or_less_count means:
+
+#The number of unique ids that appear in q-2, q-1, q, and q+1, have nonzero wages in all 4 quarters, and whose total wage across those four quarters is <= 7000.
