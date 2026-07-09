@@ -1,1 +1,130 @@
+#tmp_target_total counts all unique nonzero-wage IDs in each target quarter. This becomes total_count.
 
+#tmp_target_candidates keeps only IDs that appear in the target quarter and whose target-quarter wage is already <= 7000.
+
+#tmp_window_wages then checks only those smaller candidate IDs across t-2, t-1, t, t+1.
+
+#So an ID is included in sevenk_or_less_count only when it appears in the target quarter, has target-quarter wage <= 7000, and has total nonzero wages across t-2 through t+1 of <= 7000.
+
+
+import pandas as pd
+from sqlalchemy import text
+
+def bls_7k_sum_summary_candidate_first(engine,state_code):
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS tmp_target_total"))
+        conn.execute(text("DROP TABLE IF EXISTS tmp_target_candidates"))
+        conn.execute(text("DROP TABLE IF EXISTS tmp_window_wages"))
+
+        conn.execute(text("""
+            CREATE TEMP TABLE tmp_target_total AS
+            SELECT
+                state_code,
+                yr,
+                qtr,
+                (yr * 4 + qtr) AS qidx,
+                COUNT(DISTINCT bls_id) AS total_count
+            FROM wagerecusr.wage_data
+            WHERE state_code = :state_code
+              AND bls_id IS NOT NULL
+              AND wage IS NOT NULL
+              AND wage <> 0
+              AND (yr * 4 + qtr) BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
+            GROUP BY
+                state_code,
+                yr,
+                qtr,
+                (yr * 4 + qtr)
+        """),{"state_code":state_code})
+
+        conn.execute(text("""
+            CREATE TEMP TABLE tmp_target_candidates AS
+            SELECT
+                bls_id,
+                state_code,
+                yr,
+                qtr,
+                (yr * 4 + qtr) AS qidx,
+                SUM(wage) AS target_qtr_wage
+            FROM wagerecusr.wage_data
+            WHERE state_code = :state_code
+              AND bls_id IS NOT NULL
+              AND wage IS NOT NULL
+              AND wage <> 0
+              AND (yr * 4 + qtr) BETWEEN (2020 * 4 + 3) AND (2025 * 4 + 3)
+            GROUP BY
+                bls_id,
+                state_code,
+                yr,
+                qtr,
+                (yr * 4 + qtr)
+            HAVING SUM(wage) <= 7000
+        """),{"state_code":state_code})
+
+        conn.execute(text("""
+            CREATE TEMP TABLE tmp_window_wages AS
+            SELECT
+                c.state_code,
+                c.yr,
+                c.qtr,
+                c.qidx,
+                c.bls_id,
+                SUM(w.wage) AS sum_wage_window
+            FROM tmp_target_candidates c
+            JOIN wagerecusr.wage_data w
+              ON w.state_code = c.state_code
+             AND w.bls_id = c.bls_id
+             AND (w.yr * 4 + w.qtr) BETWEEN c.qidx - 2 AND c.qidx + 1
+            WHERE w.wage IS NOT NULL
+              AND w.wage <> 0
+            GROUP BY
+                c.state_code,
+                c.yr,
+                c.qtr,
+                c.qidx,
+                c.bls_id
+        """))
+
+        query=text("""
+            WITH sevenk_counts AS (
+                SELECT
+                    state_code,
+                    yr,
+                    qtr,
+                    qidx,
+                    COUNT(DISTINCT bls_id) AS sevenk_or_less_count
+                FROM tmp_window_wages
+                WHERE sum_wage_window <= 7000
+                GROUP BY
+                    state_code,
+                    yr,
+                    qtr,
+                    qidx
+            )
+            SELECT
+                CONCAT(t.yr,'Q',t.qtr) AS yr_qtr,
+                t.state_code,
+                t.total_count,
+                COALESCE(s.sevenk_or_less_count,0) AS sevenk_or_less_count,
+                ROUND(
+                    100.0 * COALESCE(s.sevenk_or_less_count,0) / NULLIF(t.total_count,0),
+                    4
+                ) AS sevenk_or_less_pct
+            FROM tmp_target_total t
+            LEFT JOIN sevenk_counts s
+              ON t.state_code = s.state_code
+             AND t.yr = s.yr
+             AND t.qtr = s.qtr
+             AND t.qidx = s.qidx
+            ORDER BY
+                t.yr,
+                t.qtr
+        """)
+
+        df=pd.read_sql(query,conn)
+
+    df.columns=df.columns.str.lower()
+    return df
+
+df=bls_7k_sum_summary_candidate_first(engine,"06")
+print(df)
