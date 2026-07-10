@@ -1,4 +1,8 @@
+def shift_year_qtr(year, qtr, offset):
+    idx = year * 4 + qtr - 1 + offset
+    return idx // 4, idx % 4 + 1
 
+def get_qtr_pairs(base_year, base_qtr):return [shift_year_qtr(base_year, base_qtr, -2), shift_year_qtr(base_year, base_qtr, -1),shift_year_qtr(base_year, base_qtr, 2) ]
 
 def get7000(engine, state_code, yr, qtr):
     query = text(f"""
@@ -13,10 +17,44 @@ def get7000(engine, state_code, yr, qtr):
         ORDER BY total_wage""")
     return pd.read_sql(query,engine,params={"state_code": state_code,"yr": yr,"qtr": qtr})
 
-
 def update7k(cohort, update):
     out = cohort.merge(update,on="bls_id",how="left",suffixes=("", "_new"))
     out[f"{wage_col}_new"] = out[f"{wage_col}_new"].fillna(0)
     out[wage_col] = out[wage_col] + out[f"{wage_col}_new"]
     out = out[out[wage_col] <= 7000]
     return out.drop(columns=[f"{wage_col}_new"])
+
+base_year = 2022
+base_qtr = 1
+state_code = "06"
+
+cohort = get7000(engine, state_code, base_year, base_qtr)
+
+for yr, qtr in get_qtr_pairs(base_year, base_qtr):
+    update = get7000(engine, state_code, yr, qtr)
+    cohort = update7k(cohort, update)
+
+#*****
+
+import os
+import psutil
+
+def memory_mb():return psutil.Process(os.getpid()).memory_info().rss / 1024**2
+
+def run_7k_cohort(engine, state_code, base_year, base_qtr):
+    pairs = get_qtr_pairs(base_year, base_qtr)
+    print(f"starting base {base_year} Q{base_qtr} | memory {memory_mb():.1f} MB")
+    cohort = get7000(engine, state_code, base_year, base_qtr)
+    print(f"base loaded | rows {len(cohort):,} | memory {memory_mb():.1f} MB")
+
+    for i, (yr, qtr) in enumerate(pairs, start=1):
+        print(f"step {i}/{len(pairs)} loading {yr} Q{qtr} | memory {memory_mb():.1f} MB")
+        update = get7000(engine, state_code, yr, qtr)
+        print(f"update loaded | rows {len(update):,} | memory {memory_mb():.1f} MB")
+        before = len(cohort)
+        cohort = update7k(cohort, update)
+        after = len(cohort)
+        dropped = before - after
+        print(f"merged {yr} Q{qtr} | kept {after:,} | dropped {dropped:,} | memory {memory_mb():.1f} MB")
+    print(f"done | final rows {len(cohort):,} | memory {memory_mb():.1f} MB")
+    return cohort
