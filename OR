@@ -1,3 +1,24 @@
+1. Purpose: Seasonally adjust quarterly BED series using X-13ARIMA-SEATS, producing seasonal factors and seasonally adjusted values for every SID listed in `sid.txt`.
+
+2. Main inputs: `/cpslaus/D6/BED/data/sizecalss_nsa.sas7bdat`, containing `sid`, `year`, `q`, and `n`; `sid.txt`, containing the series IDs to process; and `parms.txt`, containing each SID’s transformation, ARIMA model, and regression variables.
+
+3. User inputs: The program asks for an ending year and ending quarter. The year must be the current year or one of the prior two years. The quarter must be 1 through 4.
+
+4. Data preparation: For each SID, the program reads the SAS file, keeps observations from 2003 through the selected ending quarter, and writes an X-13 input file named `x13_files/<sid>.dat`.
+
+5. Model setup: The program finds the matching SID in `parms.txt` and retrieves its transformation setting, ARIMA model, and regression variables.
+
+6. X-13 specification: It creates `x13_files/<sid>.spc`, defining quarterly frequency, the data file, transformation, regression terms, ARIMA model, estimation settings, 20-quarter forecasts, and SEATS decomposition.
+
+7. Seasonal adjustment: It runs the standalone X-13 executable for each SID. X-13 creates `.s10` files containing seasonal factors and `.s11` files containing seasonally adjusted values.
+
+8. Output processing: The program reads the `.s10` and `.s11` files, converts their dates into year and quarter fields, rounds results to six decimal places, and merges them by `sid`, `year`, and `q`.
+
+9. Period selection: For quarters 2 through 4, it keeps the concurrent result for the selected quarter and later forecast periods. For quarter 1, it keeps approximately five years of historical results to measure revisions.
+
+10. Final output: The combined data contain `sid`, `year`, `q`, `sf`, and `sa`. Quarter 2–4 runs create `output/seas_concurrent_<year>_<quarter>`. Quarter 1 runs create `output/seas_5yr_revisions_<year>`.
+
+
 import csv
 import re
 import shutil
