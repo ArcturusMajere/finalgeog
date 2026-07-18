@@ -155,3 +155,14 @@ updatePlot();
     return output_file
 
 category_html_viz(summary_df,"category_viz.html")
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+id_df,summary_df,highest_df=summarize_categories(df)
+
+html_file=category_html_viz(
+    summary_df=summary_df,
+    output_file="category_viz.html"
+)
+
+print(f"Open this file in a browser: {html_file}")
