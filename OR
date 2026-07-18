@@ -1,1 +1,33 @@
 
+import pandas as pd
+
+def summarize_categories(df):
+    cats=[f"category_{i}" for i in range(1,7)]
+    id_df=(
+        df.groupby(["yr_qtr","ID"]+cats,as_index=False,dropna=False)
+          .agg(sum_wage=("wage","sum"),sum_hours=("hours","sum"))
+    )
+    summary_df=(
+        id_df.groupby(["yr_qtr"]+cats,as_index=False,dropna=False)
+             .agg(
+                 count=("ID","nunique"),
+                 mean_sum_wage=("sum_wage","mean"),
+                 mean_sum_hours=("sum_hours","mean")
+             )
+    )
+    highest=[]
+    for cat in cats:
+        x=summary_df.copy()
+        x["max_count"]=x.groupby(["yr_qtr",cat],dropna=False)["count"].transform("max")
+        x=x[x["count"].eq(x["max_count"])].drop(columns="max_count")
+        x.insert(1,"held_category",cat)
+        x.insert(2,"held_value",x[cat])
+        highest.append(x)
+    highest_df=(
+        pd.concat(highest,ignore_index=True)
+          .sort_values(["yr_qtr","held_category","held_value"])
+          .reset_index(drop=True)
+    )
+    return id_df,summary_df,highest_df
+
+id_df,summary_df,highest_df=summarize_categories(df)
