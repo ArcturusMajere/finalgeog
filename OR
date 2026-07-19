@@ -1,14 +1,25 @@
-
+import json
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from pathlib import Path
 
 def summarize_categories(df):
     cats=[f"category_{i}" for i in range(1,7)]
+    category_counts=df.groupby("ID")[cats].nunique(dropna=False)
+    if category_counts.gt(1).any().any():
+        bad_ids=category_counts.gt(1).any(axis=1).sum()
+        raise ValueError(f"{bad_ids:,} IDs have category values that change over time")
     id_df=(
-        df.groupby(["yr_qtr","ID"]+cats,as_index=False,dropna=False)
-          .agg(sum_wage=("wage","sum"),sum_hours=("hours","sum"))
+        df.groupby("ID",as_index=False,dropna=False)
+          .agg(
+              **{cat:(cat,"first") for cat in cats},
+              sum_wage=("wage","sum"),
+              sum_hours=("hours","sum")
+          )
     )
     summary_df=(
-        id_df.groupby(["yr_qtr"]+cats,as_index=False,dropna=False)
+        id_df.groupby(cats,as_index=False,dropna=False)
              .agg(
                  count=("ID","nunique"),
                  mean_sum_wage=("sum_wage","mean"),
@@ -18,80 +29,59 @@ def summarize_categories(df):
     highest=[]
     for cat in cats:
         x=summary_df.copy()
-        x["max_count"]=x.groupby(["yr_qtr",cat],dropna=False)["count"].transform("max")
+        x["max_count"]=x.groupby(cat,dropna=False)["count"].transform("max")
         x=x[x["count"].eq(x["max_count"])].drop(columns="max_count")
-        x.insert(1,"held_category",cat)
-        x.insert(2,"held_value",x[cat])
+        x.insert(0,"held_category",cat)
+        x.insert(1,"held_value",x[cat])
         highest.append(x)
     highest_df=(
         pd.concat(highest,ignore_index=True)
-          .sort_values(["yr_qtr","held_category","held_value"])
+          .sort_values(["held_category","held_value"],na_position="last")
           .reset_index(drop=True)
     )
     return id_df,summary_df,highest_df
 
-id_df,summary_df,highest_df=summarize_categories(df)
-
-
-
-import json
-import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from pathlib import Path
-
 def category_html_viz(summary_df,output_file="category_viz.html"):
     cats=[f"category_{i}" for i in range(1,7)]
-    cols=["yr_qtr"]+cats+["count","mean_sum_wage","mean_sum_hours"]
+    cols=cats+["count","mean_sum_wage","mean_sum_hours"]
     data=summary_df[cols].copy()
-    data["yr_qtr"]=data["yr_qtr"].astype(str)
     for cat in cats:
         data[cat]=data[cat].fillna("Missing").astype(str)
     for col in ["count","mean_sum_wage","mean_sum_hours"]:
         data[col]=pd.to_numeric(data[col],errors="coerce").fillna(0)
-    options={
-        cat:["All"]+sorted(data[cat].unique().tolist())
-        for cat in cats
-    }
+    options={cat:["All"]+sorted(data[cat].unique().tolist()) for cat in cats}
     fig=make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=True,
-        subplot_titles=("Mean Summed Wage","Mean Summed Hours"),
-        vertical_spacing=.12
+        rows=1,
+        cols=2,
+        subplot_titles=("Mean Total Wage per ID","Mean Total Hours per ID"),
+        horizontal_spacing=.15
     )
     fig.add_trace(
-        go.Scatter(
-            x=[],
-            y=[],
-            mode="lines+markers",
-            name="Mean summed wage",
-            line=dict(color="#1565C0",width=3)
+        go.Indicator(
+            mode="number",
+            value=0,
+            number={"prefix":"$","valueformat":",.2f"},
+            title={"text":"Mean total wage"}
         ),
         row=1,
         col=1
     )
     fig.add_trace(
-        go.Scatter(
-            x=[],
-            y=[],
-            mode="lines+markers",
-            name="Mean summed hours",
-            line=dict(color="#EF6C00",width=3)
+        go.Indicator(
+            mode="number",
+            value=0,
+            number={"valueformat":",.2f"},
+            title={"text":"Mean total hours"}
         ),
-        row=2,
-        col=1
+        row=1,
+        col=2
     )
     fig.update_layout(
         template="plotly_white",
-        height=750,
-        title="Mean Summed Wage and Hours by Category",
-        hovermode="x unified",
-        margin=dict(t=80,l=80,r=40,b=70)
+        height=400,
+        title="All-Time Wage and Hours Summary",
+        margin=dict(t=90,l=40,r=40,b=40)
     )
-    fig.update_yaxes(title_text="Mean summed wage",row=1,col=1)
-    fig.update_yaxes(title_text="Mean summed hours",row=2,col=1)
-    fig.update_xaxes(title_text="Year-quarter",row=2,col=1)
     plot=fig.to_html(
         full_html=False,
         include_plotlyjs=True,
@@ -110,18 +100,22 @@ def category_html_viz(summary_df,output_file="category_viz.html"):
 <html>
 <head>
 <meta charset="utf-8">
-<title>Category Wage and Hours Visualization</title>
+<title>All-Time Category Summary</title>
 <style>
 body{{font-family:Arial,sans-serif;margin:20px;background:#f7f8fa}}
 .controls{{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:14px;background:white;padding:18px;border-radius:10px;margin-bottom:18px;box-shadow:0 2px 8px #00000018}}
 label{{font-weight:600;color:#333}}
 select{{display:block;width:100%;margin-top:6px;padding:8px;border:1px solid #bbb;border-radius:5px;background:white}}
 #categoryPlot{{background:white;border-radius:10px;box-shadow:0 2px 8px #00000018}}
+#cellCount{{padding:14px;text-align:center;font-size:18px;font-weight:600}}
+.warning{{color:#b71c1c;background:#ffdddd}}
+.safe{{color:#1b5e20;background:#e8f5e9}}
 @media(max-width:700px){{.controls{{grid-template-columns:1fr}}}}
 </style>
 </head>
 <body>
 <div class="controls">{controls}</div>
+<div id="cellCount"></div>
 {plot}
 <script>
 const records={records};
@@ -130,19 +124,20 @@ function updatePlot(){{
     const selected={{}};
     categories.forEach(c=>selected[c]=document.getElementById(c).value);
     const filtered=records.filter(r=>categories.every(c=>selected[c]==="All"||String(r[c])===selected[c]));
-    const grouped={{}};
+    let count=0,wage=0,hours=0;
     filtered.forEach(r=>{{
-        const q=String(r.yr_qtr);
-        if(!grouped[q]) grouped[q]={{count:0,wage:0,hours:0}};
-        grouped[q].count+=Number(r.count);
-        grouped[q].wage+=Number(r.mean_sum_wage)*Number(r.count);
-        grouped[q].hours+=Number(r.mean_sum_hours)*Number(r.count);
+        const n=Number(r.count);
+        count+=n;
+        wage+=Number(r.mean_sum_wage)*n;
+        hours+=Number(r.mean_sum_hours)*n;
     }});
-    const quarters=Object.keys(grouped).sort((a,b)=>a.localeCompare(b,undefined,{{numeric:true}}));
-    const wage=quarters.map(q=>grouped[q].count?grouped[q].wage/grouped[q].count:null);
-    const hours=quarters.map(q=>grouped[q].count?grouped[q].hours/grouped[q].count:null);
-    Plotly.restyle("categoryPlot",{{x:[quarters],y:[wage]}},[0]);
-    Plotly.restyle("categoryPlot",{{x:[quarters],y:[hours]}},[1]);
+    const meanWage=count?wage/count:0;
+    const meanHours=count?hours/count:0;
+    Plotly.restyle("categoryPlot",{{value:meanWage}},[0]);
+    Plotly.restyle("categoryPlot",{{value:meanHours}},[1]);
+    const countBox=document.getElementById("cellCount");
+    countBox.textContent=`Unique IDs: ${{count.toLocaleString()}}`;
+    countBox.className=count<10?"warning":"safe";
 }}
 categories.forEach(c=>document.getElementById(c).addEventListener("change",updatePlot));
 updatePlot();
@@ -151,18 +146,9 @@ updatePlot();
 </html>"""
     output_file=Path(output_file).resolve()
     output_file.write_text(html,encoding="utf-8")
-    print(f"Saved: {{output_file}}")
+    print(f"Saved: {output_file}")
     return output_file
 
-category_html_viz(summary_df,"category_viz.html")
-
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 id_df,summary_df,highest_df=summarize_categories(df)
-
-html_file=category_html_viz(
-    summary_df=summary_df,
-    output_file="category_viz.html"
-)
-
+html_file=category_html_viz(summary_df,"category_viz.html")
 print(f"Open this file in a browser: {html_file}")
