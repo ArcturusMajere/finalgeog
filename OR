@@ -1,17 +1,20 @@
 import pandas as pd
 
-def aggregate_by_quarter_id(df):
+def aggregate_by_quarter_id_categories(df):
     cats=[f"category_{i}" for i in range(1,7)]
-    result=(
-        df.groupby(["yr_qtr","ID"],as_index=False,dropna=False)
-          .agg(
-              **{cat:(cat,"first") for cat in cats},
-              wage_sum=("wage","sum"),
-              hour_sum=("hours","sum")
-          )
-          .sort_values(["yr_qtr","ID"])
-          .reset_index(drop=True)
+    id_df=(
+        df.groupby(
+            ["yr_qtr","ID"]+cats,
+            as_index=False,
+            dropna=False
+        )
+        .agg(
+            wage_sum=("wage","sum"),
+            hour_sum=("hours","sum")
+        )
+        .sort_values(["yr_qtr","ID"]+cats)
+        .reset_index(drop=True)
     )
-    return result
+    return id_df
 
-id_df=aggregate_by_quarter_id(df)
+id_df=aggregate_by_quarter_id_categories(df)
