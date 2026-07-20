@@ -1,9 +1,11 @@
 import pandas as pd
 
 def aggregate_by_quarter_id(df):
+    cats=[f"category_{i}" for i in range(1,7)]
     result=(
         df.groupby(["yr_qtr","ID"],as_index=False,dropna=False)
           .agg(
+              **{cat:(cat,"first") for cat in cats},
               wage_sum=("wage","sum"),
               hour_sum=("hours","sum")
           )
