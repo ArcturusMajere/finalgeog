@@ -1,20 +1,371 @@
+import json
 import pandas as pd
+from pathlib import Path
+from plotly.offline import get_plotlyjs
 
-def aggregate_by_quarter_id_categories(df):
-    cats=[f"category_{i}" for i in range(1,7)]
-    id_df=(
-        df.groupby(
-            ["yr_qtr","ID"]+cats,
-            as_index=False,
-            dropna=False
+def create_category_html_app(
+    category_1_df,
+    category_2_df,
+    category_3_df,
+    category_4_df,
+    category_5_df,
+    category_6_df,
+    output_file="category_dashboard.html"
+):
+    dfs={
+        "category_1":category_1_df,
+        "category_2":category_2_df,
+        "category_3":category_3_df,
+        "category_4":category_4_df,
+        "category_5":category_5_df,
+        "category_6":category_6_df
+    }
+    required_metrics=[
+        "avg_wage",
+        "avg_hours",
+        "roll_avg_wage",
+        "roll_avg_hours"
+    ]
+    app_data={}
+    for category_name,category_df in dfs.items():
+        data=category_df.copy()
+        data.columns=data.columns.str.strip()
+        quarter_column=next(
+            (
+                col for col in data.columns
+                if col.lower() in ["yrqtr","yr_qtr","year_qtr"]
+            ),
+            None
         )
-        .agg(
-            wage_sum=("wage","sum"),
-            hour_sum=("hours","sum")
+        if quarter_column is None:
+            raise ValueError(
+                f"{category_name} does not contain Yrqtr, yr_qtr, or year_qtr"
+            )
+        category_column=next(
+            (
+                col for col in data.columns
+                if col.lower()==category_name.lower()
+            ),
+            None
         )
-        .sort_values(["yr_qtr","ID"]+cats)
-        .reset_index(drop=True)
-    )
-    return id_df
+        if category_column is None:
+            excluded={
+                quarter_column,
+                "count_IDs",
+                "sum_wages",
+                "sum_hours",
+                *required_metrics
+            }
+            candidates=[
+                col for col in data.columns
+                if col not in excluded
+            ]
+            if not candidates:
+                raise ValueError(
+                    f"Could not identify the category column in {category_name}"
+                )
+            category_column=candidates[0]
+        missing=[
+            col for col in required_metrics
+            if col not in data.columns
+        ]
+        if missing:
+            raise ValueError(
+                f"{category_name} is missing columns: {missing}"
+            )
+        data=data.rename(
+            columns={
+                quarter_column:"yrqtr",
+                category_column:"category_value"
+            }
+        )
+        data["yrqtr"]=data["yrqtr"].astype(str)
+        data["category_value"]=(
+            data["category_value"]
+            .fillna("Missing")
+            .astype(str)
+        )
+        numeric_columns=[
+            "count_IDs",
+            "sum_wages",
+            "sum_hours",
+            "avg_wage",
+            "avg_hours",
+            "roll_avg_wage",
+            "roll_avg_hours"
+        ]
+        for col in numeric_columns:
+            if col in data.columns:
+                data[col]=pd.to_numeric(
+                    data[col],
+                    errors="coerce"
+                )
+        data=data.sort_values(
+            ["category_value","yrqtr"]
+        ).reset_index(drop=True)
+        app_data[category_name]=json.loads(
+            data.to_json(orient="records")
+        )
+    plotly_js=get_plotlyjs()
+    records=json.dumps(app_data)
+    html=f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Category Wage and Hours Dashboard</title>
+<script>{plotly_js}</script>
+<style>
+body{{
+    margin:0;
+    padding:24px;
+    font-family:Arial,sans-serif;
+    background:#f4f6f9;
+    color:#202124;
+}}
+.container{{
+    max-width:1400px;
+    margin:auto;
+}}
+h1{{
+    margin:0 0 20px 0;
+}}
+.controls{{
+    display:grid;
+    grid-template-columns:repeat(3,minmax(200px,1fr));
+    gap:18px;
+    padding:20px;
+    margin-bottom:20px;
+    background:white;
+    border-radius:12px;
+    box-shadow:0 2px 10px #00000018;
+}}
+label{{
+    font-weight:700;
+}}
+select{{
+    display:block;
+    width:100%;
+    margin-top:7px;
+    padding:10px;
+    font-size:15px;
+    background:white;
+    border:1px solid #b8bec7;
+    border-radius:6px;
+}}
+#chart{{
+    height:700px;
+    background:white;
+    border-radius:12px;
+    box-shadow:0 2px 10px #00000018;
+}}
+@media(max-width:750px){{
+    .controls{{
+        grid-template-columns:1fr;
+    }}
+    #chart{{
+        height:550px;
+    }}
+}}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Category Wage and Hours Dashboard</h1>
+<div class="controls">
+<label>
+Category
+<select id="categorySelect">
+<option value="category_1">Category 1</option>
+<option value="category_2">Category 2</option>
+<option value="category_3">Category 3</option>
+<option value="category_4">Category 4</option>
+<option value="category_5">Category 5</option>
+<option value="category_6">Category 6</option>
+</select>
+</label>
+<label>
+Data Type
+<select id="versionSelect">
+<option value="raw">Raw Average</option>
+<option value="rolling">Rolling Average</option>
+</select>
+</label>
+<label>
+Measure
+<select id="measureSelect">
+<option value="wage">Wage</option>
+<option value="hours">Hours</option>
+</select>
+</label>
+</div>
+<div id="chart"></div>
+</div>
+<script>
+const appData={records};
 
-id_df=aggregate_by_quarter_id_categories(df)
+function quarterSort(a,b){{
+    return String(a).localeCompare(
+        String(b),
+        undefined,
+        {{numeric:true}}
+    );
+}}
+
+function updateChart(){{
+    const category=document.getElementById(
+        "categorySelect"
+    ).value;
+    const version=document.getElementById(
+        "versionSelect"
+    ).value;
+    const measure=document.getElementById(
+        "measureSelect"
+    ).value;
+    const column=version==="rolling"
+        ? "roll_avg_"+measure
+        : "avg_"+measure;
+    const rows=appData[category];
+    const values=[
+        ...new Set(
+            rows.map(row=>String(row.category_value))
+        )
+    ].sort((a,b)=>a.localeCompare(
+        b,
+        undefined,
+        {{numeric:true}}
+    ));
+    const colors=[
+        "#1565C0",
+        "#EF6C00",
+        "#2E7D32",
+        "#8E24AA",
+        "#C62828",
+        "#00838F"
+    ];
+    const traces=values.map((categoryValue,index)=>{{
+        const selectedRows=rows
+            .filter(
+                row=>String(row.category_value)===categoryValue
+            )
+            .sort(
+                (a,b)=>quarterSort(a.yrqtr,b.yrqtr)
+            );
+        return {{
+            type:"scatter",
+            mode:"lines+markers",
+            name:categoryValue,
+            x:selectedRows.map(row=>row.yrqtr),
+            y:selectedRows.map(row=>row[column]),
+            customdata:selectedRows.map(row=>[
+                row.count_IDs,
+                row.sum_wages,
+                row.sum_hours
+            ]),
+            line:{{
+                color:colors[index%colors.length],
+                width:3
+            }},
+            marker:{{
+                size:7
+            }},
+            hovertemplate:
+                "<b>Category value:</b> "+categoryValue+"<br>"+
+                "<b>Quarter:</b> %{{x}}<br>"+
+                "<b>Value:</b> %{{y:,.2f}}<br>"+
+                "<b>ID count:</b> %{{customdata[0]:,.0f}}<br>"+
+                "<b>Total wages:</b> $%{{customdata[1]:,.2f}}<br>"+
+                "<b>Total hours:</b> %{{customdata[2]:,.2f}}"+
+                "<extra></extra>"
+        }};
+    }});
+    const categoryTitle=category
+        .replace("_"," ")
+        .replace(
+            /\\b\\w/g,
+            char=>char.toUpperCase()
+        );
+    const versionTitle=version==="rolling"
+        ? "Rolling Average"
+        : "Raw Average";
+    const measureTitle=measure==="wage"
+        ? "Wage"
+        : "Hours";
+    const layout={{
+        template:"plotly_white",
+        title:{{
+            text:categoryTitle+" — "+versionTitle+" "+measureTitle,
+            x:.5
+        }},
+        xaxis:{{
+            title:"Year-Quarter",
+            type:"category",
+            categoryorder:"array",
+            categoryarray:[
+                ...new Set(rows.map(row=>row.yrqtr))
+            ].sort(quarterSort),
+            tickangle:-45
+        }},
+        yaxis:{{
+            title:versionTitle+" "+measureTitle,
+            tickprefix:measure==="wage"?"$":""
+        }},
+        legend:{{
+            title:{{
+                text:categoryTitle+" Values"
+            }},
+            orientation:"h",
+            x:.5,
+            xanchor:"center",
+            y:1.12
+        }},
+        hovermode:"x unified",
+        margin:{{
+            t:120,
+            l:90,
+            r:40,
+            b:110
+        }}
+    }};
+    Plotly.react(
+        "chart",
+        traces,
+        layout,
+        {{
+            responsive:true,
+            displaylogo:false
+        }}
+    );
+}}
+
+document.getElementById(
+    "categorySelect"
+).addEventListener("change",updateChart);
+
+document.getElementById(
+    "versionSelect"
+).addEventListener("change",updateChart);
+
+document.getElementById(
+    "measureSelect"
+).addEventListener("change",updateChart);
+
+updateChart();
+</script>
+</body>
+</html>"""
+    output_file=Path(output_file).resolve()
+    output_file.write_text(html,encoding="utf-8")
+    print(f"Saved: {output_file}")
+    return output_file
+
+html_file=create_category_html_app(
+    category_1_df,
+    category_2_df,
+    category_3_df,
+    category_4_df,
+    category_5_df,
+    category_6_df,
+    output_file="category_dashboard.html"
+)
+
+print(f"Open this file in a browser: {html_file}")
