@@ -1,1 +1,769 @@
 
+import json
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.utils import PlotlyJSONEncoder
+from IPython.display import IFrame,display
+
+def create_state_naics_app(df,output_file="state_naics_dashboard.html"):
+    required={"yr_qtr","state","naics6","industry","ids_count","mean_wage"}
+    missing=required-set(df.columns)
+
+    if missing:
+        raise ValueError(f"Missing columns: {sorted(missing)}")
+
+    data=df.copy()
+    data["state"]=data["state"].astype(str)
+    data["naics6"]=(
+        data["naics6"]
+        .astype(str)
+        .str.replace(r"\.0$","",regex=True)
+        .str.zfill(6)
+    )
+    data["industry"]=data["industry"].fillna("Unknown industry").astype(str)
+    data["ids_count"]=pd.to_numeric(data["ids_count"],errors="coerce")
+    data["mean_wage"]=pd.to_numeric(data["mean_wage"],errors="coerce")
+
+    states=sorted(data["state"].dropna().unique().tolist())
+    naics_values=sorted(data["naics6"].dropna().unique().tolist())
+
+    industry_lookup=(
+        data[["naics6","industry"]]
+        .drop_duplicates("naics6")
+        .set_index("naics6")["industry"]
+        .to_dict()
+    )
+
+    records=json.loads(
+        data[
+            [
+                "yr_qtr",
+                "state",
+                "naics6",
+                "industry",
+                "ids_count",
+                "mean_wage"
+            ]
+        ].to_json(orient="records")
+    )
+
+    fig=go.Figure()
+
+    fig.update_layout(
+        template="plotly_white",
+        height=650,
+        margin=dict(l=90,r=40,t=120,b=80),
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            y=1.08,
+            x=.5,
+            xanchor="center"
+        )
+    )
+
+    html=f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>State and NAICS Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+<style>
+body{{
+    font-family:Arial,sans-serif;
+    margin:0;
+    background:#f4f6f8;
+    color:#1f2937
+}}
+.container{{
+    max-width:1400px;
+    margin:auto;
+    padding:24px
+}}
+.controls{{
+    display:flex;
+    gap:24px;
+    align-items:flex-start;
+    flex-wrap:wrap;
+    background:white;
+    padding:18px;
+    border-radius:10px;
+    box-shadow:0 2px 8px #0001
+}}
+.control-group{{
+    min-width:240px
+}}
+label{{
+    display:block;
+    font-weight:700;
+    margin-bottom:8px
+}}
+select{{
+    width:100%;
+    padding:9px;
+    border:1px solid #bbb;
+    border-radius:6px;
+    background:white
+}}
+.states{{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap
+}}
+.state-button{{
+    padding:8px 13px;
+    border:1px solid #2563eb;
+    border-radius:6px;
+    background:white;
+    color:#2563eb;
+    cursor:pointer
+}}
+.state-button.selected{{
+    background:#2563eb;
+    color:white
+}}
+.action-button{{
+    padding:7px 11px;
+    border:1px solid #6b7280;
+    border-radius:6px;
+    background:white;
+    cursor:pointer
+}}
+#chart{{
+    margin-top:18px;
+    background:white;
+    border-radius:10px;
+    box-shadow:0 2px 8px #0001
+}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="controls">
+
+<div class="control-group">
+<label for="naics">NAICS6</label>
+<select id="naics"></select>
+</div>
+
+<div class="control-group">
+<label for="metric">Measure</label>
+<select id="metric">
+<option value="ids_count">ID Count</option>
+<option value="mean_wage">Mean Wage</option>
+</select>
+</div>
+
+<div class="control-group" style="flex:1">
+<label>States</label>
+<div style="margin-bottom:9px">
+<button class="action-button" onclick="selectAllStates()">Select all</button>
+<button class="action-button" onclick="clearStates()">Clear</button>
+</div>
+<div id="states" class="states"></div>
+</div>
+
+</div>
+<div id="chart"></div>
+</div>
+
+<script>
+const records={json.dumps(records,cls=PlotlyJSONEncoder)};
+const states={json.dumps(states)};
+const naicsValues={json.dumps(naics_values)};
+const industryLookup={json.dumps(industry_lookup)};
+const baseFigure={json.dumps(fig,cls=PlotlyJSONEncoder)};
+const selectedStates=new Set(states);
+
+const colors=[
+    "#2563eb",
+    "#dc2626",
+    "#059669",
+    "#7c3aed",
+    "#ea580c",
+    "#0891b2",
+    "#db2777",
+    "#65a30d",
+    "#4f46e5",
+    "#9333ea"
+];
+
+function initialize(){{
+    const naicsSelect=document.getElementById("naics");
+
+    naicsValues.forEach(value=>{{
+        const option=document.createElement("option");
+        option.value=value;
+        option.textContent=value+" — "+industryLookup[value];
+        naicsSelect.appendChild(option);
+    }});
+
+    naicsSelect.addEventListener("change",updateChart);
+    document.getElementById("metric").addEventListener("change",updateChart);
+
+    const statesContainer=document.getElementById("states");
+
+    states.forEach(state=>{{
+        const button=document.createElement("button");
+        button.textContent=state;
+        button.className="state-button selected";
+        button.onclick=()=>toggleState(state,button);
+        statesContainer.appendChild(button);
+    }});
+
+    updateChart();
+}}
+
+function toggleState(state,button){{
+    if(selectedStates.has(state)){{
+        selectedStates.delete(state);
+        button.classList.remove("selected");
+    }}else{{
+        selectedStates.add(state);
+        button.classList.add("selected");
+    }}
+
+    updateChart();
+}}
+
+function selectAllStates(){{
+    states.forEach(state=>selectedStates.add(state));
+
+    document
+        .querySelectorAll(".state-button")
+        .forEach(button=>button.classList.add("selected"));
+
+    updateChart();
+}}
+
+function clearStates(){{
+    selectedStates.clear();
+
+    document
+        .querySelectorAll(".state-button")
+        .forEach(button=>button.classList.remove("selected"));
+
+    updateChart();
+}}
+
+function quarterIndex(value){{
+    const match=String(value).match(/(\\d{{4}})\\D*Q?([1-4])/i);
+
+    if(!match) return 0;
+
+    return Number(match[1])*4+Number(match[2])-1;
+}}
+
+function updateChart(){{
+    const naics=document.getElementById("naics").value;
+    const metric=document.getElementById("metric").value;
+    const industry=industryLookup[naics]||"Unknown industry";
+    const metricTitle=metric==="ids_count"?"ID Count":"Mean Wage";
+    const traces=[];
+
+    states.forEach((state,index)=>{{
+        if(!selectedStates.has(state)) return;
+
+        const subset=records
+            .filter(row=>row.state===state&&row.naics6===naics)
+            .sort((a,b)=>quarterIndex(a.yr_qtr)-quarterIndex(b.yr_qtr));
+
+        if(!subset.length) return;
+
+        const hoverTemplate=metric==="mean_wage"
+            ?"<b>"+state+"</b><br>Quarter: %{{x}}<br>Mean wage: $%{{y:,.2f}}<extra></extra>"
+            :"<b>"+state+"</b><br>Quarter: %{{x}}<br>ID count: %{{y:,.0f}}<extra></extra>";
+
+        traces.push({{
+            x:subset.map(row=>row.yr_qtr),
+            y:subset.map(row=>row[metric]),
+            name:state,
+            mode:"lines+markers",
+            connectgaps:false,
+            line:{{
+                color:colors[index%colors.length],
+                width:3
+            }},
+            marker:{{
+                size:7
+            }},
+            hovertemplate:hoverTemplate
+        }});
+    }});
+
+    const layout={{
+        ...baseFigure.layout,
+        title:{{
+            text:metricTitle+"<br><sup>NAICS6 "+naics+" — "+industry+"</sup>",
+            x:.5,
+            xanchor:"center"
+        }},
+        xaxis:{{
+            title:"Quarter",
+            type:"category"
+        }},
+        yaxis:{{
+            title:metricTitle,
+            tickprefix:metric==="mean_wage"?"$":"",
+            tickformat:metric==="mean_wage"?",.2f":",.0f"
+        }},
+        annotations:traces.length?[]:[{{
+            text:"No data available for the selected states",
+            x:.5,
+            y:.5,
+            xref:"paper",
+            yref:"paper",
+            showarrow:false,
+            font:{{size:18,color:"#6b7280"}}
+        }}]
+    }};
+
+    Plotly.react(
+        "chart",
+        traces,
+        layout,
+        {{
+            responsive:true,
+            displaylogo:false
+        }}
+    );
+}}
+
+initialize();
+</script>
+</body>
+</html>"""
+
+    with open(output_file,"w",encoding="utf-8") as file:
+        file.write(html)
+
+    print(f"Dashboard saved to: {{output_file}}")
+    return output_file
+
+output_file=create_state_naics_app(
+    df=df,
+    output_file="state_naics_dashboard.html"
+)
+
+display(IFrame(src=output_file,width="100%",height=850))
+
+import json
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.utils import PlotlyJSONEncoder
+from IPython.display import IFrame,display
+
+def create_state_naics_app(df,output_file="state_naics_dashboard_safe.html"):
+    required={"yr_qtr","state","naics6","industry","ids_count","mean_wage"}
+    missing=required-set(df.columns)
+
+    if missing:
+        raise ValueError(f"Missing columns: {sorted(missing)}")
+
+    data=df.copy()
+    data["state"]=data["state"].astype(str)
+    data["naics6"]=(
+        data["naics6"]
+        .astype(str)
+        .str.replace(r"\.0$","",regex=True)
+        .str.zfill(6)
+    )
+    data["industry"]=data["industry"].fillna("Unknown industry").astype(str)
+    data["ids_count"]=pd.to_numeric(data["ids_count"],errors="coerce")
+    data["mean_wage"]=pd.to_numeric(data["mean_wage"],errors="coerce")
+
+    suppressed=data["ids_count"].isna()|(data["ids_count"]<10)
+    data.loc[suppressed,["ids_count","mean_wage"]]=pd.NA
+
+    states=sorted(data["state"].dropna().unique().tolist())
+    naics_values=sorted(data["naics6"].dropna().unique().tolist())
+
+    industry_lookup=(
+        data[["naics6","industry"]]
+        .drop_duplicates("naics6")
+        .set_index("naics6")["industry"]
+        .to_dict()
+    )
+
+    records=json.loads(
+        data[
+            [
+                "yr_qtr",
+                "state",
+                "naics6",
+                "industry",
+                "ids_count",
+                "mean_wage"
+            ]
+        ].to_json(orient="records")
+    )
+
+    fig=go.Figure()
+
+    fig.update_layout(
+        template="plotly_white",
+        height=650,
+        margin=dict(l=90,r=40,t=120,b=80),
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            y=1.08,
+            x=.5,
+            xanchor="center"
+        )
+    )
+
+    html=f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>State and NAICS Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+<style>
+body{{
+    font-family:Arial,sans-serif;
+    margin:0;
+    background:#f4f6f8;
+    color:#1f2937
+}}
+.container{{
+    max-width:1400px;
+    margin:auto;
+    padding:24px
+}}
+.controls{{
+    display:flex;
+    gap:24px;
+    align-items:flex-start;
+    flex-wrap:wrap;
+    background:white;
+    padding:18px;
+    border-radius:10px;
+    box-shadow:0 2px 8px #0001
+}}
+.control-group{{
+    min-width:240px
+}}
+label{{
+    display:block;
+    font-weight:700;
+    margin-bottom:8px
+}}
+select{{
+    width:100%;
+    padding:9px;
+    border:1px solid #bbb;
+    border-radius:6px;
+    background:white
+}}
+.states{{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap
+}}
+.state-button{{
+    padding:8px 13px;
+    border:1px solid #2563eb;
+    border-radius:6px;
+    background:white;
+    color:#2563eb;
+    cursor:pointer
+}}
+.state-button.selected{{
+    background:#2563eb;
+    color:white
+}}
+.action-button{{
+    padding:7px 11px;
+    border:1px solid #6b7280;
+    border-radius:6px;
+    background:white;
+    cursor:pointer
+}}
+#chart{{
+    margin-top:18px;
+    background:white;
+    border-radius:10px;
+    box-shadow:0 2px 8px #0001
+}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="controls">
+
+<div class="control-group">
+<label for="naics">NAICS6</label>
+<select id="naics"></select>
+</div>
+
+<div class="control-group">
+<label for="metric">Measure</label>
+<select id="metric">
+<option value="ids_count">ID Count</option>
+<option value="mean_wage">Mean Wage</option>
+</select>
+</div>
+
+<div class="control-group" style="flex:1">
+<label>States</label>
+<div style="margin-bottom:9px">
+<button class="action-button" onclick="selectAllStates()">Select all</button>
+<button class="action-button" onclick="clearStates()">Clear</button>
+</div>
+<div id="states" class="states"></div>
+</div>
+
+</div>
+<div id="chart"></div>
+</div>
+
+<script>
+const records={json.dumps(records,cls=PlotlyJSONEncoder)};
+const states={json.dumps(states)};
+const naicsValues={json.dumps(naics_values)};
+const industryLookup={json.dumps(industry_lookup)};
+const baseFigure={json.dumps(fig,cls=PlotlyJSONEncoder)};
+const selectedStates=new Set(states);
+
+const colors=[
+    "#2563eb",
+    "#dc2626",
+    "#059669",
+    "#7c3aed",
+    "#ea580c",
+    "#0891b2",
+    "#db2777",
+    "#65a30d",
+    "#4f46e5",
+    "#9333ea"
+];
+
+function initialize(){{
+    const naicsSelect=document.getElementById("naics");
+
+    naicsValues.forEach(value=>{{
+        const option=document.createElement("option");
+        option.value=value;
+        option.textContent=value+" — "+industryLookup[value];
+        naicsSelect.appendChild(option);
+    }});
+
+    naicsSelect.addEventListener("change",updateChart);
+    document.getElementById("metric").addEventListener("change",updateChart);
+
+    const statesContainer=document.getElementById("states");
+
+    states.forEach(state=>{{
+        const button=document.createElement("button");
+        button.textContent=state;
+        button.className="state-button selected";
+        button.onclick=()=>toggleState(state,button);
+        statesContainer.appendChild(button);
+    }});
+
+    updateChart();
+}}
+
+function toggleState(state,button){{
+    if(selectedStates.has(state)){{
+        selectedStates.delete(state);
+        button.classList.remove("selected");
+    }}else{{
+        selectedStates.add(state);
+        button.classList.add("selected");
+    }}
+
+    updateChart();
+}}
+
+function selectAllStates(){{
+    states.forEach(state=>selectedStates.add(state));
+
+    document
+        .querySelectorAll(".state-button")
+        .forEach(button=>button.classList.add("selected"));
+
+    updateChart();
+}}
+
+function clearStates(){{
+    selectedStates.clear();
+
+    document
+        .querySelectorAll(".state-button")
+        .forEach(button=>button.classList.remove("selected"));
+
+    updateChart();
+}}
+
+function quarterIndex(value){{
+    const match=String(value).match(/(\\d{{4}})\\D*Q?([1-4])/i);
+
+    if(!match) return String(value);
+
+    return Number(match[1])*4+Number(match[2])-1;
+}}
+
+function updateChart(){{
+    const naics=document.getElementById("naics").value;
+    const metric=document.getElementById("metric").value;
+    const industry=industryLookup[naics]||"Unknown industry";
+    const metricTitle=metric==="ids_count"?"ID Count":"Mean Wage";
+    const traces=[];
+
+    states.forEach((state,index)=>{{
+        if(!selectedStates.has(state)) return;
+
+        const subset=records
+            .filter(row=>row.state===state&&row.naics6===naics)
+            .sort((a,b)=>quarterIndex(a.yr_qtr)-quarterIndex(b.yr_qtr));
+
+        if(!subset.length) return;
+
+        const hoverTemplate=metric==="mean_wage"
+            ?"<b>"+state+"</b><br>Quarter: %{{x}}<br>Mean wage: $%{{y:,.2f}}<extra></extra>"
+            :"<b>"+state+"</b><br>Quarter: %{{x}}<br>ID count: %{{y:,.0f}}<extra></extra>";
+
+        traces.push({{
+            x:subset.map(row=>row.yr_qtr),
+            y:subset.map(row=>row[metric]),
+            name:state,
+            mode:"lines+markers",
+            connectgaps:false,
+            line:{{
+                color:colors[index%colors.length],
+                width:3
+            }},
+            marker:{{
+                size:7
+            }},
+            hovertemplate:hoverTemplate
+        }});
+    }});
+
+    const layout={{
+        ...baseFigure.layout,
+        title:{{
+            text:metricTitle+"<br><sup>NAICS6 "+naics+" — "+industry+"</sup>",
+            x:.5,
+            xanchor:"center"
+        }},
+        xaxis:{{
+            title:"Quarter",
+            type:"category"
+        }},
+        yaxis:{{
+            title:metricTitle,
+            tickprefix:metric==="mean_wage"?"$":"",
+            tickformat:metric==="mean_wage"?",.2f":",.0f"
+        }},
+        annotations:traces.length?[]:[{{
+            text:"No publishable data for the selected states",
+            x:.5,
+            y:.5,
+            xref:"paper",
+            yref:"paper",
+            showarrow:false,
+            font:{{size:18,color:"#6b7280"}}
+        }}]
+    }};
+
+    Plotly.react(
+        "chart",
+        traces,
+        layout,
+        {{
+            responsive:true,
+            displaylogo:false
+        }}
+    );
+}}
+
+initialize();
+</script>
+</body>
+</html>"""
+
+    with open(output_file,"w",encoding="utf-8") as file:
+        file.write(html)
+
+    print(f"Dashboard saved to: {{output_file}}")
+    return output_file
+
+output_file=create_state_naics_app(
+    df=df,
+    output_file="state_naics_dashboard_safe.html"
+)
+
+display(IFrame(src=output_file,width="100%",height=850))
+
+
+import numpy as np
+import pandas as pd
+
+def apply_primary_secondary_suppression(
+    df,
+    threshold=10,
+    group_cols=("yr_qtr","state"),
+    count_col="ids_count",
+    value_cols=("ids_count","mean_wage")
+):
+    data=df.copy()
+    data[count_col]=pd.to_numeric(data[count_col],errors="coerce")
+    data["_primary"]=data[count_col].notna()&(data[count_col]<threshold)
+    data["_secondary"]=False
+
+    for _,index in data.groupby(list(group_cols),dropna=False).groups.items():
+        group=data.loc[index]
+        primary_index=group.index[group["_primary"]]
+
+        if len(primary_index)==1:
+            candidates=group.loc[
+                ~group["_primary"]&
+                group[count_col].notna()
+            ]
+
+            if not candidates.empty:
+                secondary_index=candidates[count_col].idxmin()
+                data.loc[secondary_index,"_secondary"]=True
+
+    suppressed=data["_primary"]|data["_secondary"]
+    data.loc[suppressed,list(value_cols)]=np.nan
+
+    suppression_report=(
+        data.loc[
+            suppressed,
+            [*group_cols,"naics6","industry","_primary","_secondary"]
+        ]
+        .rename(
+            columns={
+                "_primary":"primary_suppressed",
+                "_secondary":"secondary_suppressed"
+            }
+        )
+        .reset_index(drop=True)
+    )
+
+    safe_df=data.drop(columns=["_primary","_secondary"])
+
+    return safe_df,suppression_report
+
+safe_df,suppression_report=apply_primary_secondary_suppression(
+    df=df,
+    threshold=10,
+    group_cols=("yr_qtr","state"),
+    count_col="ids_count",
+    value_cols=("ids_count","mean_wage")
+)
+
+output_file=create_state_naics_app(
+    df=safe_df,
+    output_file="state_naics_dashboard_suppressed.html"
+)
+
+display(IFrame(src=output_file,width="100%",height=850))
+
+display(suppression_report)
