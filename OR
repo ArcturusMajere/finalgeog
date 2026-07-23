@@ -1,1 +1,5 @@
 
+df_agg = (
+    df.groupby(["yr_qtr", "ID"], as_index=False, dropna=False)
+      .agg(WAGE=("WAGE", "sum"))
+)
