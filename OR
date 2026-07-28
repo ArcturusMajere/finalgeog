@@ -20,12 +20,13 @@ WHERE id IS NOT NULL
   AND qtr BETWEEN 1 AND 4
 GROUP BY id;
 
-
-Use Amazon Athena because this calculation only needs to run once.
-Create an AWS Glue Crawler pointed at the S3 folder containing the Parquet files.
-Run the crawler to create a Glue Data Catalog table containing the ID, year, and quarter columns.
-Open Amazon Athena and select the Glue database created for the Parquet table.
-Configure a separate S3 folder for Athena’s query results.
-Run a CREATE TABLE AS SELECT query that groups the records by ID and finds the earliest year-quarter for each ID.
-Save the resulting table as compressed Parquet in a new, empty S3 output folder.
-Query the new Athena table to verify that it contains one row per ID with its first year and quarter.
+Athena reads the ID, year, and quarter columns from every Parquet file in the selected S3 folder.
+Invalid records are removed, including missing IDs, missing years, and quarters outside 1 through 4.
+Each year-quarter is converted into a sortable integer using year × 4 + quarter − 1.
+This conversion preserves chronological order, including the transition from the fourth quarter of one year to the first quarter of the next year.
+Athena groups all records that have the same ID.
+Within each ID group, Athena finds the minimum calculated quarter value.
+The minimum value represents the first quarter in which that ID appears.
+Athena converts the minimum value back into separate year and quarter columns.
+The final dataset contains one row per unique ID with its first observed year and quarter.
+Athena writes the results back to S3 as compressed Parquet files.
