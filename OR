@@ -1,102 +1,72 @@
-import pandas as pd
-from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from pyspark.context import SparkContext
+from pyspark.sql import functions as F
+from pyspark.sql.types import StructType,StructField,StringType,IntegerType
 
+INPUT_PATH="s3://your-data-bucket/csv-folder/"
+OUTPUT_PATH="s3://your-output-bucket/id-first-occurrence/"
 
-def find_wage_statistics(
-    engine: Engine,
-    keys: pd.DataFrame,
-) -> dict:
-    """
-    Find rows matching YR, QTR, STATE_CODE and calculate wage statistics.
+sc=SparkContext.getOrCreate()
+glue_context=GlueContext(sc)
+spark=glue_context.spark_session
 
-    keys columns:
-        YR, QTR, STATE_CODE
-    """
+job=Job(glue_context)
+job.init("find_first_id_occurrence",{})
 
-    required = ["YR", "QTR", "STATE_CODE"]
-    missing = set(required) - set(keys.columns)
+schema=StructType([
+    StructField("ID",StringType(),False),
+    StructField("yr",IntegerType(),False),
+    StructField("qtr",IntegerType(),False)
+])
 
-    if missing:
-        raise ValueError(f"Missing columns: {sorted(missing)}")
+df=(
+    spark.read
+    .option("header","true")
+    .schema(schema)
+    .csv(INPUT_PATH)
+)
 
-    if keys.empty:
-        return {
-            "number_found": 0,
-            "mean_wage": None,
-            "median_wage": None,
-            "percentile_25": None,
-            "percentile_75": None,
-        }
+clean=(
+    df.select(
+        F.trim("ID").alias("ID"),
+        F.col("yr").cast("int").alias("yr"),
+        F.col("qtr").cast("int").alias("qtr")
+    )
+    .filter(
+        F.col("ID").isNotNull()&
+        F.col("yr").isNotNull()&
+        F.col("qtr").between(1,4)
+    )
+    .withColumn("quarter_index",F.col("yr")*4+F.col("qtr")-1)
+)
 
-    keys = keys[required].dropna().drop_duplicates()
+first_occurrence=(
+    clean.groupBy("ID")
+    .agg(F.min("quarter_index").alias("first_quarter_index"))
+    .select(
+        "ID",
+        F.floor(F.col("first_quarter_index")/4).cast("int").alias("first_yr"),
+        (F.col("first_quarter_index")%4+1).cast("int").alias("first_qtr")
+    )
+    .withColumn(
+        "first_yr_qtr",
+        F.concat(
+            F.col("first_yr").cast("string"),
+            F.lit("-Q"),
+            F.col("first_qtr").cast("string")
+        )
+    )
+)
 
-    with engine.begin() as connection:
-        connection.execute(text("""
-            CREATE TEMP TABLE search_keys (
-                yr         INTEGER NOT NULL,
-                qtr        SMALLINT NOT NULL,
-                state_code TEXT NOT NULL
-            ) ON COMMIT DROP
-        """))
+first_occurrence.show(20,truncate=False)
 
-        # Uses psycopg 3: postgresql+psycopg://
-        dbapi_connection = connection.connection.driver_connection
+(
+    first_occurrence
+    .write
+    .mode("overwrite")
+    .partitionBy("first_yr")
+    .parquet(OUTPUT_PATH)
+)
 
-        with dbapi_connection.cursor() as cursor:
-            with cursor.copy("""
-                COPY search_keys (yr, qtr, state_code)
-                FROM STDIN
-            """) as copy:
-                for yr, qtr, state_code in keys.itertuples(
-                    index=False,
-                    name=None,
-                ):
-                    copy.write_row((
-                        int(yr),
-                        int(qtr),
-                        str(state_code),
-                    ))
-
-        connection.execute(text("""
-            CREATE INDEX search_keys_lookup_idx
-            ON search_keys (yr, qtr, state_code)
-        """))
-
-        row = connection.execute(text("""
-            SELECT
-                COUNT(t.id) AS number_found,
-                AVG(t.wage) AS mean_wage,
-                PERCENTILE_CONT(0.50)
-                    WITHIN GROUP (ORDER BY t.wage) AS median_wage,
-                PERCENTILE_CONT(0.25)
-                    WITHIN GROUP (ORDER BY t.wage) AS percentile_25,
-                PERCENTILE_CONT(0.75)
-                    WITHIN GROUP (ORDER BY t.wage) AS percentile_75
-            FROM your_table AS t
-            INNER JOIN search_keys AS k
-                ON k.yr = t.yr
-               AND k.qtr = t.qtr
-               AND k.state_code = t.state_code
-            WHERE t.wage IS NOT NULL
-        """)).mappings().one()
-
-    return {
-        "number_found": row["number_found"],
-        "mean_wage": (
-            float(row["mean_wage"])
-            if row["mean_wage"] is not None else None
-        ),
-        "median_wage": (
-            float(row["median_wage"])
-            if row["median_wage"] is not None else None
-        ),
-        "percentile_25": (
-            float(row["percentile_25"])
-            if row["percentile_25"] is not None else None
-        ),
-        "percentile_75": (
-            float(row["percentile_75"])
-            if row["percentile_75"] is not None else None
-        ),
-    }
+job.commit()
