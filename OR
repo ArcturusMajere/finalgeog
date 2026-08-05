@@ -1,111 +1,180 @@
-#Use 2Glue Spark jobs. Run the first job once for each year-quarter partition, then run the second job once across the reduced results.
-#job1
+import json
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.io as pio
 
-SOURCE_ROOT="s3://your-data-bucket/parquet"
-INTERMEDIATE_ROOT="s3://your-output-bucket/quarterly-unique-ids"
-YEAR=2024
-QUARTER=1
-SHUFFLE_PARTITIONS=4000
+def create_heatmap_app(xlsx_file,output_html="cohort_heatmap.html",tabs=None):
+    required={
+        "yr_qtr","state","sector","count","mean_wage",
+        "median_wage","percentile_25","percentile_75"
+    }
+    metrics=[
+        "count","mean_wage","median_wage",
+        "percentile_25","percentile_75"
+    ]
 
-input_path=f"{SOURCE_ROOT}/yr={YEAR}/qtr={QUARTER}/"
-output_path=f"{INTERMEDIATE_ROOT}/yr={YEAR}/qtr={QUARTER}/"
+    sheets=pd.read_excel(xlsx_file,sheet_name=tabs if tabs else None)
 
-sc=SparkContext.getOrCreate()
-glue_context=GlueContext(sc)
-spark=glue_context.spark_session
+    if isinstance(sheets,pd.DataFrame):
+        tab_name=tabs if isinstance(tabs,str) else "Data"
+        sheets={tab_name:sheets}
 
-spark.conf.set("spark.sql.adaptive.enabled","true")
-spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled","true")
-spark.conf.set("spark.sql.adaptive.skewJoin.enabled","true")
-spark.conf.set("spark.sql.shuffle.partitions",str(SHUFFLE_PARTITIONS))
-spark.conf.set("spark.sql.files.maxPartitionBytes","134217728")
-spark.conf.set("spark.sql.parquet.compression.codec","snappy")
+    frames=[]
+    for tab,df in sheets.items():
+        df.columns=df.columns.str.strip().str.lower()
+        missing=required-set(df.columns)
+        if missing:
+            raise ValueError(f"Tab {tab} is missing: {sorted(missing)}")
+        df=df[list(required)].copy()
+        df["cohort_state"]=str(tab)
+        df["yr_qtr"]=df["yr_qtr"].astype(str)
+        df["state"]=df["state"].astype(str)
+        df["sector"]=df["sector"].astype(str)
+        for metric in metrics:
+            df[metric]=pd.to_numeric(df[metric],errors="coerce")
+        frames.append(df)
 
-job=Job(glue_context)
-job.init(f"quarterly_unique_ids_{YEAR}_{QUARTER}",{})
+    data=pd.concat(frames,ignore_index=True)
+    records=data.where(pd.notna(data),None).to_dict("records")
+    cohort_states=list(sheets.keys())
 
-quarter_ids=(
-    spark.read
-    .parquet(input_path)
-    .select(F.trim(F.col("ID")).alias("ID"))
-    .filter(
-        F.col("ID").isNotNull()&
-        (F.col("ID")!="")
+    fig=go.Figure(go.Heatmap(
+        z=[[None]],
+        x=[""],
+        y=[""],
+        colorscale="Viridis",
+        colorbar={"title":metrics[0].replace("_"," ").title()},
+        hoverongaps=False
+    ))
+    fig.update_layout(
+        title="Cohort Heatmap",
+        xaxis_title="Year/Quarter",
+        yaxis_title="Sector",
+        template="plotly_white",
+        margin={"l":120,"r":40,"t":80,"b":100}
     )
-    .dropDuplicates(["ID"])
-    .withColumn("quarter_index",F.lit(YEAR*4+QUARTER-1))
-)
 
-(
-    quarter_ids.write
-    .mode("overwrite")
-    .option("compression","snappy")
-    .option("maxRecordsPerFile",5000000)
-    .parquet(output_path)
-)
-
-job.commit()
-
-
-
-
-#job2
-
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from pyspark.context import SparkContext
-from pyspark.sql import functions as F
-
-INTERMEDIATE_ROOT="s3://your-output-bucket/quarterly-unique-ids/"
-FINAL_OUTPUT="s3://your-output-bucket/id-first-occurrence/"
-SHUFFLE_PARTITIONS=8000
-
-sc=SparkContext.getOrCreate()
-glue_context=GlueContext(sc)
-spark=glue_context.spark_session
-
-spark.conf.set("spark.sql.adaptive.enabled","true")
-spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled","true")
-spark.conf.set("spark.sql.adaptive.skewJoin.enabled","true")
-spark.conf.set("spark.sql.shuffle.partitions",str(SHUFFLE_PARTITIONS))
-spark.conf.set("spark.sql.files.maxPartitionBytes","134217728")
-spark.conf.set("spark.sql.parquet.compression.codec","snappy")
-
-job=Job(glue_context)
-job.init("final_id_first_occurrence",{})
-
-first_occurrence=(
-    spark.read
-    .parquet(INTERMEDIATE_ROOT)
-    .select("ID","quarter_index")
-    .groupBy("ID")
-    .agg(F.min("quarter_index").alias("first_quarter_index"))
-    .select(
-        "ID",
-        F.floor(F.col("first_quarter_index")/4)
-        .cast("int")
-        .alias("first_yr"),
-        (F.col("first_quarter_index")%4+1)
-        .cast("int")
-        .alias("first_qtr")
+    plot_html=pio.to_html(
+        fig,
+        include_plotlyjs=True,
+        full_html=False,
+        div_id="heatmap"
     )
-    .withColumn(
-        "first_yr_qtr",
-        F.concat(
-            F.col("first_yr").cast("string"),
-            F.lit("-Q"),
-            F.col("first_qtr").cast("string")
-        )
-    )
-)
 
-(
-    first_occurrence.write
-    .mode("overwrite")
-    .option("compression","snappy")
-    .option("maxRecordsPerFile",5000000)
-    .partitionBy("first_yr")
-    .parquet(FINAL_OUTPUT)
-)
+    records_json=json.dumps(records).replace("</","<\\/")
+    cohorts_json=json.dumps(cohort_states)
+    metrics_json=json.dumps(metrics)
 
-job.commit()
+    html=f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Cohort Heatmap</title>
+<style>
+body{{font-family:Arial,sans-serif;margin:20px;background:#f5f7fa}}
+.controls{{display:flex;gap:18px;align-items:end;background:white;padding:16px;border-radius:8px;box-shadow:0 2px 8px #00000018}}
+label{{display:block;font-weight:bold;margin-bottom:6px}}
+select{{min-width:180px;padding:8px;border:1px solid #bbb;border-radius:5px}}
+#heatmap{{margin-top:18px;background:white;border-radius:8px}}
+</style>
+</head>
+<body>
+<div class="controls">
+<div>
+<label for="cohort">Cohort state</label>
+<select id="cohort"></select>
+</div>
+<div>
+<label for="metric">Metric</label>
+<select id="metric"></select>
+</div>
+<div>
+<label for="yaxis">Y-axis</label>
+<select id="yaxis">
+<option value="sector">Sector</option>
+<option value="state">State</option>
+</select>
+</div>
+</div>
+{plot_html}
+<script>
+const records={records_json};
+const cohorts={cohorts_json};
+const metrics={metrics_json};
+const cohortSelect=document.getElementById("cohort");
+const metricSelect=document.getElementById("metric");
+const ySelect=document.getElementById("yaxis");
+
+cohorts.forEach(value=>cohortSelect.add(new Option(value,value)));
+metrics.forEach(value=>metricSelect.add(new Option(value.replaceAll("_"," "),value)));
+
+function quarterKey(value){{
+const match=String(value).match(/(\\d{{4}})\\D*[Qq]?([1-4])/);
+return match?Number(match[1])*4+Number(match[2]):String(value);
+}}
+
+function updateHeatmap(){{
+const cohort=cohortSelect.value;
+const metric=metricSelect.value;
+const yField=ySelect.value;
+const filtered=records.filter(row=>row.cohort_state===cohort);
+const quarters=[...new Set(filtered.map(row=>row.yr_qtr))]
+.sort((a,b)=>quarterKey(a)-quarterKey(b));
+const yValues=[...new Set(filtered.map(row=>row[yField]))]
+.sort((a,b)=>String(a).localeCompare(String(b),undefined,{{numeric:true}}));
+const grouped={{}};
+
+filtered.forEach(row=>{{
+const key=row[yField]+"|||"+row.yr_qtr;
+if(!grouped[key])grouped[key]=[];
+if(row[metric]!==null)grouped[key].push(Number(row[metric]));
+}});
+
+const z=yValues.map(y=>quarters.map(q=>{{
+const values=grouped[y+"|||"+q]||[];
+if(!values.length)return null;
+if(metric==="count")return values.reduce((a,b)=>a+b,0);
+return values.reduce((a,b)=>a+b,0)/values.length;
+}}));
+
+const title=metric.replaceAll("_"," ").replace(/\\b\\w/g,c=>c.toUpperCase());
+Plotly.react("heatmap",[{
+z:z,
+x:quarters,
+y:yValues,
+type:"heatmap",
+colorscale:"Viridis",
+hoverongaps:false,
+colorbar:{{title:title}},
+hovertemplate:yField.replace(/^./,c=>c.toUpperCase())+
+": %{{y}}<br>Quarter: %{{x}}<br>"+title+": %{{z:,.2f}}<extra></extra>"
+}}],{{
+title:cohort+" Cohort: "+title+" by "+yField.replace(/^./,c=>c.toUpperCase()),
+xaxis:{{title:"Year/Quarter",tickangle:-45}},
+yaxis:{{title:yField.replace(/^./,c=>c.toUpperCase()),automargin:true}},
+template:"plotly_white",
+margin:{{l:120,r:40,t:80,b:100}}
+}},{{responsive:true}});
+}}
+
+cohortSelect.addEventListener("change",updateHeatmap);
+metricSelect.addEventListener("change",updateHeatmap);
+ySelect.addEventListener("change",updateHeatmap);
+updateHeatmap();
+</script>
+</body>
+</html>"""
+
+    with open(output_html,"w",encoding="utf-8") as file:
+        file.write(html)
+
+    print(f"Saved: {output_html}")
+    return output_html
+
+
+
+create_heatmap_app(
+    xlsx_file="cohort_data.xlsx",
+    output_html="cohort_heatmap.html",
+    tabs=["WI","IL","IA","MN","IN"]
+)
