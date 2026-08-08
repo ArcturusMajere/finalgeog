@@ -1,166 +1,352 @@
 import json
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.io as pio
 
-def create_heatmap_app(xlsx_file,output_html="cohort_heatmap.html",tabs=None):
-    required={
-        "yr_qtr","state","sector","count","mean_wage",
-        "median_wage","percentile_25","percentile_75"
-    }
-    metrics=[
-        "count","mean_wage","median_wage",
-        "percentile_25","percentile_75"
-    ]
-
+def create_cohort_flow_app(
+    xlsx_file,
+    output_html="cohort_flows.html",
+    tabs=None,
+    cohort_yr_qtr="2022-1",
+    top_n=15
+):
+    required={"yr_qtr","state","sector","count"}
     sheets=pd.read_excel(xlsx_file,sheet_name=tabs if tabs else None)
 
     if isinstance(sheets,pd.DataFrame):
-        tab_name=tabs if isinstance(tabs,str) else "Data"
+        tab_name=tabs if isinstance(tabs,str) else "Cohort"
         sheets={tab_name:sheets}
 
     frames=[]
+
     for tab,df in sheets.items():
-        df.columns=df.columns.str.strip().str.lower()
+        df.columns=df.columns.astype(str).str.strip().str.lower()
         missing=required-set(df.columns)
+
         if missing:
-            raise ValueError(f"Tab {tab} is missing: {sorted(missing)}")
-        df=df[list(required)].copy()
-        df["cohort_state"]=str(tab)
-        df["yr_qtr"]=df["yr_qtr"].astype(str)
-        df["state"]=df["state"].astype(str)
-        df["sector"]=df["sector"].astype(str)
-        for metric in metrics:
-            df[metric]=pd.to_numeric(df[metric],errors="coerce")
-        frames.append(df)
+            raise ValueError(
+                f"Tab '{tab}' is missing columns: {sorted(missing)}"
+            )
+
+        part=df[["yr_qtr","state","sector","count"]].copy()
+        part["cohort_state"]=str(tab).strip().upper()
+        part["yr_qtr"]=part["yr_qtr"].astype(str).str.strip()
+        part["state"]=part["state"].astype(str).str.strip().str.upper()
+        part["sector"]=part["sector"].astype(str).str.strip()
+        part["count"]=pd.to_numeric(part["count"],errors="coerce")
+
+        part=part.dropna(
+            subset=["yr_qtr","state","sector","count"]
+        )
+
+        part=part[
+            (part["state"]!="") &
+            (part["sector"]!="") &
+            (part["count"]>0)
+        ]
+
+        frames.append(part)
+
+    if not frames:
+        raise ValueError("No valid workbook tabs were found.")
 
     data=pd.concat(frames,ignore_index=True)
-    records=data.where(pd.notna(data),None).to_dict("records")
-    cohort_states=list(sheets.keys())
 
-    fig=go.Figure(go.Heatmap(
-        z=[[None]],
-        x=[""],
-        y=[""],
-        colorscale="Viridis",
-        colorbar={"title":metrics[0].replace("_"," ").title()},
-        hoverongaps=False
-    ))
-    fig.update_layout(
-        title="Cohort Heatmap",
-        xaxis_title="Year/Quarter",
-        yaxis_title="Sector",
-        template="plotly_white",
-        margin={"l":120,"r":40,"t":80,"b":100}
+    data=(
+        data.groupby(
+            ["cohort_state","yr_qtr","state","sector"],
+            as_index=False
+        )["count"].sum()
     )
 
-    plot_html=pio.to_html(
-        fig,
-        include_plotlyjs=True,
-        full_html=False,
-        div_id="heatmap"
+    def quarter_sort_key(value):
+        text=str(value).strip().upper().replace("Q","-")
+        parts=[part for part in text.split("-") if part]
+
+        try:
+            return int(parts[0])*4+int(parts[1])-1
+        except (ValueError,IndexError):
+            return float("inf")
+
+    cohorts=sorted(data["cohort_state"].unique())
+    quarters=sorted(
+        data["yr_qtr"].unique(),
+        key=quarter_sort_key
     )
 
+    records=data.to_dict("records")
     records_json=json.dumps(records).replace("</","<\\/")
-    cohorts_json=json.dumps(cohort_states)
-    metrics_json=json.dumps(metrics)
+    cohorts_json=json.dumps(cohorts)
+    quarters_json=json.dumps(quarters)
+    cohort_period_json=json.dumps(str(cohort_yr_qtr))
+    plotly_js=pio.get_plotlyjs()
 
     html=f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Cohort Heatmap</title>
+<title>Cohort Flow Analysis</title>
 <style>
-body{{font-family:Arial,sans-serif;margin:20px;background:#f5f7fa}}
-.controls{{display:flex;gap:18px;align-items:end;background:white;padding:16px;border-radius:8px;box-shadow:0 2px 8px #00000018}}
-label{{display:block;font-weight:bold;margin-bottom:6px}}
-select{{min-width:180px;padding:8px;border:1px solid #bbb;border-radius:5px}}
-#heatmap{{margin-top:18px;background:white;border-radius:8px}}
+body{{
+font-family:Arial,sans-serif;
+margin:20px;
+background:#f4f6f8;
+color:#222
+}}
+.controls{{
+display:flex;
+flex-wrap:wrap;
+gap:18px;
+padding:16px;
+background:white;
+border-radius:8px;
+box-shadow:0 2px 8px #00000018
+}}
+label{{
+display:block;
+font-weight:bold;
+margin-bottom:6px
+}}
+select{{
+min-width:180px;
+padding:8px;
+border:1px solid #aaa;
+border-radius:5px
+}}
+.summary{{
+margin-top:16px;
+padding:14px 16px;
+background:white;
+border-radius:8px;
+font-weight:bold
+}}
+#sankey,#bars{{
+margin-top:16px;
+background:white;
+border-radius:8px
+}}
+@media(max-width:700px){{
+.controls{{
+display:block
+}}
+.controls div{{
+margin-bottom:12px
+}}
+select{{
+width:100%
+}}
+}}
 </style>
+<script>{plotly_js}</script>
 </head>
 <body>
 <div class="controls">
 <div>
-<label for="cohort">Cohort state</label>
+<label for="cohort">2022-1 cohort state</label>
 <select id="cohort"></select>
 </div>
 <div>
-<label for="metric">Metric</label>
-<select id="metric"></select>
+<label for="quarter">Destination quarter</label>
+<select id="quarter"></select>
 </div>
 <div>
-<label for="yaxis">Y-axis</label>
-<select id="yaxis">
-<option value="sector">Sector</option>
-<option value="state">State</option>
+<label for="flowType">Flow type</label>
+<select id="flowType">
+<option value="state">State flows</option>
+<option value="sector">Sector flows</option>
 </select>
 </div>
 </div>
-{plot_html}
+
+<div id="summary" class="summary"></div>
+<div id="sankey"></div>
+<div id="bars"></div>
+
 <script>
 const records={records_json};
 const cohorts={cohorts_json};
-const metrics={metrics_json};
+const quarters={quarters_json};
+const cohortPeriod={cohort_period_json};
+const topN={int(top_n)};
+
 const cohortSelect=document.getElementById("cohort");
-const metricSelect=document.getElementById("metric");
-const ySelect=document.getElementById("yaxis");
+const quarterSelect=document.getElementById("quarter");
+const flowTypeSelect=document.getElementById("flowType");
+const summary=document.getElementById("summary");
 
-cohorts.forEach(value=>cohortSelect.add(new Option(value,value)));
-metrics.forEach(value=>metricSelect.add(new Option(value.replaceAll("_"," "),value)));
-
-function quarterKey(value){{
-const match=String(value).match(/(\\d{{4}})\\D*[Qq]?([1-4])/);
-return match?Number(match[1])*4+Number(match[2]):String(value);
-}}
-
-function updateHeatmap(){{
-const cohort=cohortSelect.value;
-const metric=metricSelect.value;
-const yField=ySelect.value;
-const filtered=records.filter(row=>row.cohort_state===cohort);
-const quarters=[...new Set(filtered.map(row=>row.yr_qtr))]
-.sort((a,b)=>quarterKey(a)-quarterKey(b));
-const yValues=[...new Set(filtered.map(row=>row[yField]))]
-.sort((a,b)=>String(a).localeCompare(String(b),undefined,{{numeric:true}}));
-const grouped={{}};
-
-filtered.forEach(row=>{{
-const key=row[yField]+"|||"+row.yr_qtr;
-if(!grouped[key])grouped[key]=[];
-if(row[metric]!==null)grouped[key].push(Number(row[metric]));
+cohorts.forEach(value=>{{
+cohortSelect.add(new Option(value,value));
 }});
 
-const z=yValues.map(y=>quarters.map(q=>{{
-const values=grouped[y+"|||"+q]||[];
-if(!values.length)return null;
-if(metric==="count")return values.reduce((a,b)=>a+b,0);
-return values.reduce((a,b)=>a+b,0)/values.length;
-}}));
+quarters.forEach(value=>{{
+quarterSelect.add(new Option(value,value));
+}});
 
-const title=metric.replaceAll("_"," ").replace(/\\b\\w/g,c=>c.toUpperCase());
-Plotly.react("heatmap",[{
-z:z,
-x:quarters,
-y:yValues,
-type:"heatmap",
-colorscale:"Viridis",
-hoverongaps:false,
-colorbar:{{title:title}},
-hovertemplate:yField.replace(/^./,c=>c.toUpperCase())+
-": %{{y}}<br>Quarter: %{{x}}<br>"+title+": %{{z:,.2f}}<extra></extra>"
+if(quarters.includes(cohortPeriod)){{
+quarterSelect.value=cohortPeriod;
+}}
+
+function groupSum(rows,field){{
+const grouped={{}};
+
+rows.forEach(row=>{{
+const value=String(row[field]);
+grouped[value]=(grouped[value]||0)+Number(row.count);
+}});
+
+return Object.entries(grouped)
+.sort((a,b)=>b[1]-a[1]);
+}}
+
+function updateApp(){{
+const cohort=cohortSelect.value;
+const quarter=quarterSelect.value;
+const flowType=flowTypeSelect.value;
+const destinationLabel=flowType==="state"?"State":"Sector";
+
+const filtered=records.filter(row=>
+row.cohort_state===cohort &&
+row.yr_qtr===quarter
+);
+
+const allTotals=groupSum(filtered,flowType);
+const totals=allTotals.slice(0,topN);
+const origin=cohort+" cohort ("+cohortPeriod+")";
+const destinations=totals.map(item=>item[0]);
+const values=totals.map(item=>item[1]);
+const labels=[origin,...destinations];
+const sources=destinations.map(()=>0);
+const targets=destinations.map((value,index)=>index+1);
+const displayedTotal=values.reduce((sum,value)=>sum+value,0);
+const fullTotal=allTotals.reduce(
+(sum,item)=>sum+item[1],0
+);
+
+summary.textContent=
+cohort+" cohort formed in "+cohortPeriod+
+" | Destination quarter: "+quarter+
+" | Total "+destinationLabel.toLowerCase()+
+" flow count: "+fullTotal.toLocaleString();
+
+if(!totals.length){{
+Plotly.react("sankey",[],{{
+title:"No data for the selected cohort and quarter",
+height:300
+}});
+
+Plotly.react("bars",[],{{
+title:"No data for the selected cohort and quarter",
+height:300
+}});
+
+return;
+}}
+
+Plotly.react("sankey",[{
+type:"sankey",
+orientation:"h",
+node:{{
+label:labels,
+pad:18,
+thickness:20,
+line:{{
+color:"#555",
+width:0.5
+}},
+color:labels.map((value,index)=>
+index===0
+?"#d62728"
+:flowType==="state"
+?"#1f77b4"
+:"#2ca02c"
+)
+}},
+link:{{
+source:sources,
+target:targets,
+value:values,
+customdata:destinations,
+color:destinations.map(()=>
+flowType==="state"
+?"rgba(31,119,180,0.45)"
+:"rgba(44,160,44,0.45)"
+),
+hovertemplate:
+destinationLabel+": %{{customdata}}<br>"+
+"Count: %{{value:,.0f}}<extra></extra>"
+}}
 }}],{{
-title:cohort+" Cohort: "+title+" by "+yField.replace(/^./,c=>c.toUpperCase()),
-xaxis:{{title:"Year/Quarter",tickangle:-45}},
-yaxis:{{title:yField.replace(/^./,c=>c.toUpperCase()),automargin:true}},
-template:"plotly_white",
-margin:{{l:120,r:40,t:80,b:100}}
+title:
+"Largest "+destinationLabel.toLowerCase()+
+" flows from the "+cohort+" cohort",
+height:600,
+font:{{
+size:12
+}},
+margin:{{
+l:30,
+r:30,
+t:70,
+b:30
+}},
+annotations:[{{
+text:
+"Top "+totals.length+
+" shown | Displayed count: "+
+displayedTotal.toLocaleString(),
+xref:"paper",
+yref:"paper",
+x:0,
+y:-0.08,
+showarrow:false,
+xanchor:"left"
+}}]
+}},{{responsive:true}});
+
+const reversed=[...totals].reverse();
+
+Plotly.react("bars",[{
+type:"bar",
+orientation:"h",
+x:reversed.map(item=>item[1]),
+y:reversed.map(item=>item[0]),
+text:reversed.map(item=>item[1].toLocaleString()),
+textposition:"outside",
+cliponaxis:false,
+marker:{{
+color:flowType==="state"
+?"#1f77b4"
+:"#2ca02c"
+}},
+hovertemplate:
+destinationLabel+": %{{y}}<br>"+
+"Count: %{{x:,.0f}}<extra></extra>"
+}}],{{
+title:
+"Largest "+destinationLabel.toLowerCase()+
+" flows",
+xaxis:{{
+title:"Count",
+rangemode:"tozero"
+}},
+yaxis:{{
+title:destinationLabel,
+automargin:true
+}},
+height:Math.max(450,totals.length*32),
+margin:{{
+l:140,
+r:80,
+t:60,
+b:60
+}}
 }},{{responsive:true}});
 }}
 
-cohortSelect.addEventListener("change",updateHeatmap);
-metricSelect.addEventListener("change",updateHeatmap);
-ySelect.addEventListener("change",updateHeatmap);
-updateHeatmap();
+cohortSelect.addEventListener("change",updateApp);
+quarterSelect.addEventListener("change",updateApp);
+flowTypeSelect.addEventListener("change",updateApp);
+
+updateApp();
 </script>
 </body>
 </html>"""
@@ -171,10 +357,10 @@ updateHeatmap();
     print(f"Saved: {output_html}")
     return output_html
 
-
-
-create_heatmap_app(
+create_cohort_flow_app(
     xlsx_file="cohort_data.xlsx",
-    output_html="cohort_heatmap.html",
-    tabs=["WI","IL","IA","MN","IN"]
+    output_html="cohort_flows.html",
+    tabs=["WI","IL","IA","MN","IN"],
+    cohort_yr_qtr="2022-1",
+    top_n=15
 )
