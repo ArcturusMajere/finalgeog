@@ -1,366 +1,238 @@
+from pathlib import Path
 import json
 import pandas as pd
-import plotly.io as pio
+from plotly.offline import get_plotlyjs
 
-def create_cohort_flow_app(
-    xlsx_file,
-    output_html="cohort_flows.html",
-    tabs=None,
-    cohort_yr_qtr="2022-1",
-    top_n=15
+def create_state_sector_sankey(
+    xlsx_path,
+    output_html="state_sector_sankey.html",
+    tabs=None
 ):
-    required={"yr_qtr","state","sector","count"}
-    sheets=pd.read_excel(xlsx_file,sheet_name=tabs if tabs else None)
-
-    if isinstance(sheets,pd.DataFrame):
-        tab_name=tabs if isinstance(tabs,str) else "Cohort"
-        sheets={tab_name:sheets}
+    metrics=[
+        "count",
+        "mean_wage",
+        "median_wage",
+        "percentile_25",
+        "percentile_75"
+    ]
+    required=["yr_qtr","state","sector"]+metrics
+    workbook=pd.ExcelFile(xlsx_path)
+    selected_tabs=workbook.sheet_names if tabs is None else tabs
+    missing_tabs=[tab for tab in selected_tabs if tab not in workbook.sheet_names]
+    if missing_tabs:
+        raise ValueError(f"Tabs not found: {missing_tabs}")
 
     frames=[]
-
-    for tab,df in sheets.items():
-        df.columns=df.columns.astype(str).str.strip().str.lower()
-        missing=required-set(df.columns)
-
+    for tab in selected_tabs:
+        df=pd.read_excel(xlsx_path,sheet_name=tab)
+        missing=[col for col in required if col not in df.columns]
         if missing:
-            raise ValueError(
-                f"Tab '{tab}' is missing columns: {sorted(missing)}"
-            )
-
-        part=df[["yr_qtr","state","sector","count"]].copy()
-        part["cohort_state"]=str(tab).strip().upper()
-        part["yr_qtr"]=part["yr_qtr"].astype(str).str.strip()
-        part["state"]=part["state"].astype(str).str.strip().str.upper()
-        part["sector"]=part["sector"].astype(str).str.strip()
-        part["count"]=pd.to_numeric(part["count"],errors="coerce")
-
-        part=part.dropna(
-            subset=["yr_qtr","state","sector","count"]
-        )
-
-        part=part[
-            (part["state"]!="") &
-            (part["sector"]!="") &
-            (part["count"]>0)
-        ]
-
-        frames.append(part)
-
-    if not frames:
-        raise ValueError("No valid workbook tabs were found.")
+            raise ValueError(f"Tab {tab} is missing columns: {missing}")
+        df=df[required].copy()
+        df["cohort_state"]=str(tab)
+        df["yr_qtr"]=df["yr_qtr"].astype(str)
+        df["state"]=df["state"].astype(str)
+        df["sector"]=df["sector"].astype(str)
+        for metric in metrics:
+            df[metric]=pd.to_numeric(df[metric],errors="coerce")
+        frames.append(df)
 
     data=pd.concat(frames,ignore_index=True)
+    records=[]
 
-    data=(
-        data.groupby(
-            ["cohort_state","yr_qtr","state","sector"],
-            as_index=False
-        )["count"].sum()
+    for (cohort,yr_qtr,state,sector),group in data.groupby(
+        ["cohort_state","yr_qtr","state","sector"],
+        dropna=False,
+        sort=False
+    ):
+        count=group["count"].sum(min_count=1)
+        row={
+            "cohort_state":str(cohort),
+            "yr_qtr":str(yr_qtr),
+            "state":str(state),
+            "sector":str(sector),
+            "count":None if pd.isna(count) else float(count)
+        }
+        weights=pd.to_numeric(group["count"],errors="coerce").fillna(0)
+        for metric in metrics[1:]:
+            values=pd.to_numeric(group[metric],errors="coerce")
+            valid=values.notna()
+            if not valid.any():
+                row[metric]=None
+            elif weights[valid].sum()>0:
+                row[metric]=float(
+                    (values[valid]*weights[valid]).sum()/weights[valid].sum()
+                )
+            else:
+                row[metric]=float(values[valid].mean())
+        records.append(row)
+
+    app_data=json.dumps(records,separators=(",",":"),allow_nan=False)
+    cohort_options="".join(
+        f'<option value="{tab}">{tab}</option>' for tab in selected_tabs
     )
-
-    def quarter_sort_key(value):
-        text=str(value).strip().upper().replace("Q","-")
-        parts=[part for part in text.split("-") if part]
-
-        try:
-            return int(parts[0])*4+int(parts[1])-1
-        except (ValueError,IndexError):
-            return float("inf")
-
-    cohorts=sorted(data["cohort_state"].unique())
-    quarters=sorted(
-        data["yr_qtr"].unique(),
-        key=quarter_sort_key
+    metric_options="".join(
+        f'<option value="{metric}">{metric.replace("_"," ").title()}</option>'
+        for metric in metrics
     )
-
-    records=data.to_dict("records")
-    records_json=json.dumps(records).replace("</","<\\/")
-    cohorts_json=json.dumps(cohorts)
-    quarters_json=json.dumps(quarters)
-    cohort_period_json=json.dumps(str(cohort_yr_qtr))
-    plotly_js=pio.get_plotlyjs()
+    plotly_js=get_plotlyjs()
 
     html=f"""<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<title>Cohort Flow Analysis</title>
-<style>
-body{{
-font-family:Arial,sans-serif;
-margin:20px;
-background:#f4f6f8;
-color:#222
-}}
-.controls{{
-display:flex;
-flex-wrap:wrap;
-gap:18px;
-padding:16px;
-background:white;
-border-radius:8px;
-box-shadow:0 2px 8px #00000018
-}}
-label{{
-display:block;
-font-weight:bold;
-margin-bottom:6px
-}}
-select{{
-min-width:180px;
-padding:8px;
-border:1px solid #aaa;
-border-radius:5px
-}}
-.summary{{
-margin-top:16px;
-padding:14px 16px;
-background:white;
-border-radius:8px;
-font-weight:bold
-}}
-#sankey,#bars{{
-margin-top:16px;
-background:white;
-border-radius:8px
-}}
-@media(max-width:700px){{
-.controls{{
-display:block
-}}
-.controls div{{
-margin-bottom:12px
-}}
-select{{
-width:100%
-}}
-}}
-</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>State to Sector Sankey</title>
 <script>{plotly_js}</script>
+<style>
+body{{font-family:Arial,sans-serif;margin:0;background:#f7f8fa;color:#202124}}
+header{{background:#fff;border-bottom:1px solid #ddd;padding:18px 24px}}
+h1{{margin:0 0 14px;font-size:24px}}
+.controls{{display:flex;gap:18px;flex-wrap:wrap}}
+.control{{display:flex;flex-direction:column;gap:5px}}
+label{{font-size:13px;font-weight:600;color:#555}}
+select{{min-width:170px;padding:8px;border:1px solid #bbb;border-radius:5px;background:#fff}}
+#chart{{height:calc(100vh - 130px);min-height:600px}}
+</style>
 </head>
 <body>
+<header>
+<h1>State to Sector Flow</h1>
 <div class="controls">
-<div>
-<label for="cohort">2022-1 cohort state</label>
-<select id="cohort"></select>
+<div class="control">
+<label for="cohort">Cohort state</label>
+<select id="cohort">{cohort_options}</select>
 </div>
-<div>
-<label for="quarter">Destination quarter</label>
+<div class="control">
+<label for="quarter">Quarter</label>
 <select id="quarter"></select>
 </div>
-<div>
-<label for="flowType">Flow type</label>
-<select id="flowType">
-<option value="state">State flows</option>
-<option value="sector">Sector flows</option>
-</select>
+<div class="control">
+<label for="metric">Metric</label>
+<select id="metric">{metric_options}</select>
 </div>
 </div>
-
-<div id="summary" class="summary"></div>
-<div id="sankey"></div>
-<div id="bars"></div>
-
+</header>
+<div id="chart"></div>
 <script>
-const records={records_json};
-const cohorts={cohorts_json};
-const quarters={quarters_json};
-const cohortPeriod={cohort_period_json};
-const topN={int(top_n)};
+const rows={app_data};
+const cohort=document.getElementById("cohort");
+const quarter=document.getElementById("quarter");
+const metric=document.getElementById("metric");
 
-const cohortSelect=document.getElementById("cohort");
-const quarterSelect=document.getElementById("quarter");
-const flowTypeSelect=document.getElementById("flowType");
-const summary=document.getElementById("summary");
-
-cohorts.forEach(value=>{{
-cohortSelect.add(new Option(value,value));
-}});
-
-quarters.forEach(value=>{{
-quarterSelect.add(new Option(value,value));
-}});
-
-if(quarters.includes(cohortPeriod)){{
-quarterSelect.value=cohortPeriod;
+function naturalSort(a,b){{
+return a.localeCompare(b,undefined,{{numeric:true,sensitivity:"base"}});
 }}
 
-function groupSum(rows,field){{
-const grouped={{}};
-
-rows.forEach(row=>{{
-const value=String(row[field]);
-grouped[value]=(grouped[value]||0)+Number(row.count);
-}});
-
-return Object.entries(grouped)
-.sort((a,b)=>b[1]-a[1]);
+function colorFor(text,alpha=1){{
+let hash=0;
+for(let i=0;i<text.length;i++) hash=text.charCodeAt(i)+((hash<<5)-hash);
+const hue=Math.abs(hash)%360;
+return `hsla(${{hue}},65%,48%,${{alpha}})`;
 }}
 
-function updateApp(){{
-const cohort=cohortSelect.value;
-const quarter=quarterSelect.value;
-const flowType=flowTypeSelect.value;
-const destinationLabel=flowType==="state"?"State":"Sector";
+function updateQuarters(){{
+const values=[...new Set(
+rows.filter(r=>r.cohort_state===cohort.value).map(r=>r.yr_qtr)
+)].sort(naturalSort);
+const previous=quarter.value;
+quarter.innerHTML=values.map(
+v=>`<option value="${{v}}">${{v}}</option>`
+).join("");
+if(values.includes(previous)) quarter.value=previous;
+}}
 
-const filtered=records.filter(row=>
-row.cohort_state===cohort &&
-row.yr_qtr===quarter
+function draw(){{
+const selected=rows.filter(r=>
+r.cohort_state===cohort.value &&
+r.yr_qtr===quarter.value &&
+r[metric.value]!==null &&
+Number(r[metric.value])>0
 );
-
-const allTotals=groupSum(filtered,flowType);
-const totals=allTotals.slice(0,topN);
-const origin=cohort+" cohort ("+cohortPeriod+")";
-const destinations=totals.map(item=>item[0]);
-const values=totals.map(item=>item[1]);
-const labels=[origin,...destinations];
-const sources=destinations.map(()=>0);
-const targets=destinations.map((value,index)=>index+1);
-const displayedTotal=values.reduce((sum,value)=>sum+value,0);
-const fullTotal=allTotals.reduce(
-(sum,item)=>sum+item[1],0
+const states=[...new Set(selected.map(r=>r.state))].sort(naturalSort);
+const sectors=[...new Set(selected.map(r=>r.sector))].sort(naturalSort);
+const labels=[...states,...sectors];
+const stateIndex=Object.fromEntries(states.map((v,i)=>[v,i]));
+const sectorIndex=Object.fromEntries(
+sectors.map((v,i)=>[v,states.length+i])
 );
-
-summary.textContent=
-cohort+" cohort formed in "+cohortPeriod+
-" | Destination quarter: "+quarter+
-" | Total "+destinationLabel.toLowerCase()+
-" flow count: "+fullTotal.toLocaleString();
-
-if(!totals.length){{
-Plotly.react("sankey",[],{{
-title:"No data for the selected cohort and quarter",
-height:300
-}});
-
-Plotly.react("bars",[],{{
-title:"No data for the selected cohort and quarter",
-height:300
-}});
-
-return;
-}}
-
-Plotly.react("sankey",[{
+const source=selected.map(r=>stateIndex[r.state]);
+const target=selected.map(r=>sectorIndex[r.sector]);
+const values=selected.map(r=>Number(r[metric.value]));
+const customdata=selected.map(r=>[
+r.state,
+r.sector,
+r.cohort_state,
+r.yr_qtr
+]);
+const nodeColors=[
+...states.map(s=>colorFor(s)),
+...sectors.map(()=>"#aeb4bc")
+];
+const linkColors=selected.map(r=>colorFor(r.state,.35));
+const currency=metric.value!=="count";
+const trace={{
 type:"sankey",
 orientation:"h",
+arrangement:"snap",
+valueformat:currency?",.2f":",.0f",
+valuesuffix:currency?"":" workers",
 node:{{
+pad:14,
+thickness:18,
+line:{{color:"#555",width:.4}},
 label:labels,
-pad:18,
-thickness:20,
-line:{{
-color:"#555",
-width:0.5
-}},
-color:labels.map((value,index)=>
-index===0
-?"#d62728"
-:flowType==="state"
-?"#1f77b4"
-:"#2ca02c"
-)
+color:nodeColors,
+hovertemplate:"%{{label}}<extra></extra>"
 }},
 link:{{
-source:sources,
-target:targets,
+source:source,
+target:target,
 value:values,
-customdata:destinations,
-color:destinations.map(()=>
-flowType==="state"
-?"rgba(31,119,180,0.45)"
-:"rgba(44,160,44,0.45)"
-),
+color:linkColors,
+customdata:customdata,
 hovertemplate:
-destinationLabel+": %{{customdata}}<br>"+
-"Count: %{{value:,.0f}}<extra></extra>"
+"Cohort: %{{customdata[2]}}<br>"+
+"Quarter: %{{customdata[3]}}<br>"+
+"State: %{{customdata[0]}}<br>"+
+"Sector: %{{customdata[1]}}<br>"+
+`${{metric.options[metric.selectedIndex].text}}: `+
+(currency?"$":"")+"%{{value:,.2f}}<extra></extra>"
 }}
-}}],{{
-title:
-"Largest "+destinationLabel.toLowerCase()+
-" flows from the "+cohort+" cohort",
-height:600,
-font:{{
-size:12
+}};
+const layout={{
+title:{{
+text:`Cohort ${{cohort.value}}: State → Sector<br>`+
+`<sup>${{quarter.value}} | ${{metric.options[metric.selectedIndex].text}}</sup>`,
+x:.5
 }},
-margin:{{
-l:30,
-r:30,
-t:70,
-b:30
-}},
-annotations:[{{
-text:
-"Top "+totals.length+
-" shown | Displayed count: "+
-displayedTotal.toLocaleString(),
-xref:"paper",
-yref:"paper",
-x:0,
-y:-0.08,
-showarrow:false,
-xanchor:"left"
-}}]
-}},{{responsive:true}});
-
-const reversed=[...totals].reverse();
-
-Plotly.react("bars",[{
-type:"bar",
-orientation:"h",
-x:reversed.map(item=>item[1]),
-y:reversed.map(item=>item[0]),
-text:reversed.map(item=>item[1].toLocaleString()),
-textposition:"outside",
-cliponaxis:false,
-marker:{{
-color:flowType==="state"
-?"#1f77b4"
-:"#2ca02c"
-}},
-hovertemplate:
-destinationLabel+": %{{y}}<br>"+
-"Count: %{{x:,.0f}}<extra></extra>"
-}}],{{
-title:
-"Largest "+destinationLabel.toLowerCase()+
-" flows",
-xaxis:{{
-title:"Count",
-rangemode:"tozero"
-}},
-yaxis:{{
-title:destinationLabel,
-automargin:true
-}},
-height:Math.max(450,totals.length*32),
-margin:{{
-l:140,
-r:80,
-t:60,
-b:60
-}}
-}},{{responsive:true}});
+font:{{size:12}},
+paper_bgcolor:"#f7f8fa",
+plot_bgcolor:"#f7f8fa",
+margin:{{l:30,r:30,t:80,b:30}}
+}};
+Plotly.react("chart",[trace],layout,{{responsive:true,displaylogo:false}});
 }}
 
-cohortSelect.addEventListener("change",updateApp);
-quarterSelect.addEventListener("change",updateApp);
-flowTypeSelect.addEventListener("change",updateApp);
-
-updateApp();
+cohort.addEventListener("change",()=>{{updateQuarters();draw()}});
+quarter.addEventListener("change",draw);
+metric.addEventListener("change",draw);
+window.addEventListener("resize",()=>Plotly.Plots.resize("chart"));
+updateQuarters();
+draw();
 </script>
 </body>
 </html>"""
 
-    with open(output_html,"w",encoding="utf-8") as file:
-        file.write(html)
+    output_path=Path(output_html).resolve()
+    output_path.write_text(html,encoding="utf-8")
+    print(f"Created: {{output_path}}")
+    return output_path
 
-    print(f"Saved: {output_html}")
-    return output_html
 
-create_cohort_flow_app(
-    xlsx_file="cohort_data.xlsx",
-    output_html="cohort_flows.html",
-    tabs=["WI","IL","IA","MN","IN"],
-    cohort_yr_qtr="2022-1",
-    top_n=15
+
+create_state_sector_sankey(
+    xlsx_path="state_flows.xlsx",
+    output_html="state_sector_sankey.html",
+    tabs=["WI","IL","IA","MN","IN"]
 )
