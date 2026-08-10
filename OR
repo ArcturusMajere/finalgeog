@@ -18,6 +18,7 @@ def create_state_sector_sankey(
     required=["yr_qtr","state","sector"]+metrics
     workbook=pd.ExcelFile(xlsx_path)
     selected_tabs=workbook.sheet_names if tabs is None else list(tabs)
+
     missing_tabs=[
         tab for tab in selected_tabs
         if tab not in workbook.sheet_names
@@ -26,11 +27,12 @@ def create_state_sector_sankey(
         raise ValueError(f"Tabs not found: {missing_tabs}")
 
     frames=[]
+
     for tab in selected_tabs:
         df=pd.read_excel(xlsx_path,sheet_name=tab)
         missing=[
-            col for col in required
-            if col not in df.columns
+            column for column in required
+            if column not in df.columns
         ]
         if missing:
             raise ValueError(
@@ -43,62 +45,20 @@ def create_state_sector_sankey(
         df["state"]=df["state"].astype(str)
         df["sector"]=df["sector"].astype(str)
 
-        for metric_name in metrics:
-            df[metric_name]=pd.to_numeric(
-                df[metric_name],
+        for metric in metrics:
+            df[metric]=pd.to_numeric(
+                df[metric],
                 errors="coerce"
             )
 
         frames.append(df)
 
     data=pd.concat(frames,ignore_index=True)
-    records=[]
-    keys=[
-        "cohort_state",
-        "yr_qtr",
-        "state",
-        "sector"
-    ]
 
-    for key,group in data.groupby(
-        keys,
-        dropna=False,
-        sort=False
-    ):
-        cohort_value,quarter_value,state_value,sector_value=key
-        count_value=group["count"].sum(min_count=1)
-
-        row={
-            "cohort_state":str(cohort_value),
-            "yr_qtr":str(quarter_value),
-            "state":str(state_value),
-            "sector":str(sector_value),
-            "count":(
-                None
-                if pd.isna(count_value)
-                else float(count_value)
-            )
-        }
-
-        weights=group["count"].fillna(0).clip(lower=0)
-
-        for metric_name in metrics[1:]:
-            values=group[metric_name]
-            valid=values.notna()
-
-            if not valid.any():
-                row[metric_name]=None
-            elif weights[valid].sum()>0:
-                row[metric_name]=float(
-                    (values[valid]*weights[valid]).sum()
-                    /weights[valid].sum()
-                )
-            else:
-                row[metric_name]=float(
-                    values[valid].mean()
-                )
-
-        records.append(row)
+    records=data.where(
+        pd.notna(data),
+        None
+    ).to_dict("records")
 
     app_data=json.dumps(
         records,
@@ -111,14 +71,12 @@ def create_state_sector_sankey(
         separators=(",",":")
     )
 
-    plotly_js=get_plotlyjs()
-
     html="""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>State to Sector Sankey</title>
+<title>Cohort Sankey</title>
 <script>__PLOTLY__</script>
 <style>
 body{font-family:Arial,sans-serif;margin:0;background:#f7f8fa;color:#202124}
@@ -127,13 +85,13 @@ h1{margin:0 0 14px;font-size:24px}
 .controls{display:flex;gap:18px;flex-wrap:wrap}
 .control{display:flex;flex-direction:column;gap:5px}
 label{font-size:13px;font-weight:600;color:#555}
-select{min-width:170px;padding:8px;border:1px solid #bbb;border-radius:5px;background:#fff}
+select{min-width:165px;padding:8px;border:1px solid #bbb;border-radius:5px;background:#fff}
 #chart{height:calc(100vh - 130px);min-height:600px}
 </style>
 </head>
 <body>
 <header>
-<h1>State to Sector Flow</h1>
+<h1>Cohort Flow</h1>
 <div class="controls">
 <div class="control">
 <label for="cohort">Cohort state</label>
@@ -142,6 +100,13 @@ select{min-width:170px;padding:8px;border:1px solid #bbb;border-radius:5px;backg
 <div class="control">
 <label for="quarter">Quarter</label>
 <select id="quarter"></select>
+</div>
+<div class="control">
+<label for="dimension">View by</label>
+<select id="dimension">
+<option value="state">State</option>
+<option value="sector">Sector</option>
+</select>
 </div>
 <div class="control">
 <label for="metric">Metric</label>
@@ -161,10 +126,11 @@ const rows=__DATA__;
 const cohorts=__COHORTS__;
 const cohort=document.getElementById("cohort");
 const quarter=document.getElementById("quarter");
+const dimension=document.getElementById("dimension");
 const metric=document.getElementById("metric");
 
 cohort.innerHTML=cohorts.map(
-v=>`<option value="${v}">${v}</option>`
+value=>`<option value="${value}">${value}</option>`
 ).join("");
 
 function naturalSort(a,b){
@@ -185,93 +151,115 @@ return `hsla(${hue},65%,48%,${alpha})`;
 }
 
 function updateQuarters(){
-const values=[
+const quarters=[
 ...new Set(
 rows
-.filter(r=>r.cohort_state===cohort.value)
-.map(r=>r.yr_qtr)
+.filter(row=>row.cohort_state===cohort.value)
+.map(row=>row.yr_qtr)
 )
 ].sort(naturalSort);
 
 const previous=quarter.value;
 
-quarter.innerHTML=values.map(
-v=>`<option value="${v}">${v}</option>`
+quarter.innerHTML=quarters.map(
+value=>`<option value="${value}">${value}</option>`
 ).join("");
 
-if(values.includes(previous)){
+if(quarters.includes(previous)){
 quarter.value=previous;
 }
 }
 
+function summarize(selectedRows,groupField,metricName){
+const groups=new Map();
+
+selectedRows.forEach(row=>{
+const name=String(row[groupField]);
+const count=Number(row.count)||0;
+const metricValue=Number(row[metricName]);
+
+if(!groups.has(name)){
+groups.set(name,{
+name:name,
+count:0,
+weightedTotal:0,
+weight:0
+});
+}
+
+const group=groups.get(name);
+group.count+=count;
+
+if(Number.isFinite(metricValue)){
+if(count>0){
+group.weightedTotal+=metricValue*count;
+group.weight+=count;
+}else{
+group.weightedTotal+=metricValue;
+group.weight+=1;
+}
+}
+});
+
+return [...groups.values()]
+.map(group=>({
+name:group.name,
+value:metricName==="count"
+?group.count
+:group.weight>0
+?group.weightedTotal/group.weight
+:0
+}))
+.filter(group=>group.value>0)
+.sort((a,b)=>b.value-a.value);
+}
+
 function draw(){
 const metricName=metric.value;
+const groupField=dimension.value;
 
-const selected=rows.filter(
-r=>
-r.cohort_state===cohort.value &&
-r.yr_qtr===quarter.value &&
-r[metricName]!==null &&
-Number(r[metricName])>0
+const selectedRows=rows.filter(
+row=>
+row.cohort_state===cohort.value &&
+row.yr_qtr===quarter.value
 );
 
-const states=[
-...new Set(selected.map(r=>r.state))
-].sort(naturalSort);
-
-const sectors=[
-...new Set(selected.map(r=>r.sector))
-].sort(naturalSort);
-
-const labels=[...states,...sectors];
-
-const stateIndex=Object.fromEntries(
-states.map(
-(value,index)=>[value,index]
-)
+const groups=summarize(
+selectedRows,
+groupField,
+metricName
 );
 
-const sectorIndex=Object.fromEntries(
-sectors.map(
-(value,index)=>[value,states.length+index]
-)
-);
+const rootLabel=`${cohort.value} cohort`;
+const labels=[
+rootLabel,
+...groups.map(group=>group.name)
+];
 
-const source=selected.map(
-r=>stateIndex[r.state]
+const source=groups.map(()=>0);
+const target=groups.map(
+(group,index)=>index+1
 );
-
-const target=selected.map(
-r=>sectorIndex[r.sector]
-);
-
-const values=selected.map(
-r=>Number(r[metricName])
-);
-
-const customdata=selected.map(
-r=>[
-r.state,
-r.sector,
-r.cohort_state,
-r.yr_qtr
-]
+const values=groups.map(
+group=>group.value
 );
 
 const nodeColors=[
-...states.map(
-value=>colorFor(value)
-),
-...sectors.map(
-()=>"#aeb4bc"
+"#263b80",
+...groups.map(
+group=>colorFor(group.name)
 )
 ];
 
-const linkColors=selected.map(
-r=>colorFor(r.state,.35)
+const linkColors=groups.map(
+group=>colorFor(group.name,.35)
 );
 
 const currency=metricName!=="count";
+const metricLabel=
+metric.options[metric.selectedIndex].text;
+const dimensionLabel=
+dimension.options[dimension.selectedIndex].text;
 
 const trace={
 type:"sankey",
@@ -280,8 +268,8 @@ arrangement:"snap",
 valueformat:currency?",.2f":",.0f",
 valuesuffix:currency?"":" workers",
 node:{
-pad:14,
-thickness:18,
+pad:18,
+thickness:20,
 line:{
 color:"#555",
 width:.4
@@ -295,36 +283,33 @@ source:source,
 target:target,
 value:values,
 color:linkColors,
-customdata:customdata,
+customdata:groups.map(
+group=>group.name
+),
 hovertemplate:
-"Cohort: %{customdata[2]}<br>"+
-"Quarter: %{customdata[3]}<br>"+
-"State: %{customdata[0]}<br>"+
-"Sector: %{customdata[1]}<br>"+
-"Value: "+
+"Cohort: "+cohort.value+
+"<br>"+dimensionLabel+": %{customdata}"+
+"<br>"+metricLabel+": "+
 (currency?"$":"")+
 "%{value:,.2f}<extra></extra>"
 }
 };
 
-const metricLabel=
-metric.options[metric.selectedIndex].text;
-
 const layout={
 title:{
 text:
-`Cohort ${cohort.value}: State → Sector<br>`+
+`Cohort ${cohort.value} → ${dimensionLabel}<br>`+
 `<sup>${quarter.value} | ${metricLabel}</sup>`,
 x:.5
 },
 font:{
-size:12
+size:13
 },
 paper_bgcolor:"#f7f8fa",
 plot_bgcolor:"#f7f8fa",
 margin:{
-l:30,
-r:30,
+l:40,
+r:40,
 t:80,
 b:30
 }
@@ -349,15 +334,9 @@ draw();
 }
 );
 
-quarter.addEventListener(
-"change",
-draw
-);
-
-metric.addEventListener(
-"change",
-draw
-);
+quarter.addEventListener("change",draw);
+dimension.addEventListener("change",draw);
+metric.addEventListener("change",draw);
 
 updateQuarters();
 draw();
@@ -367,7 +346,7 @@ draw();
 
     html=html.replace(
         "__PLOTLY__",
-        plotly_js
+        get_plotlyjs()
     ).replace(
         "__DATA__",
         app_data
@@ -384,7 +363,6 @@ draw();
 
     print(f"Created: {output_path}")
     return output_path
-
 
 create_state_sector_sankey(
     xlsx_path="state_flows.xlsx",
