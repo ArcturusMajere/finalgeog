@@ -17,82 +17,118 @@ def create_state_sector_sankey(
     ]
     required=["yr_qtr","state","sector"]+metrics
     workbook=pd.ExcelFile(xlsx_path)
-    selected_tabs=workbook.sheet_names if tabs is None else tabs
-    missing_tabs=[tab for tab in selected_tabs if tab not in workbook.sheet_names]
+    selected_tabs=workbook.sheet_names if tabs is None else list(tabs)
+    missing_tabs=[
+        tab for tab in selected_tabs
+        if tab not in workbook.sheet_names
+    ]
     if missing_tabs:
         raise ValueError(f"Tabs not found: {missing_tabs}")
 
     frames=[]
     for tab in selected_tabs:
         df=pd.read_excel(xlsx_path,sheet_name=tab)
-        missing=[col for col in required if col not in df.columns]
+        missing=[
+            col for col in required
+            if col not in df.columns
+        ]
         if missing:
-            raise ValueError(f"Tab {tab} is missing columns: {missing}")
+            raise ValueError(
+                f"Tab {tab} is missing columns: {missing}"
+            )
+
         df=df[required].copy()
         df["cohort_state"]=str(tab)
         df["yr_qtr"]=df["yr_qtr"].astype(str)
         df["state"]=df["state"].astype(str)
         df["sector"]=df["sector"].astype(str)
-        for metric in metrics:
-            df[metric]=pd.to_numeric(df[metric],errors="coerce")
+
+        for metric_name in metrics:
+            df[metric_name]=pd.to_numeric(
+                df[metric_name],
+                errors="coerce"
+            )
+
         frames.append(df)
 
     data=pd.concat(frames,ignore_index=True)
     records=[]
+    keys=[
+        "cohort_state",
+        "yr_qtr",
+        "state",
+        "sector"
+    ]
 
-    for (cohort,yr_qtr,state,sector),group in data.groupby(
-        ["cohort_state","yr_qtr","state","sector"],
+    for key,group in data.groupby(
+        keys,
         dropna=False,
         sort=False
     ):
-        count=group["count"].sum(min_count=1)
+        cohort_value,quarter_value,state_value,sector_value=key
+        count_value=group["count"].sum(min_count=1)
+
         row={
-            "cohort_state":str(cohort),
-            "yr_qtr":str(yr_qtr),
-            "state":str(state),
-            "sector":str(sector),
-            "count":None if pd.isna(count) else float(count)
+            "cohort_state":str(cohort_value),
+            "yr_qtr":str(quarter_value),
+            "state":str(state_value),
+            "sector":str(sector_value),
+            "count":(
+                None
+                if pd.isna(count_value)
+                else float(count_value)
+            )
         }
-        weights=pd.to_numeric(group["count"],errors="coerce").fillna(0)
-        for metric in metrics[1:]:
-            values=pd.to_numeric(group[metric],errors="coerce")
+
+        weights=group["count"].fillna(0).clip(lower=0)
+
+        for metric_name in metrics[1:]:
+            values=group[metric_name]
             valid=values.notna()
+
             if not valid.any():
-                row[metric]=None
+                row[metric_name]=None
             elif weights[valid].sum()>0:
-                row[metric]=float(
-                    (values[valid]*weights[valid]).sum()/weights[valid].sum()
+                row[metric_name]=float(
+                    (values[valid]*weights[valid]).sum()
+                    /weights[valid].sum()
                 )
             else:
-                row[metric]=float(values[valid].mean())
+                row[metric_name]=float(
+                    values[valid].mean()
+                )
+
         records.append(row)
 
-    app_data=json.dumps(records,separators=(",",":"),allow_nan=False)
-    cohort_options="".join(
-        f'<option value="{tab}">{tab}</option>' for tab in selected_tabs
+    app_data=json.dumps(
+        records,
+        separators=(",",":"),
+        allow_nan=False
+    ).replace("</","<\\/")
+
+    cohorts=json.dumps(
+        [str(tab) for tab in selected_tabs],
+        separators=(",",":")
     )
-    metric_options="".join(
-        f'<option value="{metric}">{metric.replace("_"," ").title()}</option>'
-        for metric in metrics
-    )
+
     plotly_js=get_plotlyjs()
 
-    html=f"""<!DOCTYPE html>
+    html="""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>State to Sector Sankey</title>
-<script>{plotly_js}</script>
+<script>__PLOTLY__</script>
 <style>
-body{{font-family:Arial,sans-serif;margin:0;background:#f7f8fa;color:#202124}}
-header{{background:#fff;border-bottom:1px solid #ddd;padding:18px 24px}}
-h1{{margin:0 0 14px;font-size:24px}}
-.controls{{display:flex;gap:18px;flex-wrap:wrap}}
-.control{{display:flex;flex-direction:column;gap:5px}}
-label{{font-size:13px;font-weight:600;color:#555}}
-select{{min-width:170px;padding:8px;border:1px solid #bbb;border-radius:5px;background:#fff}}
-#chart{{height:calc(100vh - 130px);min-height:600px}}
+body{font-family:Arial,sans-serif;margin:0;background:#f7f8fa;color:#202124}
+header{background:#fff;border-bottom:1px solid #ddd;padding:18px 24px}
+h1{margin:0 0 14px;font-size:24px}
+.controls{display:flex;gap:18px;flex-wrap:wrap}
+.control{display:flex;flex-direction:column;gap:5px}
+label{font-size:13px;font-weight:600;color:#555}
+select{min-width:170px;padding:8px;border:1px solid #bbb;border-radius:5px;background:#fff}
+#chart{height:calc(100vh - 130px);min-height:600px}
 </style>
 </head>
 <body>
@@ -101,7 +137,7 @@ select{{min-width:170px;padding:8px;border:1px solid #bbb;border-radius:5px;back
 <div class="controls">
 <div class="control">
 <label for="cohort">Cohort state</label>
-<select id="cohort">{cohort_options}</select>
+<select id="cohort"></select>
 </div>
 <div class="control">
 <label for="quarter">Quarter</label>
@@ -109,126 +145,245 @@ select{{min-width:170px;padding:8px;border:1px solid #bbb;border-radius:5px;back
 </div>
 <div class="control">
 <label for="metric">Metric</label>
-<select id="metric">{metric_options}</select>
+<select id="metric">
+<option value="count">Count</option>
+<option value="mean_wage">Mean Wage</option>
+<option value="median_wage">Median Wage</option>
+<option value="percentile_25">Percentile 25</option>
+<option value="percentile_75">Percentile 75</option>
+</select>
 </div>
 </div>
 </header>
 <div id="chart"></div>
 <script>
-const rows={app_data};
+const rows=__DATA__;
+const cohorts=__COHORTS__;
 const cohort=document.getElementById("cohort");
 const quarter=document.getElementById("quarter");
 const metric=document.getElementById("metric");
 
-function naturalSort(a,b){{
-return a.localeCompare(b,undefined,{{numeric:true,sensitivity:"base"}});
-}}
-
-function colorFor(text,alpha=1){{
-let hash=0;
-for(let i=0;i<text.length;i++) hash=text.charCodeAt(i)+((hash<<5)-hash);
-const hue=Math.abs(hash)%360;
-return `hsla(${{hue}},65%,48%,${{alpha}})`;
-}}
-
-function updateQuarters(){{
-const values=[...new Set(
-rows.filter(r=>r.cohort_state===cohort.value).map(r=>r.yr_qtr)
-)].sort(naturalSort);
-const previous=quarter.value;
-quarter.innerHTML=values.map(
-v=>`<option value="${{v}}">${{v}}</option>`
+cohort.innerHTML=cohorts.map(
+v=>`<option value="${v}">${v}</option>`
 ).join("");
-if(values.includes(previous)) quarter.value=previous;
-}}
 
-function draw(){{
-const selected=rows.filter(r=>
+function naturalSort(a,b){
+return a.localeCompare(
+b,
+undefined,
+{numeric:true,sensitivity:"base"}
+);
+}
+
+function colorFor(value,alpha=1){
+let hash=0;
+for(let i=0;i<value.length;i++){
+hash=value.charCodeAt(i)+((hash<<5)-hash);
+}
+const hue=Math.abs(hash)%360;
+return `hsla(${hue},65%,48%,${alpha})`;
+}
+
+function updateQuarters(){
+const values=[
+...new Set(
+rows
+.filter(r=>r.cohort_state===cohort.value)
+.map(r=>r.yr_qtr)
+)
+].sort(naturalSort);
+
+const previous=quarter.value;
+
+quarter.innerHTML=values.map(
+v=>`<option value="${v}">${v}</option>`
+).join("");
+
+if(values.includes(previous)){
+quarter.value=previous;
+}
+}
+
+function draw(){
+const metricName=metric.value;
+
+const selected=rows.filter(
+r=>
 r.cohort_state===cohort.value &&
 r.yr_qtr===quarter.value &&
-r[metric.value]!==null &&
-Number(r[metric.value])>0
+r[metricName]!==null &&
+Number(r[metricName])>0
 );
-const states=[...new Set(selected.map(r=>r.state))].sort(naturalSort);
-const sectors=[...new Set(selected.map(r=>r.sector))].sort(naturalSort);
+
+const states=[
+...new Set(selected.map(r=>r.state))
+].sort(naturalSort);
+
+const sectors=[
+...new Set(selected.map(r=>r.sector))
+].sort(naturalSort);
+
 const labels=[...states,...sectors];
-const stateIndex=Object.fromEntries(states.map((v,i)=>[v,i]));
-const sectorIndex=Object.fromEntries(
-sectors.map((v,i)=>[v,states.length+i])
+
+const stateIndex=Object.fromEntries(
+states.map(
+(value,index)=>[value,index]
+)
 );
-const source=selected.map(r=>stateIndex[r.state]);
-const target=selected.map(r=>sectorIndex[r.sector]);
-const values=selected.map(r=>Number(r[metric.value]));
-const customdata=selected.map(r=>[
+
+const sectorIndex=Object.fromEntries(
+sectors.map(
+(value,index)=>[value,states.length+index]
+)
+);
+
+const source=selected.map(
+r=>stateIndex[r.state]
+);
+
+const target=selected.map(
+r=>sectorIndex[r.sector]
+);
+
+const values=selected.map(
+r=>Number(r[metricName])
+);
+
+const customdata=selected.map(
+r=>[
 r.state,
 r.sector,
 r.cohort_state,
 r.yr_qtr
-]);
+]
+);
+
 const nodeColors=[
-...states.map(s=>colorFor(s)),
-...sectors.map(()=>"#aeb4bc")
+...states.map(
+value=>colorFor(value)
+),
+...sectors.map(
+()=>"#aeb4bc"
+)
 ];
-const linkColors=selected.map(r=>colorFor(r.state,.35));
-const currency=metric.value!=="count";
-const trace={{
+
+const linkColors=selected.map(
+r=>colorFor(r.state,.35)
+);
+
+const currency=metricName!=="count";
+
+const trace={
 type:"sankey",
 orientation:"h",
 arrangement:"snap",
 valueformat:currency?",.2f":",.0f",
 valuesuffix:currency?"":" workers",
-node:{{
+node:{
 pad:14,
 thickness:18,
-line:{{color:"#555",width:.4}},
+line:{
+color:"#555",
+width:.4
+},
 label:labels,
 color:nodeColors,
-hovertemplate:"%{{label}}<extra></extra>"
-}},
-link:{{
+hovertemplate:"%{label}<extra></extra>"
+},
+link:{
 source:source,
 target:target,
 value:values,
 color:linkColors,
 customdata:customdata,
 hovertemplate:
-"Cohort: %{{customdata[2]}}<br>"+
-"Quarter: %{{customdata[3]}}<br>"+
-"State: %{{customdata[0]}}<br>"+
-"Sector: %{{customdata[1]}}<br>"+
-`${{metric.options[metric.selectedIndex].text}}: `+
-(currency?"$":"")+"%{{value:,.2f}}<extra></extra>"
-}}
-}};
-const layout={{
-title:{{
-text:`Cohort ${{cohort.value}}: State → Sector<br>`+
-`<sup>${{quarter.value}} | ${{metric.options[metric.selectedIndex].text}}</sup>`,
+"Cohort: %{customdata[2]}<br>"+
+"Quarter: %{customdata[3]}<br>"+
+"State: %{customdata[0]}<br>"+
+"Sector: %{customdata[1]}<br>"+
+"Value: "+
+(currency?"$":"")+
+"%{value:,.2f}<extra></extra>"
+}
+};
+
+const metricLabel=
+metric.options[metric.selectedIndex].text;
+
+const layout={
+title:{
+text:
+`Cohort ${cohort.value}: State → Sector<br>`+
+`<sup>${quarter.value} | ${metricLabel}</sup>`,
 x:.5
-}},
-font:{{size:12}},
+},
+font:{
+size:12
+},
 paper_bgcolor:"#f7f8fa",
 plot_bgcolor:"#f7f8fa",
-margin:{{l:30,r:30,t:80,b:30}}
-}};
-Plotly.react("chart",[trace],layout,{{responsive:true,displaylogo:false}});
-}}
+margin:{
+l:30,
+r:30,
+t:80,
+b:30
+}
+};
 
-cohort.addEventListener("change",()=>{{updateQuarters();draw()}});
-quarter.addEventListener("change",draw);
-metric.addEventListener("change",draw);
-window.addEventListener("resize",()=>Plotly.Plots.resize("chart"));
+Plotly.react(
+"chart",
+[trace],
+layout,
+{
+responsive:true,
+displaylogo:false
+}
+);
+}
+
+cohort.addEventListener(
+"change",
+()=>{
+updateQuarters();
+draw();
+}
+);
+
+quarter.addEventListener(
+"change",
+draw
+);
+
+metric.addEventListener(
+"change",
+draw
+);
+
 updateQuarters();
 draw();
 </script>
 </body>
 </html>"""
 
-    output_path=Path(output_html).resolve()
-    output_path.write_text(html,encoding="utf-8")
-    print(f"Created: {{output_path}}")
-    return output_path
+    html=html.replace(
+        "__PLOTLY__",
+        plotly_js
+    ).replace(
+        "__DATA__",
+        app_data
+    ).replace(
+        "__COHORTS__",
+        cohorts
+    )
 
+    output_path=Path(output_html).resolve()
+    output_path.write_text(
+        html,
+        encoding="utf-8"
+    )
+
+    print(f"Created: {output_path}")
+    return output_path
 
 
 create_state_sector_sankey(
