@@ -371,3 +371,13 @@ def suppress_disclosure(
     )
 
     return protected,margins,audit
+
+
+
+protected_df,margins_df,audit_df=suppress_disclosure(
+    df,
+    threshold=10,
+    round_base=10
+)
+
+print(audit_df)
