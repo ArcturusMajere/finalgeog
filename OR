@@ -3,9 +3,9 @@ import json
 import pandas as pd
 from plotly.offline import get_plotlyjs
 
-def create_state_sector_sankey(
+def create_animated_sankey(
     xlsx_path,
-    output_html="state_sector_sankey.html",
+    output_html="animated_sankey.html",
     tabs=None
 ):
     metrics=[
@@ -23,17 +23,23 @@ def create_state_sector_sankey(
         tab for tab in selected_tabs
         if tab not in workbook.sheet_names
     ]
+
     if missing_tabs:
         raise ValueError(f"Tabs not found: {missing_tabs}")
 
     frames=[]
 
     for tab in selected_tabs:
-        df=pd.read_excel(xlsx_path,sheet_name=tab)
+        df=pd.read_excel(
+            xlsx_path,
+            sheet_name=tab
+        )
+
         missing=[
             column for column in required
             if column not in df.columns
         ]
+
         if missing:
             raise ValueError(
                 f"Tab {tab} is missing columns: {missing}"
@@ -45,25 +51,21 @@ def create_state_sector_sankey(
         df["state"]=df["state"].astype(str)
         df["sector"]=df["sector"].astype(str)
 
-        for metric in metrics:
-            df[metric]=pd.to_numeric(
-                df[metric],
+        for metric_name in metrics:
+            df[metric_name]=pd.to_numeric(
+                df[metric_name],
                 errors="coerce"
             )
 
         frames.append(df)
 
-    data=pd.concat(frames,ignore_index=True)
+    data=pd.concat(
+        frames,
+        ignore_index=True
+    )
 
-    records=data.where(
-        pd.notna(data),
-        None
-    ).to_dict("records")
-
-    app_data=json.dumps(
-        records,
-        separators=(",",":"),
-        allow_nan=False
+    app_data=data.to_json(
+        orient="records"
     ).replace("</","<\\/")
 
     cohorts=json.dumps(
@@ -76,31 +78,109 @@ def create_state_sector_sankey(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cohort Sankey</title>
+<title>Animated Cohort Sankey</title>
 <script>__PLOTLY__</script>
 <style>
-body{font-family:Arial,sans-serif;margin:0;background:#f7f8fa;color:#202124}
-header{background:#fff;border-bottom:1px solid #ddd;padding:18px 24px}
-h1{margin:0 0 14px;font-size:24px}
-.controls{display:flex;gap:18px;flex-wrap:wrap}
-.control{display:flex;flex-direction:column;gap:5px}
-label{font-size:13px;font-weight:600;color:#555}
-select{min-width:165px;padding:8px;border:1px solid #bbb;border-radius:5px;background:#fff}
-#chart{height:calc(100vh - 130px);min-height:600px}
+body{
+font-family:Arial,sans-serif;
+margin:0;
+background:#f7f8fa;
+color:#202124
+}
+header{
+background:#fff;
+border-bottom:1px solid #ddd;
+padding:18px 24px
+}
+h1{
+margin:0 0 14px;
+font-size:24px
+}
+.controls{
+display:flex;
+gap:18px;
+flex-wrap:wrap;
+align-items:flex-end
+}
+.control{
+display:flex;
+flex-direction:column;
+gap:5px
+}
+.timeline-control{
+min-width:380px;
+flex:1
+}
+.timeline-row{
+display:flex;
+align-items:center;
+gap:10px
+}
+label{
+font-size:13px;
+font-weight:600;
+color:#555
+}
+select{
+min-width:150px;
+padding:8px;
+border:1px solid #bbb;
+border-radius:5px;
+background:#fff
+}
+button{
+padding:8px 14px;
+border:1px solid #263b80;
+border-radius:5px;
+background:#263b80;
+color:#fff;
+cursor:pointer
+}
+button:hover{
+background:#172653
+}
+#timeline{
+flex:1;
+min-width:180px;
+cursor:pointer
+}
+#speed{
+min-width:90px
+}
+#quarterLabel{
+color:#263b80;
+font-weight:700
+}
+#chart{
+height:calc(100vh - 145px);
+min-height:600px
+}
+@media(max-width:700px){
+.timeline-control{
+min-width:100%
+}
+.timeline-row{
+flex-wrap:wrap
+}
+#timeline{
+min-width:100%
+}
+#chart{
+height:650px
+}
+}
 </style>
 </head>
 <body>
 <header>
 <h1>Cohort Flow</h1>
 <div class="controls">
+
 <div class="control">
 <label for="cohort">Cohort state</label>
 <select id="cohort"></select>
 </div>
-<div class="control">
-<label for="quarter">Quarter</label>
-<select id="quarter"></select>
-</div>
+
 <div class="control">
 <label for="dimension">View by</label>
 <select id="dimension">
@@ -108,6 +188,7 @@ select{min-width:165px;padding:8px;border:1px solid #bbb;border-radius:5px;backg
 <option value="sector">Sector</option>
 </select>
 </div>
+
 <div class="control">
 <label for="metric">Metric</label>
 <select id="metric">
@@ -118,16 +199,49 @@ select{min-width:165px;padding:8px;border:1px solid #bbb;border-radius:5px;backg
 <option value="percentile_75">Percentile 75</option>
 </select>
 </div>
+
+<div class="control timeline-control">
+<label for="timeline">
+Timeframe:
+<span id="quarterLabel"></span>
+</label>
+<div class="timeline-row">
+<button id="playButton" type="button">▶ Play</button>
+<input
+id="timeline"
+type="range"
+min="0"
+max="0"
+value="0"
+step="1"
+>
+<select id="speed">
+<option value="2000">Slow</option>
+<option value="1000" selected>Normal</option>
+<option value="500">Fast</option>
+</select>
+</div>
+</div>
+
 </div>
 </header>
+
 <div id="chart"></div>
+
 <script>
 const rows=__DATA__;
 const cohorts=__COHORTS__;
+
 const cohort=document.getElementById("cohort");
-const quarter=document.getElementById("quarter");
 const dimension=document.getElementById("dimension");
 const metric=document.getElementById("metric");
+const timeline=document.getElementById("timeline");
+const quarterLabel=document.getElementById("quarterLabel");
+const playButton=document.getElementById("playButton");
+const speed=document.getElementById("speed");
+
+let quarters=[];
+let animationTimer=null;
 
 cohort.innerHTML=cohorts.map(
 value=>`<option value="${value}">${value}</option>`
@@ -137,63 +251,90 @@ function naturalSort(a,b){
 return a.localeCompare(
 b,
 undefined,
-{numeric:true,sensitivity:"base"}
+{
+numeric:true,
+sensitivity:"base"
+}
 );
 }
 
 function colorFor(value,alpha=1){
 let hash=0;
+
 for(let i=0;i<value.length;i++){
 hash=value.charCodeAt(i)+((hash<<5)-hash);
 }
+
 const hue=Math.abs(hash)%360;
+
 return `hsla(${hue},65%,48%,${alpha})`;
 }
 
+function currentQuarter(){
+return quarters[Number(timeline.value)]||"";
+}
+
+function updateQuarterLabel(){
+quarterLabel.textContent=currentQuarter();
+}
+
 function updateQuarters(){
-const quarters=[
+quarters=[
 ...new Set(
 rows
-.filter(row=>row.cohort_state===cohort.value)
-.map(row=>row.yr_qtr)
+.filter(
+row=>row.cohort_state===cohort.value
+)
+.map(
+row=>row.yr_qtr
+)
 )
 ].sort(naturalSort);
 
-const previous=quarter.value;
+timeline.min=0;
+timeline.max=Math.max(
+quarters.length-1,
+0
+);
+timeline.value=0;
 
-quarter.innerHTML=quarters.map(
-value=>`<option value="${value}">${value}</option>`
-).join("");
-
-if(quarters.includes(previous)){
-quarter.value=previous;
+updateQuarterLabel();
 }
-}
 
-function summarize(selectedRows,groupField,metricName){
+function summarize(
+selectedRows,
+groupField,
+metricName
+){
 const groups=new Map();
 
 selectedRows.forEach(row=>{
 const name=String(row[groupField]);
-const count=Number(row.count)||0;
+const countValue=Number(row.count)||0;
 const metricValue=Number(row[metricName]);
 
 if(!groups.has(name)){
-groups.set(name,{
+groups.set(
+name,
+{
 name:name,
 count:0,
 weightedTotal:0,
 weight:0
-});
+}
+);
 }
 
 const group=groups.get(name);
-group.count+=count;
+group.count+=countValue;
 
-if(Number.isFinite(metricValue)){
-if(count>0){
-group.weightedTotal+=metricValue*count;
-group.weight+=count;
+if(
+metricName!=="count" &&
+Number.isFinite(metricValue)
+){
+if(countValue>0){
+group.weightedTotal+=metricValue*countValue;
+group.weight+=countValue;
 }else{
 group.weightedTotal+=metricValue;
 group.weight+=1;
@@ -204,24 +345,30 @@ group.weight+=1;
 return [...groups.values()]
 .map(group=>({
 name:group.name,
-value:metricName==="count"
+value:
+metricName==="count"
 ?group.count
 :group.weight>0
 ?group.weightedTotal/group.weight
 :0
 }))
-.filter(group=>group.value>0)
-.sort((a,b)=>b.value-a.value);
+.filter(
+group=>group.value>0
+)
+.sort(
+(a,b)=>b.value-a.value
+);
 }
 
 function draw(){
+const selectedQuarter=currentQuarter();
 const metricName=metric.value;
 const groupField=dimension.value;
 
 const selectedRows=rows.filter(
 row=>
 row.cohort_state===cohort.value &&
-row.yr_qtr===quarter.value
+row.yr_qtr===selectedQuarter
 );
 
 const groups=summarize(
@@ -231,15 +378,22 @@ metricName
 );
 
 const rootLabel=`${cohort.value} cohort`;
+
 const labels=[
 rootLabel,
-...groups.map(group=>group.name)
+...groups.map(
+group=>group.name
+)
 ];
 
-const source=groups.map(()=>0);
+const source=groups.map(
+()=>0
+);
+
 const target=groups.map(
 (group,index)=>index+1
 );
+
 const values=groups.map(
 group=>group.value
 );
@@ -255,11 +409,21 @@ const linkColors=groups.map(
 group=>colorFor(group.name,.35)
 );
 
+const customdata=groups.map(
+group=>group.name
+);
+
 const currency=metricName!=="count";
+
 const metricLabel=
-metric.options[metric.selectedIndex].text;
+metric.options[
+metric.selectedIndex
+].text;
+
 const dimensionLabel=
-dimension.options[dimension.selectedIndex].text;
+dimension.options[
+dimension.selectedIndex
+].text;
 
 const trace={
 type:"sankey",
@@ -276,20 +440,26 @@ width:.4
 },
 label:labels,
 color:nodeColors,
-hovertemplate:"%{label}<extra></extra>"
+hovertemplate:
+"%{label}<extra></extra>"
 },
 link:{
 source:source,
 target:target,
 value:values,
 color:linkColors,
-customdata:groups.map(
-group=>group.name
-),
+customdata:customdata,
 hovertemplate:
-"Cohort: "+cohort.value+
-"<br>"+dimensionLabel+": %{customdata}"+
-"<br>"+metricLabel+": "+
+"Cohort: "+
+cohort.value+
+"<br>Quarter: "+
+selectedQuarter+
+"<br>"+
+dimensionLabel+
+": %{customdata}"+
+"<br>"+
+metricLabel+
+": "+
 (currency?"$":"")+
 "%{value:,.2f}<extra></extra>"
 }
@@ -298,8 +468,8 @@ hovertemplate:
 const layout={
 title:{
 text:
-`Cohort ${cohort.value} → ${dimensionLabel}<br>`+
-`<sup>${quarter.value} | ${metricLabel}</sup>`,
+`Cohort ${cohort.value} → ${dimensionLabel}`+
+`<br><sup>${selectedQuarter} | ${metricLabel}</sup>`,
 x:.5
 },
 font:{
@@ -326,17 +496,89 @@ displaylogo:false
 );
 }
 
+function stopAnimation(){
+if(animationTimer!==null){
+clearInterval(animationTimer);
+animationTimer=null;
+}
+
+playButton.textContent="▶ Play";
+}
+
+function startAnimation(){
+stopAnimation();
+
+if(quarters.length<2){
+return;
+}
+
+playButton.textContent="⏸ Pause";
+
+animationTimer=setInterval(
+()=>{
+let next=
+Number(timeline.value)+1;
+
+if(next>=quarters.length){
+next=0;
+}
+
+timeline.value=next;
+updateQuarterLabel();
+draw();
+},
+Number(speed.value)
+);
+}
+
+function toggleAnimation(){
+if(animationTimer===null){
+startAnimation();
+}else{
+stopAnimation();
+}
+}
+
 cohort.addEventListener(
 "change",
 ()=>{
+stopAnimation();
 updateQuarters();
 draw();
 }
 );
 
-quarter.addEventListener("change",draw);
-dimension.addEventListener("change",draw);
-metric.addEventListener("change",draw);
+timeline.addEventListener(
+"input",
+()=>{
+updateQuarterLabel();
+draw();
+}
+);
+
+playButton.addEventListener(
+"click",
+toggleAnimation
+);
+
+speed.addEventListener(
+"change",
+()=>{
+if(animationTimer!==null){
+startAnimation();
+}
+}
+);
+
+dimension.addEventListener(
+"change",
+draw
+);
+
+metric.addEventListener(
+"change",
+draw
+);
 
 updateQuarters();
 draw();
@@ -355,17 +597,22 @@ draw();
         cohorts
     )
 
-    output_path=Path(output_html).resolve()
+    output_path=Path(
+        output_html
+    ).resolve()
+
     output_path.write_text(
         html,
         encoding="utf-8"
     )
 
     print(f"Created: {output_path}")
+
     return output_path
 
-create_state_sector_sankey(
+
+
+create_animated_sankey(
     xlsx_path="state_flows.xlsx",
-    output_html="state_sector_sankey.html",
-    tabs=["WI","IL","IA","MN","IN"]
+    output_html="animated_sankey.html"
 )
