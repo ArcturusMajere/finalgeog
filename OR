@@ -1,11 +1,10 @@
 from pathlib import Path
 import json
 import pandas as pd
-from plotly.offline import get_plotlyjs
 
-def create_animated_sankey(
+def create_top5_dashboard(
     xlsx_path,
-    output_html="animated_sankey.html",
+    output_html="top5_dashboard.html",
     tabs=None
 ):
     metrics=[
@@ -51,9 +50,9 @@ def create_animated_sankey(
         df["state"]=df["state"].astype(str)
         df["sector"]=df["sector"].astype(str)
 
-        for metric_name in metrics:
-            df[metric_name]=pd.to_numeric(
-                df[metric_name],
+        for metric in metrics:
+            df[metric]=pd.to_numeric(
+                df[metric],
                 errors="coerce"
             )
 
@@ -78,43 +77,32 @@ def create_animated_sankey(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Animated Cohort Sankey</title>
-<script>__PLOTLY__</script>
+<title>Top States and Sectors</title>
 <style>
 body{
 font-family:Arial,sans-serif;
 margin:0;
-background:#f7f8fa;
+background:#f5f6f8;
 color:#202124
 }
 header{
 background:#fff;
 border-bottom:1px solid #ddd;
-padding:18px 24px
+padding:20px 28px
 }
 h1{
-margin:0 0 14px;
-font-size:24px
+margin:0 0 16px;
+font-size:25px
 }
 .controls{
 display:flex;
 gap:18px;
-flex-wrap:wrap;
-align-items:flex-end
+flex-wrap:wrap
 }
 .control{
 display:flex;
 flex-direction:column;
 gap:5px
-}
-.timeline-control{
-min-width:380px;
-flex:1
-}
-.timeline-row{
-display:flex;
-align-items:center;
-gap:10px
 }
 label{
 font-size:13px;
@@ -122,75 +110,95 @@ font-weight:600;
 color:#555
 }
 select{
-min-width:150px;
-padding:8px;
+min-width:180px;
+padding:9px;
 border:1px solid #bbb;
 border-radius:5px;
 background:#fff
 }
-button{
-padding:8px 14px;
-border:1px solid #263b80;
-border-radius:5px;
-background:#263b80;
-color:#fff;
-cursor:pointer
+.summary{
+padding:16px 28px 0;
+font-size:14px;
+color:#555
 }
-button:hover{
-background:#172653
+.dashboard{
+display:grid;
+grid-template-columns:1fr 1fr;
+gap:24px;
+padding:20px 28px 30px
 }
-#timeline{
-flex:1;
-min-width:180px;
-cursor:pointer
+.panel{
+background:#fff;
+border:1px solid #ddd;
+border-radius:8px;
+overflow:hidden
 }
-#speed{
-min-width:90px
+.panel h2{
+margin:0;
+padding:16px 18px;
+font-size:19px;
+border-bottom:1px solid #ddd
 }
-#quarterLabel{
-color:#263b80;
-font-weight:700
+.table-wrap{
+overflow-x:auto
 }
-#chart{
-height:calc(100vh - 145px);
-min-height:600px
+table{
+width:100%;
+border-collapse:collapse
 }
-@media(max-width:700px){
-.timeline-control{
-min-width:100%
+th,td{
+padding:13px 16px;
+border-bottom:1px solid #e5e5e5;
+text-align:left
 }
-.timeline-row{
-flex-wrap:wrap
+th{
+background:#f4f5f7;
+font-size:13px;
+color:#555
 }
-#timeline{
-min-width:100%
+td.rank{
+width:45px;
+font-weight:600;
+color:#555
 }
-#chart{
-height:650px
+td.value,th.value{
+text-align:right;
+font-variant-numeric:tabular-nums
+}
+tbody tr:last-child td{
+border-bottom:none
+}
+tbody tr:hover{
+background:#f7f9ff
+}
+.empty{
+padding:20px;
+color:#777
+}
+@media(max-width:750px){
+.dashboard{
+grid-template-columns:1fr
 }
 }
 </style>
 </head>
 <body>
 <header>
-<h1>Cohort Flow</h1>
-<div class="controls">
+<h1>Top States and Sectors</h1>
 
+<div class="controls">
 <div class="control">
 <label for="cohort">Cohort state</label>
 <select id="cohort"></select>
 </div>
 
 <div class="control">
-<label for="dimension">View by</label>
-<select id="dimension">
-<option value="state">State</option>
-<option value="sector">Sector</option>
-</select>
+<label for="quarter">Quarter</label>
+<select id="quarter"></select>
 </div>
 
 <div class="control">
-<label for="metric">Metric</label>
+<label for="metric">Rank by metric</label>
 <select id="metric">
 <option value="count">Count</option>
 <option value="mean_wage">Mean Wage</option>
@@ -199,53 +207,68 @@ height:650px
 <option value="percentile_75">Percentile 75</option>
 </select>
 </div>
-
-<div class="control timeline-control">
-<label for="timeline">
-Timeframe:
-<span id="quarterLabel"></span>
-</label>
-<div class="timeline-row">
-<button id="playButton" type="button">▶ Play</button>
-<input
-id="timeline"
-type="range"
-min="0"
-max="0"
-value="0"
-step="1"
->
-<select id="speed">
-<option value="2000">Slow</option>
-<option value="1000" selected>Normal</option>
-<option value="500">Fast</option>
-</select>
-</div>
-</div>
-
 </div>
 </header>
 
-<div id="chart"></div>
+<div class="summary" id="summary"></div>
+
+<main class="dashboard">
+<section class="panel">
+<h2>Top 5 States</h2>
+<div class="table-wrap">
+<table aria-label="Top five states">
+<thead>
+<tr>
+<th>Rank</th>
+<th>State</th>
+<th class="value" id="stateMetricHeader">Metric</th>
+</tr>
+</thead>
+<tbody id="stateTable"></tbody>
+</table>
+</div>
+</section>
+
+<section class="panel">
+<h2>Top 5 Sectors</h2>
+<div class="table-wrap">
+<table aria-label="Top five sectors">
+<thead>
+<tr>
+<th>Rank</th>
+<th>Sector</th>
+<th class="value" id="sectorMetricHeader">Metric</th>
+</tr>
+</thead>
+<tbody id="sectorTable"></tbody>
+</table>
+</div>
+</section>
+</main>
 
 <script>
 const rows=__DATA__;
 const cohorts=__COHORTS__;
 
 const cohort=document.getElementById("cohort");
-const dimension=document.getElementById("dimension");
+const quarter=document.getElementById("quarter");
 const metric=document.getElementById("metric");
-const timeline=document.getElementById("timeline");
-const quarterLabel=document.getElementById("quarterLabel");
-const playButton=document.getElementById("playButton");
-const speed=document.getElementById("speed");
+const summary=document.getElementById("summary");
+const stateTable=document.getElementById("stateTable");
+const sectorTable=document.getElementById("sectorTable");
+const stateMetricHeader=document.getElementById("stateMetricHeader");
+const sectorMetricHeader=document.getElementById("sectorMetricHeader");
 
-let quarters=[];
-let animationTimer=null;
+function addOption(select,value,label){
+const option=document.createElement("option");
+option.value=value;
+option.textContent=label;
+select.appendChild(option);
+}
 
-cohort.innerHTML=cohorts.map(
-value=>`<option value="${value}">${value}</option>`
-).join("");
+cohorts.forEach(
+value=>addOption(cohort,value,value)
+);
 
 function naturalSort(a,b){
 return a.localeCompare(
@@ -258,28 +281,10 @@ sensitivity:"base"
 );
 }
 
-function colorFor(value,alpha=1){
-let hash=0;
-
-for(let i=0;i<value.length;i++){
-hash=value.charCodeAt(i)+((hash<<5)-hash);
-}
-
-const hue=Math.abs(hash)%360;
-
-return `hsla(${hue},65%,48%,${alpha})`;
-}
-
-function currentQuarter(){
-return quarters[Number(timeline.value)]||"";
-}
-
-function updateQuarterLabel(){
-quarterLabel.textContent=currentQuarter();
-}
-
 function updateQuarters(){
-quarters=[
+const previous=quarter.value;
+
+const quarters=[
 ...new Set(
 rows
 .filter(
@@ -291,33 +296,30 @@ row=>row.yr_qtr
 )
 ].sort(naturalSort);
 
-timeline.min=0;
-timeline.max=Math.max(
-quarters.length-1,
-0
-);
-timeline.value=0;
+quarter.replaceChildren();
 
-updateQuarterLabel();
+quarters.forEach(
+value=>addOption(quarter,value,value)
+);
+
+if(quarters.includes(previous)){
+quarter.value=previous;
+}
 }
 
-function summarize(
-selectedRows,
-groupField,
-metricName
-){
+function aggregate(data,groupField,metricName){
 const groups=new Map();
 
-selectedRows.forEach(row=>{
-const name=String(row[groupField]);
+data.forEach(row=>{
+const groupName=String(row[groupField]);
 const countValue=Number(row.count)||0;
 const metricValue=Number(row[metricName]);
 
-if(!groups.has(name)){
+if(!groups.has(groupName)){
 groups.set(
-name,
+groupName,
 {
-name:name,
+name:groupName,
 count:0,
 weightedTotal:0,
 weight:0
@@ -325,7 +327,7 @@ weight:0
 );
 }
 
-const group=groups.get(name);
+const group=groups.get(groupName);
 group.count+=countValue;
 
 if(
@@ -350,227 +352,141 @@ metricName==="count"
 ?group.count
 :group.weight>0
 ?group.weightedTotal/group.weight
-:0
+:null
 }))
 .filter(
-group=>group.value>0
+group=>
+group.value!==null &&
+Number.isFinite(group.value)
 )
 .sort(
 (a,b)=>b.value-a.value
-);
-}
-
-function draw(){
-const selectedQuarter=currentQuarter();
-const metricName=metric.value;
-const groupField=dimension.value;
-
-const selectedRows=rows.filter(
-row=>
-row.cohort_state===cohort.value &&
-row.yr_qtr===selectedQuarter
-);
-
-const groups=summarize(
-selectedRows,
-groupField,
-metricName
-);
-
-const rootLabel=`${cohort.value} cohort`;
-
-const labels=[
-rootLabel,
-...groups.map(
-group=>group.name
 )
-];
-
-const source=groups.map(
-()=>0
-);
-
-const target=groups.map(
-(group,index)=>index+1
-);
-
-const values=groups.map(
-group=>group.value
-);
-
-const nodeColors=[
-"#263b80",
-...groups.map(
-group=>colorFor(group.name)
-)
-];
-
-const linkColors=groups.map(
-group=>colorFor(group.name,.35)
-);
-
-const customdata=groups.map(
-group=>group.name
-);
-
-const currency=metricName!=="count";
-
-const metricLabel=
-metric.options[
-metric.selectedIndex
-].text;
-
-const dimensionLabel=
-dimension.options[
-dimension.selectedIndex
-].text;
-
-const trace={
-type:"sankey",
-orientation:"h",
-arrangement:"snap",
-valueformat:currency?",.2f":",.0f",
-valuesuffix:currency?"":" workers",
-node:{
-pad:18,
-thickness:20,
-line:{
-color:"#555",
-width:.4
-},
-label:labels,
-color:nodeColors,
-hovertemplate:
-"%{label}<extra></extra>"
-},
-link:{
-source:source,
-target:target,
-value:values,
-color:linkColors,
-customdata:customdata,
-hovertemplate:
-"Cohort: "+
-cohort.value+
-"<br>Quarter: "+
-selectedQuarter+
-"<br>"+
-dimensionLabel+
-": %{customdata}"+
-"<br>"+
-metricLabel+
-": "+
-(currency?"$":"")+
-"%{value:,.2f}<extra></extra>"
+.slice(0,5);
 }
-};
 
-const layout={
-title:{
-text:
-`Cohort ${cohort.value} → ${dimensionLabel}`+
-`<br><sup>${selectedQuarter} | ${metricLabel}</sup>`,
-x:.5
-},
-font:{
-size:13
-},
-paper_bgcolor:"#f7f8fa",
-plot_bgcolor:"#f7f8fa",
-margin:{
-l:40,
-r:40,
-t:80,
-b:30
-}
-};
-
-Plotly.react(
-"chart",
-[trace],
-layout,
+function formatValue(value,metricName){
+if(metricName==="count"){
+return value.toLocaleString(
+undefined,
 {
-responsive:true,
-displaylogo:false
+maximumFractionDigits:0
 }
 );
 }
 
-function stopAnimation(){
-if(animationTimer!==null){
-clearInterval(animationTimer);
-animationTimer=null;
+return value.toLocaleString(
+undefined,
+{
+style:"currency",
+currency:"USD",
+minimumFractionDigits:0,
+maximumFractionDigits:0
+}
+);
 }
 
-playButton.textContent="▶ Play";
-}
+function renderTable(
+tableElement,
+records,
+metricName
+){
+tableElement.replaceChildren();
 
-function startAnimation(){
-stopAnimation();
+if(records.length===0){
+const row=document.createElement("tr");
+const cell=document.createElement("td");
 
-if(quarters.length<2){
+cell.colSpan=3;
+cell.className="empty";
+cell.textContent="No data available";
+
+row.appendChild(cell);
+tableElement.appendChild(row);
+
 return;
 }
 
-playButton.textContent="⏸ Pause";
+records.forEach((record,index)=>{
+const row=document.createElement("tr");
+const rankCell=document.createElement("td");
+const nameCell=document.createElement("td");
+const valueCell=document.createElement("td");
 
-animationTimer=setInterval(
-()=>{
-let next=
-Number(timeline.value)+1;
+rankCell.className="rank";
+valueCell.className="value";
 
-if(next>=quarters.length){
-next=0;
-}
-
-timeline.value=next;
-updateQuarterLabel();
-draw();
-},
-Number(speed.value)
+rankCell.textContent=index+1;
+nameCell.textContent=record.name;
+valueCell.textContent=formatValue(
+record.value,
+metricName
 );
+
+row.appendChild(rankCell);
+row.appendChild(nameCell);
+row.appendChild(valueCell);
+
+tableElement.appendChild(row);
+});
 }
 
-function toggleAnimation(){
-if(animationTimer===null){
-startAnimation();
-}else{
-stopAnimation();
-}
+function draw(){
+const metricName=metric.value;
+const metricLabel=
+metric.options[metric.selectedIndex].text;
+
+const selected=rows.filter(
+row=>
+row.cohort_state===cohort.value &&
+row.yr_qtr===quarter.value
+);
+
+const topStates=aggregate(
+selected,
+"state",
+metricName
+);
+
+const topSectors=aggregate(
+selected,
+"sector",
+metricName
+);
+
+stateMetricHeader.textContent=metricLabel;
+sectorMetricHeader.textContent=metricLabel;
+
+summary.textContent=
+"Cohort: "+
+cohort.value+
+" | Quarter: "+
+quarter.value+
+" | Ranked by: "+
+metricLabel;
+
+renderTable(
+stateTable,
+topStates,
+metricName
+);
+
+renderTable(
+sectorTable,
+topSectors,
+metricName
+);
 }
 
 cohort.addEventListener(
 "change",
 ()=>{
-stopAnimation();
 updateQuarters();
 draw();
 }
 );
 
-timeline.addEventListener(
-"input",
-()=>{
-updateQuarterLabel();
-draw();
-}
-);
-
-playButton.addEventListener(
-"click",
-toggleAnimation
-);
-
-speed.addEventListener(
-"change",
-()=>{
-if(animationTimer!==null){
-startAnimation();
-}
-}
-);
-
-dimension.addEventListener(
+quarter.addEventListener(
 "change",
 draw
 );
@@ -587,9 +503,6 @@ draw();
 </html>"""
 
     html=html.replace(
-        "__PLOTLY__",
-        get_plotlyjs()
-    ).replace(
         "__DATA__",
         app_data
     ).replace(
@@ -611,8 +524,8 @@ draw();
     return output_path
 
 
-
-create_animated_sankey(
-    xlsx_path="state_flows.xlsx",
-    output_html="animated_sankey.html"
+create_top5_dashboard(
+    xlsx_path=path,
+    output_html="top5_dashboard.html",
+    tabs=["WI","IL","IA","MN","IN"]
 )
