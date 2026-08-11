@@ -1,27 +1,27 @@
 import pandas as pd
-import numpy as np
 
-def suppress_disclosure(
+def suppress_large_df(
     df,
     threshold=10,
-    table_keys=("cohort_state","yr_qtr"),
-    row_col="state",
-    column_col="sector",
+    quarter_col="yr_qtr",
+    state_col="state",
+    sector_col="sector",
     count_col="count",
-    protected_metrics=(
-        "count",
-        "mean_wage",
-        "median_wage",
-        "percentile_25",
-        "percentile_75"
-    ),
-    round_base=None
+    value_cols=("mean","med","25","75"),
+    rounding=None
 ):
-    required=set(table_keys)|{
-        row_col,
-        column_col,
-        count_col
-    }
+    group_cols=[
+        quarter_col,
+        state_col,
+        sector_col
+    ]
+
+    protected_cols=[
+        count_col,
+        *value_cols
+    ]
+
+    required=group_cols+protected_cols
 
     missing=[
         column for column in required
@@ -33,46 +33,31 @@ def suppress_disclosure(
             f"Missing columns: {missing}"
         )
 
-    duplicate_columns=list(table_keys)+[
-        row_col,
-        column_col
-    ]
-
-    duplicates=df.duplicated(
-        duplicate_columns,
+    duplicate_mask=df.duplicated(
+        group_cols,
         keep=False
     )
 
-    if duplicates.any():
-        duplicate_examples=(
+    if duplicate_mask.any():
+        examples=(
             df.loc[
-                duplicates,
-                duplicate_columns
+                duplicate_mask,
+                group_cols
             ]
             .head(10)
             .to_dict("records")
         )
 
         raise ValueError(
-            "Duplicate state-sector cells were found. "
-            f"Aggregate them first. Examples: {duplicate_examples}"
+            "Duplicate quarter-state-sector cells found. "
+            f"Aggregate them first. Examples: {examples}"
         )
 
     protected=df.copy().reset_index(drop=True)
 
-    protected[count_col]=pd.to_numeric(
-        protected[count_col],
-        errors="coerce"
-    ).astype("Float64")
-
-    existing_metrics=[
-        metric for metric in protected_metrics
-        if metric in protected.columns
-    ]
-
-    for metric in existing_metrics:
-        protected[metric]=pd.to_numeric(
-            protected[metric],
+    for column in protected_cols:
+        protected[column]=pd.to_numeric(
+            protected[column],
             errors="coerce"
         ).astype("Float64")
 
@@ -105,11 +90,14 @@ def suppress_disclosure(
         "suppression_round"
     ]=1
 
-    def smallest_available(indexes):
+    def select_smallest(indexes):
         candidates=[
-            index for index in indexes
+            index
+            for index in indexes
             if not protected.at[index,"suppressed"]
-            and pd.notna(protected.at[index,count_col])
+            and pd.notna(
+                protected.at[index,count_col]
+            )
         ]
 
         if not candidates:
@@ -123,40 +111,63 @@ def suppress_disclosure(
             )
         )
 
-    grouped=protected.groupby(
-        list(table_keys),
+    quarter_groups=protected.groupby(
+        quarter_col,
         dropna=False,
         sort=False
     )
 
-    for _,table in grouped:
-        table_indexes=table.index.tolist()
-        addition_round=1
+    for _,quarter_df in quarter_groups:
+        quarter_indexes=quarter_df.index.tolist()
+        iteration=1
 
         while True:
             additions=set()
 
-            for dimension in (row_col,column_col):
-                dimension_groups=protected.loc[
-                    table_indexes
-                ].groupby(
-                    dimension,
+            state_groups=(
+                protected.loc[quarter_indexes]
+                .groupby(
+                    state_col,
                     dropna=False,
                     sort=False
-                ).groups
+                )
+                .groups
+            )
 
-                for indexes in dimension_groups.values():
-                    indexes=list(indexes)
+            for indexes in state_groups.values():
+                indexes=list(indexes)
 
-                    suppressed_count=sum(
-                        protected.at[index,"suppressed"]
-                        for index in indexes
-                    )
+                suppression_count=sum(
+                    protected.at[index,"suppressed"]
+                    for index in indexes
+                )
 
-                    if suppressed_count!=1:
-                        continue
+                if suppression_count==1:
+                    selected=select_smallest(indexes)
 
-                    selected=smallest_available(indexes)
+                    if selected is not None:
+                        additions.add(selected)
+
+            sector_groups=(
+                protected.loc[quarter_indexes]
+                .groupby(
+                    sector_col,
+                    dropna=False,
+                    sort=False
+                )
+                .groups
+            )
+
+            for indexes in sector_groups.values():
+                indexes=list(indexes)
+
+                suppression_count=sum(
+                    protected.at[index,"suppressed"]
+                    for index in indexes
+                )
+
+                if suppression_count==1:
+                    selected=select_smallest(indexes)
 
                     if selected is not None:
                         additions.add(selected)
@@ -164,9 +175,9 @@ def suppress_disclosure(
             if not additions:
                 break
 
-            suppression_level=(
+            suppression_type=(
                 "secondary"
-                if addition_round==1
+                if iteration==1
                 else "tertiary"
             )
 
@@ -174,42 +185,38 @@ def suppress_disclosure(
                 if protected.at[index,"suppressed"]:
                     continue
 
-                protected.at[index,"suppressed"]=True
+                protected.at[
+                    index,
+                    "suppressed"
+                ]=True
+
                 protected.at[
                     index,
                     "suppression_type"
-                ]=suppression_level
+                ]=suppression_type
 
                 protected.at[
                     index,
                     "suppression_round"
-                ]=addition_round+1
+                ]=iteration+1
 
-            addition_round+=1
+            iteration+=1
 
-            if addition_round>len(table_indexes)+1:
+            if iteration>len(quarter_indexes)+1:
                 raise RuntimeError(
-                    "Suppression algorithm did not converge"
+                    f"Suppression did not converge for quarter {_}"
                 )
 
     original_counts=protected[count_col].copy()
 
-    state_margin_flags=(
-        protected
-        .groupby(
-            list(table_keys)+[row_col],
-            dropna=False
-        )["suppressed"]
-        .any()
-        .rename("suppressed")
-        .reset_index()
+    margin_source=protected.assign(
+        _original_count=original_counts
     )
 
-    state_margin_counts=(
-        protected
-        .assign(_original_count=original_counts)
+    state_counts=(
+        margin_source
         .groupby(
-            list(table_keys)+[row_col],
+            [quarter_col,state_col],
             dropna=False
         )["_original_count"]
         .sum(min_count=1)
@@ -217,33 +224,32 @@ def suppress_disclosure(
         .reset_index()
     )
 
-    state_margins=state_margin_counts.merge(
-        state_margin_flags,
-        on=list(table_keys)+[row_col],
+    state_flags=(
+        protected
+        .groupby(
+            [quarter_col,state_col],
+            dropna=False
+        )["suppressed"]
+        .any()
+        .reset_index()
+    )
+
+    state_margins=state_counts.merge(
+        state_flags,
+        on=[quarter_col,state_col],
+       ],
         how="left"
     )
 
     state_margins["margin_type"]="state"
     state_margins["margin_value"]=(
-        state_margins[row_col].astype(str)
+        state_margins[state_col].astype(str)
     )
 
-    sector_margin_flags=(
-        protected
+    sector_counts=(
+        margin_source
         .groupby(
-            list(table_keys)+[column_col],
-            dropna=False
-        )["suppressed"]
-        .any()
-        .rename("suppressed")
-        .reset_index()
-    )
-
-    sector_margin_counts=(
-        protected
-        .assign(_original_count=original_counts)
-        .groupby(
-            list(table_keys)+[column_col],
+            [quarter_col,sector_col],
             dropna=False
         )["_original_count"]
         .sum(min_count=1)
@@ -251,33 +257,31 @@ def suppress_disclosure(
         .reset_index()
     )
 
-    sector_margins=sector_margin_counts.merge(
-        sector_margin_flags,
-        on=list(table_keys)+[column_col],
+    sector_flags=(
+        protected
+        .groupby(
+            [quarter_col,sector_col],
+            dropna=False
+        )["suppressed"]
+        .any()
+        .reset_index()
+    )
+
+    sector_margins=sector_counts.merge(
+        sector_flags,
+        on=[quarter_col,sector_col],
         how="left"
     )
 
     sector_margins["margin_type"]="sector"
     sector_margins["margin_value"]=(
-        sector_margins[column_col].astype(str)
+        sector_margins[sector_col].astype(str)
     )
 
-    grand_margin_flags=(
-        protected
+    grand_counts=(
+        margin_source
         .groupby(
-            list(table_keys),
-            dropna=False
-        )["suppressed"]
-        .any()
-        .rename("suppressed")
-        .reset_index()
-    )
-
-    grand_margin_counts=(
-        protected
-        .assign(_original_count=original_counts)
-        .groupby(
-            list(table_keys),
+            quarter_col,
             dropna=False
         )["_original_count"]
         .sum(min_count=1)
@@ -285,31 +289,27 @@ def suppress_disclosure(
         .reset_index()
     )
 
-    grand_margins=grand_margin_counts.merge(
-        grand_margin_flags,
-        on=list(table_keys),
+    grand_flags=(
+        protected
+        .groupby(
+            quarter_col,
+            dropna=False
+        )["suppressed"]
+        .any()
+        .reset_index()
+    )
+
+    grand_margins=grand_counts.merge(
+        grand_flags,
+        on=quarter_col,
         how="left"
     )
 
     grand_margins["margin_type"]="grand_total"
     grand_margins["margin_value"]="Total"
 
-    state_margins.loc[
-        state_margins["suppressed"],
-        "count"
-    ]=pd.NA
-
-    sector_margins.loc[
-        sector_margins["suppressed"],
-        "count"
-    ]=pd.NA
-
-    grand_margins.loc[
-        grand_margins["suppressed"],
-        "count"
-    ]=pd.NA
-
-    margin_columns=list(table_keys)+[
+    margin_cols=[
+        quarter_col,
         "margin_type",
         "margin_value",
         "count",
@@ -318,66 +318,92 @@ def suppress_disclosure(
 
     margins=pd.concat(
         [
-            state_margins[margin_columns],
-            sector_margins[margin_columns],
-            grand_margins[margin_columns]
+            state_margins[margin_cols],
+            sector_margins[margin_cols],
+            grand_margins[margin_cols]
         ],
         ignore_index=True
     )
 
-    suppression_mask=protected["suppressed"]
+    margins["count"]=margins["count"].astype("Float64")
 
-    protected.loc[
-        suppression_mask,
-        existing_metrics
+    margins.loc[
+        margins["suppressed"],
+        "count"
     ]=pd.NA
 
-    if round_base is not None:
-        if round_base<=0:
+    protected.loc[
+        protected["suppressed"],
+        protected_cols
+    ]=pd.NA
+
+    if rounding is not None:
+        if isinstance(rounding,(int,float)):
+            rounding={
+                column:rounding
+                for column in protected_cols
+            }
+
+        if not isinstance(rounding,dict):
             raise ValueError(
-                "round_base must be greater than zero"
+                "rounding must be a number, dictionary or None"
             )
 
         published_mask=~protected["suppressed"]
 
-        for metric in existing_metrics:
+        for column,base in rounding.items():
+            if column not in protected_cols:
+                continue
+
+            if base<=0:
+                raise ValueError(
+                    f"Rounding base for {column} must be positive"
+                )
+
             protected.loc[
                 published_mask,
-                metric
+                column
             ]=(
                 protected.loc[
                     published_mask,
-                    metric
-                ]/round_base
-            ).round()*round_base
+                    column
+                ]/base
+            ).round()*base
 
-        visible_margins=~margins["suppressed"]
+        if count_col in rounding:
+            base=rounding[count_col]
+            visible_margin=~margins["suppressed"]
 
-        margins.loc[
-            visible_margins,
-            "count"
-        ]=(
             margins.loc[
-                visible_margins,
+                visible_margin,
                 "count"
-            ]/round_base
-        ).round()*round_base
+            ]=(
+                margins.loc[
+                    visible_margin,
+                    "count"
+                ]/base
+            ).round()*base
 
     audit=(
         protected["suppression_type"]
         .value_counts()
         .rename_axis("suppression_type")
-        .reset_index(name="cells")
+        .reset_index(name="cell_count")
     )
 
     return protected,margins,audit
 
 
 
-protected_df,margins_df,audit_df=suppress_disclosure(
+
+protected_df,margins_df,audit_df=suppress_large_df(
     df,
     threshold=10,
-    round_base=10
+    value_cols=("mean","med","25","75"),
+    rounding={
+        "mean":10,
+        "med":10,
+        "25":10,
+        "75":10
+    }
 )
-
-print(audit_df)
