@@ -1,1 +1,53 @@
+import os,requests,geopandas as gpd,matplotlib.pyplot as plt
 
+STATE_ABBR={"Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA","Colorado":"CO","Connecticut":"CT","Delaware":"DE","Florida":"FL","Georgia":"GA","Hawaii":"HI","Idaho":"ID","Illinois":"IL","Indiana":"IN","Iowa":"IA","Kansas":"KS","Kentucky":"KY","Louisiana":"LA","Maine":"ME","Maryland":"MD","Massachusetts":"MA","Michigan":"MI","Minnesota":"MN","Mississippi":"MS","Missouri":"MO","Montana":"MT","Nebraska":"NE","Nevada":"NV","New Hampshire":"NH","New Jersey":"NJ","New Mexico":"NM","New York":"NY","North Carolina":"NC","North Dakota":"ND","Ohio":"OH","Oklahoma":"OK","Oregon":"OR","Pennsylvania":"PA","Rhode Island":"RI","South Carolina":"SC","South Dakota":"SD","Tennessee":"TN","Texas":"TX","Utah":"UT","Vermont":"VT","Virginia":"VA","Washington":"WA","West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY","District of Columbia":"DC"}
+ABBR_TO_STATE={v:k for k,v in STATE_ABBR.items()}
+CONUS=list(ABBR_TO_STATE)
+
+def plot_wage_choropleth(df,metric="median_wage",yr_qtr=None,sector=None,figsize=(13,8),cmap="viridis",missing_color="lightgray",label_states=False,vmin=None,vmax=None,save_path=None,cache_dir="~/.us_maps"):
+    required={"state","sector","mean_wage","median_wage","percentile_25","percentile_75","yr_qtr"}
+    missing=required-set(df.columns)
+    if missing: raise ValueError(f"Missing columns: {sorted(missing)}")
+    if metric not in required: raise ValueError(f"Invalid metric: {metric}")
+    d=df.copy()
+    if yr_qtr is not None: d=d[d.yr_qtr==yr_qtr]
+    if sector is not None: d=d[d.sector==sector]
+    if d.empty: raise ValueError("No rows remain after filtering.")
+    def norm(x):
+        x=str(x).strip()
+        return x.upper() if x.upper() in ABBR_TO_STATE else STATE_ABBR.get(x.title())
+    d["state_abbr"]=d.state.map(norm)
+    d=d[d.state_abbr.notna()].copy()
+    d[metric]=d[metric].astype(float)
+    vals=d.groupby("state_abbr",as_index=False)[metric].mean()
+    cache_dir=os.path.expanduser(cache_dir)
+    os.makedirs(cache_dir,exist_ok=True)
+    zip_path=os.path.join(cache_dir,"cb_2025_us_state_500k.zip")
+    url="https://www2.census.gov/geo/tiger/GENZ2025/shp/cb_2025_us_state_500k.zip"
+    if not os.path.exists(zip_path):
+        r=requests.get(url,timeout=60)
+        r.raise_for_status()
+        open(zip_path,"wb").write(r.content)
+    states=gpd.read_file(f"zip://{zip_path}")
+    states=states[states.STUSPS.isin(CONUS)].copy()
+    states=states.merge(vals,left_on="STUSPS",right_on="state_abbr",how="left")
+    states["participating"]=states[metric].notna()
+    fig,ax=plt.subplots(figsize=figsize)
+    states[~states.participating].plot(ax=ax,color=missing_color,edgecolor="white",linewidth=.6)
+    states[states.participating].plot(ax=ax,column=metric,cmap=cmap,vmin=vmin,vmax=vmax,legend=True,legend_kwds={"label":metric.replace("_"," ").title(),"shrink":.7},edgecolor="white",linewidth=.6)
+    if label_states:
+        for _,r in states.iterrows():
+            p=r.geometry.representative_point()
+            ax.text(p.x,p.y,r.STUSPS,ha="center",va="center",fontsize=7)
+    title=metric.replace("_"," ").title()
+    if yr_qtr is not None: title+=f" — {yr_qtr}"
+    if sector is not None: title+=f" — Sector {sector}"
+    ax.set_title(title)
+    ax.set_axis_off()
+    plt.tight_layout()
+    if save_path: plt.savefig(save_path,dpi=300,bbox_inches="tight")
+    return fig,ax,states
+
+
+fig,ax,states=plot_wage_choropleth(df,metric="median_wage",yr_qtr="2025-3",sector="31-33",cmap="YlOrRd")
+plt.show()
