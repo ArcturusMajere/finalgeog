@@ -1,3 +1,86 @@
+%pip install fs.sshfs pyarrow
+
+from contextlib import ExitStack, suppress
+from pathlib import Path
+from uuid import uuid4
+from getpass import getpass
+from fs.sshfs import SSHFS
+from fs.osfs import OSFS
+from fs.errors import ResourceNotFound
+from paramiko import RejectPolicy
+import pyarrow.parquet as pq
+import pyarrow.csv as pcsv
+
+def parquet_to_csv(source_dir, target_dir, source_ssh=None, target_ssh=None,
+                   batch_size=65536, overwrite=False):
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    with ExitStack() as stack:
+        def open_directory(directory, connection, create=False):
+            if connection is None:
+                return stack.enter_context(
+                    OSFS(str(Path(directory).expanduser()), create=create))
+            directory = str(directory)
+            if not directory.startswith("/"):
+                raise ValueError("Use absolute paths for remote directories")
+            options = {"timeout":30, "policy":RejectPolicy()}
+            options.update(connection)
+            root = stack.enter_context(SSHFS(**options))
+            if create:
+                stack.enter_context(root.makedirs(directory, recreate=True))
+            return stack.enter_context(root.opendir(directory))
+        source = open_directory(source_dir, source_ssh)
+        target = open_directory(target_dir, target_ssh, create=True)
+        names = sorted(f.name for f in source.scandir("/")
+                       if f.is_file and f.name.lower().endswith(".parquet"))
+        read_options = {"prefetch":False} if source_ssh is not None else {}
+        write_options = {"pipelined":True} if target_ssh is not None else {}
+        results = []
+        for name in names:
+            csv_name = name[:-8] + ".csv"
+            if target.exists(csv_name) and not overwrite:
+                raise FileExistsError(csv_name)
+            temporary = f".{csv_name}.{uuid4().hex}.part"
+            rows = 0
+            try:
+                with ExitStack() as files:
+                    reader = files.enter_context(
+                        source.openbin(name, "r", **read_options))
+                    output = files.enter_context(
+                        target.openbin(temporary, "w", **write_options))
+                    parquet = files.enter_context(pq.ParquetFile(reader))
+                    writer = files.enter_context(pcsv.CSVWriter(
+                        output, parquet.schema_arrow,
+                        write_options=pcsv.WriteOptions(include_header=True)))
+                    for batch in parquet.iter_batches(batch_size=batch_size):
+                        writer.write_batch(batch)
+                        rows += batch.num_rows
+                target.move(temporary, csv_name, overwrite=overwrite)
+            finally:
+                with suppress(ResourceNotFound):
+                    target.remove(temporary)
+            results.append({"parquet":name, "csv":csv_name, "rows":rows})
+            print(f"{name} -> {csv_name} | {rows:,} rows")
+        return results
+
+server_x = {
+    "host":"server-x.example.com",
+    "user":"your_username",
+    "passwd":getpass("Server X password: ")
+}
+server_y = {
+    "host":"server-y.example.com",
+    "user":"your_username",
+    "passwd":getpass("Server Y password: ")
+}
+results = parquet_to_csv(
+    source_dir="/data/parquet",
+    target_dir="/data/csv",
+    source_ssh=server_x,
+    target_ssh=server_y,
+    batch_size=65536,
+    overwrite=False
+)
 import os,requests,geopandas as gpd,matplotlib.pyplot as plt
 
 STATE_ABBR={"Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA","Colorado":"CO","Connecticut":"CT","Delaware":"DE","Florida":"FL","Georgia":"GA","Hawaii":"HI","Idaho":"ID","Illinois":"IL","Indiana":"IN","Iowa":"IA","Kansas":"KS","Kentucky":"KY","Louisiana":"LA","Maine":"ME","Maryland":"MD","Massachusetts":"MA","Michigan":"MI","Minnesota":"MN","Mississippi":"MS","Missouri":"MO","Montana":"MT","Nebraska":"NE","Nevada":"NV","New Hampshire":"NH","New Jersey":"NJ","New Mexico":"NM","New York":"NY","North Carolina":"NC","North Dakota":"ND","Ohio":"OH","Oklahoma":"OK","Oregon":"OR","Pennsylvania":"PA","Rhode Island":"RI","South Carolina":"SC","South Dakota":"SD","Tennessee":"TN","Texas":"TX","Utah":"UT","Vermont":"VT","Virginia":"VA","Washington":"WA","West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY","District of Columbia":"DC"}
