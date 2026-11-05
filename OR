@@ -21,3 +21,101 @@
 | Utilities | 0.49% |
 | Mining, quarrying, and oil and gas extraction | 0.39% |
 | Unclassified | 0.10% |
+import csv
+import io
+import urllib.request
+from collections import defaultdict
+from pathlib import Path
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+
+source_url = "https://data.bls.gov/cew/data/api/2026/1/area/16000.csv"
+output_path = Path("Idaho_Sector_Percentages_2026_Q1.xlsx")
+sector_names = {
+    "11": "Agriculture, forestry, fishing, and hunting",
+    "21": "Mining, quarrying, and oil and gas extraction",
+    "22": "Utilities",
+    "23": "Construction",
+    "31-33": "Manufacturing",
+    "42": "Wholesale trade",
+    "44-45": "Retail trade",
+    "48-49": "Transportation and warehousing",
+    "51": "Information",
+    "52": "Finance and insurance",
+    "53": "Real estate and rental and leasing",
+    "54": "Professional, scientific, and technical services",
+    "55": "Management of companies and enterprises",
+    "56": "Administrative and support, and waste management",
+    "61": "Educational services",
+    "62": "Health care and social assistance",
+    "71": "Arts, entertainment, and recreation",
+    "72": "Accommodation and food services",
+    "81": "Other services, except public administration",
+    "92": "Public administration",
+    "99": "Unclassified",
+}
+
+request = urllib.request.Request(source_url, headers={"User-Agent": "Mozilla/5.0"})
+with urllib.request.urlopen(request) as response:
+    rows = list(csv.DictReader(io.StringIO(response.read().decode("utf-8-sig"))))
+
+months = ["month1_emplvl", "month2_emplvl", "month3_emplvl"]
+total_row = next(
+    row for row in rows
+    if row["own_code"] == "0"
+    and row["industry_code"] == "10"
+    and row["agglvl_code"] == "50"
+)
+total_employment = sum(int(total_row[column] or 0) for column in months) / 3
+
+sector_monthly_employment = defaultdict(lambda: [0, 0, 0])
+for row in rows:
+    code = row["industry_code"]
+    if row["own_code"] in {"1", "2", "3", "5"} and row["agglvl_code"] == "54" and code in sector_names:
+        for index, column in enumerate(months):
+            sector_monthly_employment[code][index] += int(row[column] or 0)
+
+sector_shares = []
+for code, monthly_values in sector_monthly_employment.items():
+    average_employment = sum(monthly_values) / 3
+    sector_shares.append((sector_names[code], average_employment / total_employment))
+
+sector_shares.sort(key=lambda item: item[1], reverse=True)
+
+workbook = Workbook()
+sheet = workbook.active
+sheet.title = "Idaho Sectors"
+sheet.sheet_view.showGridLines = False
+sheet["A2"] = "Idaho sector composition, 2026 Q1"
+sheet["A2"].font = Font(name="Arial", size=14, bold=True, color="17365D")
+
+bottom_border = Border(bottom=Side(style="thin", color="4472C4"))
+sheet["A2"].border = bottom_border
+sheet["B2"].border = bottom_border
+
+sheet["A4"] = "Sector"
+sheet["B4"] = "Percent"
+header_fill = PatternFill(fill_type="solid", fgColor="1F4E78")
+for cell in sheet[4][:2]:
+    cell.fill = header_fill
+    cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+
+for row_number, (sector, share) in enumerate(sector_shares, start=5):
+    name_cell = sheet.cell(row=row_number, column=1, value=sector)
+    percent_cell = sheet.cell(row=row_number, column=2, value=share)
+    name_cell.font = Font(name="Arial", size=10, color="222222")
+    percent_cell.font = Font(name="Arial", size=10, color="222222")
+    percent_cell.number_format = "0.00%"
+    name_cell.alignment = Alignment(vertical="center")
+    percent_cell.alignment = Alignment(horizontal="right", vertical="center")
+    sheet.row_dimensions[row_number].height = 20
+
+last_row = len(sector_shares) + 4
+sheet.column_dimensions["A"].width = 61
+sheet.column_dimensions["B"].width = 14
+sheet.row_dimensions[4].height = 20
+sheet[f"A{last_row + 2}"] = f"Source: U.S. Bureau of Labor Statistics, QCEW, Idaho area data, 2026 Q1. {source_url}"
+sheet[f"A{last_row + 2}"].font = Font(name="Arial", size=9, italic=True, color="666666")
+sheet.freeze_panes = "A5"
+workbook.save(output_path)
